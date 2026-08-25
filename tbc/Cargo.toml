@@ -1,0 +1,21 @@
+# The Big Computer (TBC) — workspace root.
+#
+# Build order is canon: teacher-loop and the tick before the world, the world before
+# the bus, the bus before the shards. M1 is one headless crate. Net (QUIC), persistence
+# (Scylla/sqlite) and the reference client join as separate members at M2+.
+
+[workspace]
+resolver = "3"
+members = ["crates/tbc-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = "warn"

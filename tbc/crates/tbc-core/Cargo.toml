@@ -1,0 +1,20 @@
+[package]
+name = "tbc-core"
+description = "TBC M1 sim core: delta_t, ledger, grid, beam. Headless, single-process, deterministic."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# The only dependency in the Δt hot path's crate graph. §5 names blake3 as the
+# island RNG seed derivation; everything else here is hand-rolled to keep the sim
+# core free of transitive surprises.
+blake3 = "1"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tbc-m1"
+path = "src/bin/tbc_m1.rs"
