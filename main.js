@@ -39,11 +39,17 @@ terrain.rotation.x = -Math.PI / 2;
 terrain.receiveShadow = true;
 scene.add(terrain);
 
+// Terrain height must match the wave function used to build the geometry above.
+function getTerrainHeight(x, z) {
+    return Math.sin(x * 0.02) * Math.cos(z * 0.02) * 20;
+}
+
 // Player character
+const playerHalfHeight = 1.5; // capsule radius (0.5) + half length (1) = distance from center to feet
 const playerGeometry = new THREE.CapsuleGeometry(0.5, 2, 4, 8);
 const playerMaterial = new THREE.MeshStandardMaterial({ color: 0xff6b6b });
 const player = new THREE.Mesh(playerGeometry, playerMaterial);
-player.position.set(0, 25, 0);
+player.position.set(0, getTerrainHeight(0, 0) + playerHalfHeight, 0);
 player.castShadow = true;
 player.receiveShadow = true;
 scene.add(player);
@@ -58,10 +64,19 @@ const playerSpeed = 0.3;
 const playerRotationSpeed = 0.1;
 
 function updatePlayer() {
-    if (keys['w'] || keys['arrowup']) player.position.z -= playerSpeed;
-    if (keys['s'] || keys['arrowdown']) player.position.z += playerSpeed;
+    if (keys['w'] || keys['arrowup']) {
+        player.position.x -= Math.sin(player.rotation.y) * playerSpeed;
+        player.position.z -= Math.cos(player.rotation.y) * playerSpeed;
+    }
+    if (keys['s'] || keys['arrowdown']) {
+        player.position.x += Math.sin(player.rotation.y) * playerSpeed;
+        player.position.z += Math.cos(player.rotation.y) * playerSpeed;
+    }
     if (keys['a'] || keys['arrowleft']) player.rotation.y += playerRotationSpeed;
     if (keys['d'] || keys['arrowright']) player.rotation.y -= playerRotationSpeed;
+
+    // Stick the player to the terrain surface.
+    player.position.y = getTerrainHeight(player.position.x, player.position.z) + playerHalfHeight;
 }
 
 function updateCamera() {
