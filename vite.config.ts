@@ -82,21 +82,20 @@ export default defineConfig({
             options: {
               cacheName: 'ort-runtime',
               expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 90 },
-              cacheableResponse: { statuses: [0, 200] },
+              // 200 only. Allowing 0 lets an opaque or failed response be
+              // cached permanently under CacheFirst, which bricks the runtime
+              // until the user clears site data.
+              cacheableResponse: { statuses: [200] },
             },
           },
-          {
-            // Model weights. Transformers.js also keeps its own Cache Storage
-            // entry ('transformers-cache'); this is a second line of defence so
-            // a cold reload offline still resolves.
-            urlPattern: /^https:\/\/(huggingface\.co|cdn-lfs[^/]*\.hf\.co)\/.*/i,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'hf-models',
-              expiration: { maxEntries: 64, maxAgeSeconds: 60 * 60 * 24 * 365 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
+          // Model weights are deliberately NOT runtime-cached here.
+          //
+          // Transformers.js already persists them itself in Cache Storage
+          // ('transformers-cache'), so a rule here buys nothing — and putting a
+          // CacheFirst handler in front of multi-hundred-megabyte downloads is
+          // actively harmful: the Cache API cannot store 206 Partial Content,
+          // so any ranged or resumed fetch either fails outright or gets served
+          // a mismatched full response on the next load.
         ],
       },
 

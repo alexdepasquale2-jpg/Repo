@@ -69,6 +69,9 @@ const el = {
   factMult: need('fact-mult'),
   btnWipe: need<HTMLButtonElement>('btn-wipe'),
 
+  diagnostics: need('diagnostics'),
+  btnResetModels: need<HTMLButtonElement>('btn-reset-models'),
+
   tabs: need('tabs'),
   toast: need('toast'),
   toastText: need('toast-text'),
@@ -193,7 +196,10 @@ async function ensurePipeline(abilityId: string): Promise<boolean> {
   }
 }
 
-host.onChange = () => renderAbilities();
+host.onChange = () => {
+  renderAbilities();
+  void renderDiagnostics();
+};
 
 /* -------------------------------------------------------------- bindings -- */
 
@@ -352,6 +358,7 @@ function renderAbilities(): void {
           <p class="ability-effect">${a.effect}</p>
           <p class="ability-flavor">${a.flavor}</p>
           <div class="ability-bar" data-bar hidden><span data-fill></span></div>
+          <p class="ability-error" data-error hidden></p>
           <button class="btn btn-wide" type="button" data-action></button>`;
 
         card.querySelector('[data-action]')!.addEventListener('click', () => {
@@ -384,8 +391,18 @@ function renderAbilities(): void {
     const button = card.querySelector<HTMLButtonElement>('[data-action]')!;
     const bar = card.querySelector<HTMLElement>('[data-bar]')!;
     const fill = card.querySelector<HTMLElement>('[data-fill]')!;
+    const error = card.querySelector<HTMLElement>('[data-error]')!;
 
     card.classList.toggle('is-owned', owned);
+
+    // The reason a load failed is the only thing that makes it fixable, and on
+    // a phone there is no console to go read it in.
+    if (slot.status === 'error' && slot.message) {
+      error.hidden = false;
+      error.textContent = slot.message;
+    } else {
+      error.hidden = true;
+    }
 
     if (!owned) {
       button.textContent = `Unlock — ${fmt(a.cost)}`;
@@ -450,6 +467,53 @@ function renderAll(): void {
   renderAbilities();
   renderRetrain();
 }
+
+/* ---------------------------------------------------------- diagnostics -- */
+
+/**
+ * Everything needed to explain a failed pipeline load, on the device itself.
+ *
+ * `crossOriginIsolated` is the one people get wrong: without COOP+COEP there is
+ * no SharedArrayBuffer, so ORT drops to a single WASM thread. That is a speed
+ * problem rather than a failure, and printing it stops it being blamed for one.
+ */
+async function renderDiagnostics(): Promise<void> {
+  const caches_ = 'caches' in self ? await caches.keys().catch(() => []) : [];
+  const lines = [
+    `base          ${import.meta.env.BASE_URL}`,
+    `origin        ${location.origin}`,
+    `isolated      ${self.crossOriginIsolated} (threads: ${typeof SharedArrayBuffer !== 'undefined'})`,
+    `webgpu        ${'gpu' in navigator}`,
+    `serviceWorker ${navigator.serviceWorker?.controller ? 'active' : 'none'}`,
+    `caches        ${caches_.join(', ') || 'none'}`,
+    `online        ${navigator.onLine}`,
+    ...[...host.slots].map(
+      ([slot, s]) => `slot ${slot.padEnd(9)} ${s.status}${s.message ? ` — ${s.message}` : ''}`,
+    ),
+  ];
+  el.diagnostics.textContent = lines.join('\n');
+}
+
+/**
+ * Clears everything model-related: Transformers.js's own weight cache, the ORT
+ * runtime cache, and the service worker. The recovery path for a poisoned cache
+ * that would otherwise need the browser's site-data screen.
+ */
+el.btnResetModels.addEventListener('click', () => {
+  if (!confirm('Clear cached models and service worker? Your save is kept.')) return;
+
+  void (async () => {
+    try {
+      for (const key of await caches.keys()) await caches.delete(key);
+      for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister();
+      toast('Caches cleared. Reloading…');
+      setTimeout(() => location.reload(), 700);
+    } catch (err) {
+      console.error('[diagnostics] clear failed', err);
+      toast('Could not clear caches.');
+    }
+  })();
+});
 
 /* --------------------------------------------------------------- actions -- */
 
@@ -529,5 +593,6 @@ document.addEventListener('visibilitychange', () => {
 (window as unknown as { __game: Game }).__game = game;
 
 renderAll();
+void renderDiagnostics();
 void resolveResonance();
 void resolveAffinity();

@@ -370,6 +370,40 @@ button.row:active {
   transition: width 0.25s ease-out;
 }
 
+.ability-error {
+  margin: 0 0 9px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+  font-size: 12px;
+  /* Model loaders emit long single-token URLs; let them wrap rather than
+     stretching the card off-screen. */
+  overflow-wrap: anywhere;
+}
+
+.ability-error[hidden] {
+  display: none;
+}
+
+/* ---------------------------------------------------------- diagnostics -- */
+
+.diagnostics {
+  margin: 0 0 12px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* -------------------------------------------------------------- binding -- */
 
 .binding {

@@ -6,11 +6,21 @@ import type { FromWorker, LoadRequest, Slot, ToWorker } from './protocol';
 // only produces a spurious 404 on every launch.
 env.allowLocalModels = false;
 
-// Serve the ORT runtime from our own origin. The default is a jsdelivr CDN,
-// which would leave the game broken offline even with weights cached.
-// `scripts/prepare-assets.mjs` stages these files into public/ort/.
-// BASE_URL rather than '/', so a sub-path deploy (GitHub Pages) still resolves.
-env.backends.onnx.wasm!.wasmPaths = `${import.meta.env.BASE_URL}ort/`;
+// Point ORT at the WASM binary we serve ourselves. Left unset, Transformers.js
+// substitutes a jsdelivr CDN URL, which would leave the game broken offline
+// even with model weights cached. prepare-assets.mjs stages the file.
+//
+// Only `wasm` is overridden, deliberately. Passing a directory prefix instead
+// makes ORT resolve its Emscripten glue (.mjs) from that prefix too and pull it
+// with a dynamic import() — but the bundler has already inlined that glue into
+// this worker, so the fetch is pure downside: a static host serving .mjs as
+// octet-stream (GitHub Pages does) fails the import on MIME grounds and the
+// whole pipeline load dies. Naming only the binary leaves the glue inline.
+//
+// BASE_URL rather than '/', so a sub-path deploy still resolves.
+env.backends.onnx.wasm!.wasmPaths = {
+  wasm: `${import.meta.env.BASE_URL}ort/ort-wasm-simd-threaded.jsep.wasm`,
+};
 
 const post = (msg: FromWorker) => self.postMessage(msg);
 
