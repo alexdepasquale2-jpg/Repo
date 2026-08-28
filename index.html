@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover lets the layout reach under Android gesture bars;
+         the safe-area insets in style.css put padding back where it matters. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b1020" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta
+      name="description"
+      content="An idle ARPG whose abilities are real AI models running on your phone."
+    />
+    <link rel="icon" href="/Repo/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/Repo/icons/icon-192.png" />
+    <title>Latent Depths</title>
+    <script type="module" crossorigin src="/Repo/assets/index-CUqOGFg0.js"></script>
+    <link rel="stylesheet" crossorigin href="/Repo/assets/index-77gcmSrq.css">
+  <link rel="manifest" href="/Repo/manifest.webmanifest"></head>
+
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="stat">
+          <span class="stat-label">Weights</span>
+          <span class="stat-value" id="stat-weights">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">DPS</span>
+          <span class="stat-value" id="stat-dps">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Insight</span>
+          <span class="stat-value" id="stat-insight">0</span>
+        </div>
+      </header>
+
+      <!-- ---------------------------------------------------------- FIGHT -- -->
+      <section class="panel" id="panel-fight">
+        <div class="layer-head">
+          <h1 id="enemy-name">—</h1>
+          <p class="layer-sub">
+            <span id="layer-label">Layer 1</span>
+            <span class="dot">·</span>
+            <span id="layer-progress">0 / 8</span>
+            <span id="boss-timer" class="boss-timer" hidden></span>
+          </p>
+        </div>
+
+        <!-- The tap target. Everything else on this screen is chrome. -->
+        <canvas id="combat" aria-label="Tap to attack"></canvas>
+
+        <div class="elements" id="elements" hidden>
+          <span class="elements-label" id="elements-label">Strike with</span>
+          <div class="element-row" id="element-row"></div>
+        </div>
+
+        <p class="hint" id="fight-hint">Tap the entity to attack.</p>
+      </section>
+
+      <!-- --------------------------------------------------------- FORGE -- -->
+      <section class="panel" id="panel-forge" hidden>
+        <h2 class="panel-title">Forge</h2>
+
+        <button class="row buy" id="buy-focus" type="button">
+          <span class="row-main">
+            <span class="row-name">Focus</span>
+            <span class="row-sub" id="focus-sub">+1 tap damage</span>
+          </span>
+          <span class="row-cost" id="focus-cost">10</span>
+        </button>
+
+        <h3 class="group-title">Daemons</h3>
+        <p class="group-sub">Fight for you whether the app is open or not.</p>
+        <div id="daemon-list"></div>
+      </section>
+
+      <!-- ----------------------------------------------------- PIPELINES -- -->
+      <section class="panel" id="panel-pipelines" hidden>
+        <h2 class="panel-title">Pipelines</h2>
+        <p class="group-sub">
+          Each ability is a real model that runs on this device. Unlocking one spends Weights;
+          the first use downloads it once, then it works offline.
+        </p>
+        <div id="ability-list"></div>
+
+        <div class="binding" id="binding-sigil" hidden>
+          <label class="binding-label" for="sigil">Bound sigil</label>
+          <p class="binding-help">
+            Resonance compares this phrase to whatever you are fighting. Closer meaning, higher crit.
+          </p>
+          <div class="binding-row">
+            <input id="sigil" type="text" maxlength="48" placeholder="e.g. creeping frost"
+                   autocapitalize="none" autocorrect="off" spellcheck="false" />
+            <button class="btn btn-primary" id="bind-sigil" type="button">Bind</button>
+          </div>
+          <p class="binding-out" id="sigil-out"></p>
+        </div>
+
+        <div class="binding" id="binding-cry" hidden>
+          <label class="binding-label" for="cry">Battle cry</label>
+          <p class="binding-help">
+            Attunement reads how you mean it. Conviction becomes Fervour, bitterness becomes Dread.
+          </p>
+          <div class="binding-row">
+            <input id="cry" type="text" maxlength="80" placeholder="say something like you mean it"
+                   autocapitalize="sentences" spellcheck="false" />
+            <button class="btn btn-primary" id="shout-cry" type="button">Shout</button>
+          </div>
+          <p class="binding-out" id="cry-out"></p>
+        </div>
+
+        <div class="binding" id="binding-relics" hidden>
+          <h3 class="group-title">Relics</h3>
+          <div id="relic-list"></div>
+        </div>
+      </section>
+
+      <!-- ------------------------------------------------------- RETRAIN -- -->
+      <section class="panel" id="panel-retrain" hidden>
+        <h2 class="panel-title">Retrain</h2>
+        <p class="group-sub">
+          Collapse the run back to layer one. You keep Insight, unlocked pipelines and relics —
+          a downloaded model is never taken away.
+        </p>
+
+        <div class="retrain-card">
+          <span class="retrain-gain" id="retrain-gain">0</span>
+          <span class="retrain-unit">Insight on retrain</span>
+          <p class="retrain-note" id="retrain-note">Reach layer 10 to retrain.</p>
+          <button class="btn btn-primary btn-wide" id="btn-retrain" type="button" disabled>
+            Retrain
+          </button>
+        </div>
+
+        <h3 class="group-title">Run</h3>
+        <dl class="facts">
+          <div><dt>Deepest layer</dt><dd id="fact-deepest">1</dd></div>
+          <div><dt>Lifetime weights</dt><dd id="fact-lifetime">0</dd></div>
+          <div><dt>Damage multiplier</dt><dd id="fact-mult">1.00x</dd></div>
+        </dl>
+
+        <button class="btn btn-danger btn-wide" id="btn-wipe" type="button">Erase save</button>
+      </section>
+
+      <nav class="tabs" id="tabs">
+        <button class="tab is-active" data-panel="fight" type="button"><span>⚔</span>Fight</button>
+        <button class="tab" data-panel="forge" type="button"><span>⚒</span>Forge</button>
+        <button class="tab" data-panel="pipelines" type="button"><span>◈</span>Pipelines</button>
+        <button class="tab" data-panel="retrain" type="button"><span>↻</span>Retrain</button>
+      </nav>
+    </div>
+
+    <div class="toast" id="toast" hidden><span id="toast-text"></span></div>
+
+    <div class="toast" id="sw-toast" hidden>
+      <span>A new version is ready.</span>
+      <button class="btn btn-small" id="sw-reload" type="button">Reload</button>
+    </div>
+
+  </body>
+</html>
