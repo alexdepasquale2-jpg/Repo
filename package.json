@@ -1,0 +1,24 @@
+{
+  "name": "signal-hunt",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Mobile Android HTML5 game (PWA) with on-device AI via Transformers.js",
+  "scripts": {
+    "dev": "npm run assets && vite --host",
+    "build": "npm run assets && tsc --noEmit && vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit",
+    "assets": "node scripts/prepare-assets.mjs",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.7.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "vite-plugin-pwa": "^0.21.0"
+  }
+}
