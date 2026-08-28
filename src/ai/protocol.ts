@@ -10,11 +10,18 @@
 /** Identifies one loaded pipeline. Matches the ability id that owns it. */
 export type Slot = string;
 
+export type Backend = 'webgpu' | 'wasm';
+
 export interface LoadRequest {
   slot: Slot;
   task: string;
   model: string;
   dtype: string;
+  /**
+   * Pin the ORT backend. Left unset the worker probes for a real WebGPU
+   * adapter; set to 'wasm' by the host when retrying after a GPU failure.
+   */
+  backend?: Backend;
 }
 
 export type ToWorker =

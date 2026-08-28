@@ -16,3 +16,6 @@ public/ort/
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# Generated fixture for the ORT runtime check
+public/verify/

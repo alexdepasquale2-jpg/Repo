@@ -12,10 +12,14 @@ import { VitePWA } from 'vite-plugin-pwa';
  * These headers must be replicated by whatever serves the production build,
  * otherwise ORT silently drops to a single WASM thread. See README.
  */
-const crossOriginIsolation = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'credentialless',
-};
+// NO_COI=1 drops these, to reproduce a host that cannot set them (GitHub Pages
+// among them) and confirm ORT still initialises single-threaded.
+const crossOriginIsolation = process.env['NO_COI']
+  ? {}
+  : {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    };
 
 /**
  * Deploy target sub-path. GitHub Pages serves a project site under /<repo>/,

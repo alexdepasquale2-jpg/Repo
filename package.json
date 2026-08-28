@@ -9,8 +9,9 @@
     "build": "npm run assets && tsc --noEmit && vite build",
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
-    "assets": "node scripts/prepare-assets.mjs",
-    "smoke": "node scripts/smoke.mjs"
+    "assets": "node scripts/prepare-assets.mjs && node scripts/make-tiny-onnx.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "verify:ort": "node scripts/verify-ort.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.7.0"

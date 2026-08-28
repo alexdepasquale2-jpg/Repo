@@ -477,13 +477,27 @@ function renderAll(): void {
  * no SharedArrayBuffer, so ORT drops to a single WASM thread. That is a speed
  * problem rather than a failure, and printing it stops it being blamed for one.
  */
+/** Mirrors the worker's backend probe, for reporting only. */
+async function probeAdapter(): Promise<string> {
+  const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
+  if (!gpu) return 'none';
+  try {
+    return (await gpu.requestAdapter()) ? 'yes' : 'null';
+  } catch (err) {
+    return `throws (${err instanceof Error ? err.message.slice(0, 60) : 'unknown'})`;
+  }
+}
+
 async function renderDiagnostics(): Promise<void> {
   const caches_ = 'caches' in self ? await caches.keys().catch(() => []) : [];
   const lines = [
     `base          ${import.meta.env.BASE_URL}`,
     `origin        ${location.origin}`,
     `isolated      ${self.crossOriginIsolated} (threads: ${typeof SharedArrayBuffer !== 'undefined'})`,
-    `webgpu        ${'gpu' in navigator}`,
+    // Both halves matter: navigator.gpu exists even when WebGPU is flag-gated,
+    // and only a real adapter means it is actually usable.
+    `webgpu        api=${'gpu' in navigator} adapter=${await probeAdapter()}`,
+    `backend       ${host.backend ?? 'not chosen yet'}`,
     `serviceWorker ${navigator.serviceWorker?.controller ? 'active' : 'none'}`,
     `caches        ${caches_.join(', ') || 'none'}`,
     `online        ${navigator.onLine}`,

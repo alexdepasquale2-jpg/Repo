@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 import { pipeline, env } from '@huggingface/transformers';
-import type { FromWorker, LoadRequest, Slot, ToWorker } from './protocol';
+import type { Backend, FromWorker, LoadRequest, Slot, ToWorker } from './protocol';
 
 // Weights come from the Hugging Face CDN; probing for a local model directory
 // only produces a spurious 404 on every launch.
@@ -30,48 +30,56 @@ const loaded = new Map<Slot, AnyPipeline>();
 const inFlight = new Map<Slot, Promise<void>>();
 
 /**
- * WebGPU is far faster where it works, but Android WebView and older Chrome
- * expose adapters that fail on first use — so a WebGPU failure falls through
- * to WASM instead of failing the unlock.
+ * Decide the backend BEFORE handing anything to ORT.
+ *
+ * `'gpu' in navigator` is not enough: Chrome exposes navigator.gpu even when
+ * WebGPU is flag-gated or has no usable adapter, and asking for it anyway gets
+ * an "enable-unsafe-webgpu" failure. That failure is unrecoverable in-process —
+ * ORT's initWasm() is one-shot per worker, so a second attempt on WASM only
+ * yields "previous call to 'initWasm()' failed". The retry has to happen in a
+ * fresh worker, which the host arranges; the job here is to not need one.
  */
-async function load(req: LoadRequest): Promise<void> {
-  const backends = 'gpu' in navigator ? ['webgpu', 'wasm'] : ['wasm'];
-  let lastError: unknown;
+async function pickBackend(): Promise<Backend> {
+  const gpu = (navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } }).gpu;
+  if (!gpu) return 'wasm';
 
-  for (const backend of backends) {
-    // Per-file byte counts, so progress reflects the whole model rather than
-    // resetting each time a new file starts.
-    const files = new Map<string, { loaded: number; total: number }>();
-
-    try {
-      const pipe = await pipeline(req.task as 'feature-extraction', req.model, {
-        device: backend as 'webgpu' | 'wasm',
-        dtype: req.dtype as 'q8',
-        progress_callback: (p: unknown) => {
-          const e = p as { status?: string; file?: string; loaded?: number; total?: number };
-          if (e.status !== 'progress' || !e.total) return;
-          files.set(e.file ?? '', { loaded: e.loaded ?? 0, total: e.total });
-
-          let l = 0;
-          let t = 0;
-          for (const f of files.values()) {
-            l += f.loaded;
-            t += f.total;
-          }
-          post({ type: 'progress', slot: req.slot, loaded: l, total: t });
-        },
-      });
-
-      loaded.set(req.slot, pipe as unknown as AnyPipeline);
-      post({ type: 'loaded', slot: req.slot, backend });
-      return;
-    } catch (err) {
-      lastError = err;
-      console.warn(`[pipelines] ${req.slot}: ${backend} backend unavailable`, err);
-    }
+  try {
+    // Only a real adapter counts. requestAdapter() resolves to null when
+    // WebGPU is present but unusable, and throws outright when flag-gated.
+    return (await gpu.requestAdapter()) ? 'webgpu' : 'wasm';
+  } catch (err) {
+    console.warn('[pipelines] WebGPU probe failed, using WASM', err);
+    return 'wasm';
   }
+}
 
-  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+async function load(req: LoadRequest): Promise<void> {
+  const backend = req.backend ?? (await pickBackend());
+
+  // Per-file byte counts, so progress reflects the whole model rather than
+  // resetting each time a new file starts.
+  const files = new Map<string, { loaded: number; total: number }>();
+
+  const pipe = await pipeline(req.task as 'feature-extraction', req.model, {
+    device: backend,
+    dtype: req.dtype as 'q8',
+    progress_callback: (p: unknown) => {
+      const e = p as { status?: string; file?: string; loaded?: number; total?: number };
+      if (e.status !== 'progress' || !e.total) return;
+      files.set(e.file ?? '', { loaded: e.loaded ?? 0, total: e.total });
+
+      let l = 0;
+      let t = 0;
+      for (const f of files.values()) {
+        l += f.loaded;
+        t += f.total;
+      }
+      post({ type: 'progress', slot: req.slot, loaded: l, total: t });
+    },
+  });
+
+  loaded.set(req.slot, pipe as unknown as AnyPipeline);
+  post({ type: 'loaded', slot: req.slot, backend });
 }
 
 self.addEventListener('message', (event: MessageEvent<ToWorker>) => {
