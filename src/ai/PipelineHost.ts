@@ -1,4 +1,5 @@
 import { PIPELINES, type PipelineId } from './registry';
+import { memoryBudgetMB } from './limits';
 import type { Backend, FromWorker, LoadRequest, Slot, ToWorker } from './protocol';
 
 export type SlotStatus = 'absent' | 'loading' | 'ready' | 'error';
@@ -27,6 +28,15 @@ export class PipelineHost {
 
   /** Slots already retried on WASM, so a GPU failure escalates only once. */
   #retried = new Set<Slot>();
+
+  /** Last use per slot, driving both LRU eviction and the idle sweep. */
+  #lastUsed = new Map<Slot, number>();
+
+  /** Resident weight budget in MB, sized from device memory. */
+  readonly budgetMB = memoryBudgetMB();
+
+  /** Slots evicted for budget, surfaced in diagnostics. */
+  evictions = 0;
 
   readonly slots = new Map<Slot, SlotState>();
   /** Backend actually in use, once something has loaded. */
@@ -87,6 +97,55 @@ export class PipelineHost {
     return this.slots.get(slot) ?? { status: 'absent', progress: 0 };
   }
 
+  /** Weight currently held resident, in MB. */
+  get residentMB(): number {
+    let total = 0;
+    for (const [slot, s] of this.slots) {
+      if (s.status !== 'ready') continue;
+      total += PIPELINES[slot as PipelineId]?.approxMB ?? 0;
+    }
+    return total;
+  }
+
+  /** Ready slots, least recently used first. */
+  #lruOrder(): Slot[] {
+    return [...this.slots]
+      .filter(([, s]) => s.status === 'ready')
+      .map(([slot]) => slot)
+      .sort((a, b) => (this.#lastUsed.get(a) ?? 0) - (this.#lastUsed.get(b) ?? 0));
+  }
+
+  /**
+   * Evicts least-recently-used pipelines until `needMB` more will fit.
+   *
+   * Eviction is cheap to undo: weights stay in Cache Storage, so a reload costs
+   * a session rebuild rather than a download. Callers that hold a cached answer
+   * may never need to reload at all.
+   */
+  #makeRoom(needMB: number, keep: Slot): void {
+    for (const slot of this.#lruOrder()) {
+      if (this.residentMB + needMB <= this.budgetMB) return;
+      if (slot === keep) continue;
+
+      this.evictions += 1;
+      this.#send({ type: 'unload', slot });
+      this.#set(slot, { status: 'absent', progress: 0 });
+      this.#lastUsed.delete(slot);
+    }
+  }
+
+  /** Drops a pipeline that has gone unused for `idleMs`. */
+  sweepIdle(idleMs: number): void {
+    const now = Date.now();
+    for (const slot of this.#lruOrder()) {
+      if (now - (this.#lastUsed.get(slot) ?? now) < idleMs) continue;
+      this.evictions += 1;
+      this.#send({ type: 'unload', slot });
+      this.#set(slot, { status: 'absent', progress: 0 });
+      this.#lastUsed.delete(slot);
+    }
+  }
+
   isReady(slot: Slot): boolean {
     return this.state(slot).status === 'ready';
   }
@@ -117,6 +176,8 @@ export class PipelineHost {
     // error, so the existing one can only report that same error again.
     if (current.status === 'error') this.#respawn();
 
+    this.#makeRoom(spec.approxMB, slot);
+    this.#lastUsed.set(slot, Date.now());
     this.#requests.set(slot, req);
     this.#set(slot, { status: 'loading', progress: 0 });
 
@@ -126,8 +187,16 @@ export class PipelineHost {
     });
   }
 
-  /** Runs a loaded pipeline. Rejects if the slot is not ready. */
-  run<T>(slot: Slot, input: unknown, options?: unknown): Promise<T> {
+  /**
+   * Runs a pipeline, reloading it first if the budget evicted it.
+   *
+   * Callers never have to know about eviction: the weights are still in Cache
+   * Storage, so recovering costs a session rebuild rather than a download.
+   */
+  async run<T>(slot: Slot, input: unknown, options?: unknown): Promise<T> {
+    if (!this.isReady(slot)) await this.load(slot, slot as PipelineId);
+    this.#lastUsed.set(slot, Date.now());
+
     const id = this.#nextId++;
     return new Promise<T>((resolve, reject) => {
       this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
@@ -184,6 +253,12 @@ export class PipelineHost {
         this.#loads.delete(msg.slot);
         break;
       }
+
+      case 'unloaded':
+        // Host-side state already reflects this; the ack just confirms the
+        // weights are actually gone rather than merely forgotten.
+        this.onChange?.();
+        break;
 
       case 'result':
         this.#pending.get(msg.id)?.resolve(msg.output);

@@ -122,6 +122,68 @@ const persisted = await page
   .then(() => true, () => false);
 check('unlock is persisted', persisted);
 
+/* ---------------------------------------------------------------- limits -- */
+
+await page.locator('.tab[data-panel="pipelines"]').click();
+const diag = (await page.locator('#diagnostics').textContent()) ?? '';
+check(
+  'diagnostics report budget and network',
+  /budget \d+ MB, resident \d+ MB/.test(diag) && /network/.test(diag) && /evictions/.test(diag),
+  diag.split('\n').find((l) => l.startsWith('memory')) ?? '',
+);
+
+// Resident weight is summed from the registry, so the budget can be enforced
+// before a load rather than after an out-of-memory kill.
+const resident = await page.evaluate(() => {
+  const h = window.__host;
+  h.slots.set('embed', { status: 'ready', progress: 1 });
+  h.slots.set('sentiment', { status: 'ready', progress: 1 });
+  const both = h.residentMB;
+  h.slots.set('sentiment', { status: 'absent', progress: 0 });
+  const one = h.residentMB;
+  h.slots.clear();
+  return { both, one, budget: h.budgetMB };
+});
+check('resident weight is tracked', resident.both === 92 && resident.one === 25,
+  `embed+sentiment=${resident.both}MB, embed=${resident.one}MB`);
+check('memory budget is positive', resident.budget > 0, `${resident.budget}MB`);
+
+/* -------------------------------------------------- cached model answers -- */
+
+// The whole point of persisting answers: an evicted model must not cost the
+// player a mechanic for enemies already measured.
+await page.evaluate(() => {
+  const g = window.__game;
+  g.state.sigil = 'creeping frost';
+  g.state.affinitySigil = 'creeping frost';
+  g.state.affinities = { 'rime-hound': 0.83 };
+  g.state.resonance = { 'rime-hound': 'frost' };
+});
+
+const cachePersisted = await page
+  .waitForFunction(
+    () => {
+      const s = JSON.parse(localStorage.getItem('latent-depths/save') ?? '{}');
+      return s.affinities?.['rime-hound'] === 0.83 && s.resonance?.['rime-hound'] === 'frost';
+    },
+    null,
+    { timeout: 4000 },
+  )
+  .then(() => true, () => false);
+check('model answers persist to the save', cachePersisted);
+
+await page.reload({ waitUntil: 'load' });
+await page.waitForTimeout(800);
+const afterReload = await page.evaluate(() => {
+  const g = window.__game;
+  return { aff: g.state.affinities?.['rime-hound'], res: g.state.resonance?.['rime-hound'] };
+});
+check(
+  'answers survive reload with no model loaded',
+  afterReload.aff === 0.83 && afterReload.res === 'frost',
+  JSON.stringify(afterReload),
+);
+
 /* --------------------------------------------------------------- retrain -- */
 
 await page.locator('.tab[data-panel="retrain"]').click();

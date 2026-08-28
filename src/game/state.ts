@@ -29,6 +29,18 @@ export interface SaveState {
   /** Divination's answers, cached so they survive reloads before the model is back. */
   resonance: Record<string, string>;
 
+  /**
+   * Resonance's answers, per archetype, for the sigil named in `affinitySigil`.
+   *
+   * Persisted for the same reason as `resonance`: a model answer that cannot
+   * change is worth more on disk than in a session. It means the crit mechanic
+   * keeps working for enemies already seen even after the budget evicts the
+   * embedding model, or across a cold launch offline.
+   */
+  affinities: Record<string, number>;
+  /** Which sigil `affinities` was computed for; a change invalidates them all. */
+  affinitySigil: string;
+
   sigil: string;
   cry: string;
   relics: Relic[];
@@ -50,6 +62,8 @@ export function initialState(): SaveState {
     daemons: {},
     unlocked: [],
     resonance: {},
+    affinities: {},
+    affinitySigil: '',
     sigil: '',
     cry: '',
     relics: [],

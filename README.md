@@ -32,6 +32,30 @@ simulation is testable without the network.
 Download size is part of the economy — a heavier model is a more expensive
 unlock, deliberately.
 
+## Living inside a phone's limits
+
+Three models resident is ~240 MB, on a device that may have 2 GB and will kill
+a large background tab without warning. The pipeline layer is budgeted:
+
+- **Memory budget** sized from `navigator.deviceMemory` (40–400 MB of resident
+  weight). Loading evicts least-recently-used pipelines to fit.
+- **Idle unload** after five minutes unused, and immediately on backgrounding —
+  when an idle game spends most of its life.
+- **Metered connections** get an explicit confirmation before anything over
+  50 MB, and `Save-Data` is honoured as the request it is.
+- **No eager preloading.** Owned pipelines warm on demand, and only silently
+  when they are small and the connection is cheap.
+
+What keeps this from degrading the game is that **the cached answer outlives the
+model**. Divination's resonant elements and Resonance's affinities are written
+into the save, so an evicted model costs nothing for enemies already measured —
+only a genuinely new archetype needs it back, and reloading is a session rebuild
+rather than a download because the weights stay in Cache Storage. A `run()` on
+an evicted slot reloads transparently.
+
+The upshot: a returning player usually needs no model at all, and the elemental
+and crit systems keep working offline, cold, and under memory pressure.
+
 ## Running it
 
 ```bash
@@ -102,9 +126,24 @@ model-free path: spawning, tapping, the economy, tab navigation, unlock
 gating, persistence across reload, and that unlocking Divination is what
 introduces the elemental system. Start `npm run preview` first, or pass a URL.
 
-Model-backed inference is **not** covered — it needs the Hugging Face CDN, which
-CI often cannot reach. The smoke test treats a failed weight download as the
-expected offline path, which is precisely the behaviour worth pinning.
+`npm run verify:ort` proves onnxruntime-web actually initialises and runs, using
+a 76-byte hand-built ONNX model (one Identity node) instead of a real one. That
+covers the setup which has broken in practice — `wasmPaths` resolution, the
+WebGPU-vs-WASM decision, and whether the threaded build survives without
+`SharedArrayBuffer` — none of which needs the Hugging Face CDN.
+
+Run it against a server with the isolation headers stripped to reproduce
+GitHub Pages exactly:
+
+```bash
+NO_COI=1 npx vite --port 5174
+npm run verify:ort http://localhost:5174/verify/ort.html
+```
+
+Downloading real weights is still **not** covered; it needs the Hugging Face
+CDN, which CI and sandboxes often cannot reach. The smoke test treats a failed
+download as the expected offline path, which is precisely the behaviour worth
+pinning.
 
 Adding a unit suite over `Game` and the cost curves in `numbers.ts` is the
 obvious next step; balance regressions in an incremental game are exactly the

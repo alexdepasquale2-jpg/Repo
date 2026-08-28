@@ -1,6 +1,7 @@
 import './style.css';
 import { PipelineHost } from './ai/PipelineHost';
 import { PIPELINES } from './ai/registry';
+import { LARGE_DOWNLOAD_MB, deviceMemoryGB, networkState } from './ai/limits';
 import { Loop } from './engine/Loop';
 import { Viewport } from './engine/Viewport';
 import { Game } from './game/Game';
@@ -148,13 +149,46 @@ game.on((event) => {
 /* ------------------------------------------------------- AI-backed hooks -- */
 
 /**
- * Divination. Answers are cached into the save, so a relaunch keeps what the
- * model already worked out even before the pipeline is warm again.
+ * Brings a pipeline online in the background, but only when doing so is not a
+ * decision worth asking about — small, and not over an expensive connection.
+ *
+ * This is what keeps the abilities feeling automatic without ever surprising
+ * someone with a large download they did not ask for mid-fight. Anything
+ * heavier stays manual, in the Pipelines tab.
+ */
+function warmIfCheap(abilityId: string): void {
+  const spec = ABILITIES.find((a) => a.id === abilityId);
+  if (!spec || !game.has(abilityId) || host.isReady(spec.pipeline)) return;
+  if (host.state(spec.pipeline).status === 'loading') return;
+
+  const net = networkState();
+  if (net.offline || net.costly) return;
+  if (PIPELINES[spec.pipeline].approxMB >= LARGE_DOWNLOAD_MB) return;
+
+  void host.load(spec.pipeline, spec.pipeline).then(
+    () => {
+      void resolveResonance();
+      void resolveAffinity();
+    },
+    () => {
+      /* surfaced on the ability card */
+    },
+  );
+}
+
+/**
+ * Divination. Answers are cached into the save, so a relaunch — or a budget
+ * eviction — keeps what the model already worked out.
  */
 async function resolveResonance(): Promise<void> {
-  if (!game.has('divination') || !host.isReady('embed')) return;
+  if (!game.has('divination')) return;
   const archetype = game.archetype;
   if (game.state.resonance[archetype.id]) return;
+
+  if (!host.isReady('embed')) {
+    warmIfCheap('divination');
+    return;
+  }
 
   try {
     game.state.resonance[archetype.id] = await oracle.resonantElement(archetype);
@@ -164,14 +198,46 @@ async function resolveResonance(): Promise<void> {
   }
 }
 
-/** Resonance. Recomputed per archetype since affinity is pair-specific. */
+/**
+ * Resonance. Affinity is specific to the (sigil, archetype) pair, and cached
+ * into the save once computed.
+ *
+ * The cache is what lets the memory budget evict the embedding model without
+ * the mechanic degrading: an enemy already measured keeps its crit bonus, and
+ * only a genuinely new archetype needs the model back.
+ */
 async function resolveAffinity(): Promise<void> {
-  if (!game.has('resonance') || !host.isReady('embed') || !game.state.sigil) {
+  const sigil = game.state.sigil;
+  if (!game.has('resonance') || !sigil) {
     game.sigilAffinity = 0;
     return;
   }
+
+  // A new sigil invalidates every measurement taken against the old one.
+  if (game.state.affinitySigil !== sigil) {
+    game.state.affinities = {};
+    game.state.affinitySigil = sigil;
+  }
+
+  const cached = game.state.affinities[game.archetype.id];
+  if (cached !== undefined) {
+    game.sigilAffinity = cached;
+    return;
+  }
+
+  // Nothing cached and no model to ask: leave the bonus off rather than
+  // dragging a download into the middle of a fight. A cheap warm may bring it
+  // online shortly, and this runs again when it does.
+  if (!host.isReady('embed')) {
+    game.sigilAffinity = 0;
+    warmIfCheap('resonance');
+    return;
+  }
+
   try {
-    game.sigilAffinity = await oracle.sigilAffinity(game.state.sigil, game.archetype);
+    const value = await oracle.sigilAffinity(sigil, game.archetype);
+    game.state.affinities[game.archetype.id] = value;
+    game.sigilAffinity = value;
     renderAll();
   } catch (err) {
     console.warn('[resonance] failed', err);
@@ -179,11 +245,32 @@ async function resolveAffinity(): Promise<void> {
   }
 }
 
-/** Loads an ability's pipeline, reporting progress through the ability list. */
+/**
+ * Loads an ability's pipeline, confirming first when the download is large and
+ * the connection looks expensive.
+ *
+ * Spending 145 MB of someone's data plan is not a decision to make silently on
+ * their behalf, and Save-Data is an explicit request not to.
+ */
 async function ensurePipeline(abilityId: string): Promise<boolean> {
   const spec = ABILITIES.find((a) => a.id === abilityId);
   if (!spec) return false;
   if (host.isReady(spec.pipeline)) return true;
+
+  const sizeMB = PIPELINES[spec.pipeline].approxMB;
+  const net = networkState();
+
+  if (net.offline) {
+    toast(`${spec.name} needs a connection the first time.`);
+    return false;
+  }
+
+  if (sizeMB >= LARGE_DOWNLOAD_MB && net.costly) {
+    const why = net.saveData ? 'Data Saver is on' : `you are on ${net.effectiveType}`;
+    if (!confirm(`${spec.name} downloads about ${sizeMB} MB and ${why}. Download now?`)) {
+      return false;
+    }
+  }
 
   try {
     await host.load(spec.pipeline, spec.pipeline);
@@ -490,9 +577,13 @@ async function probeAdapter(): Promise<string> {
 
 async function renderDiagnostics(): Promise<void> {
   const caches_ = 'caches' in self ? await caches.keys().catch(() => []) : [];
+  const net = networkState();
   const lines = [
     `base          ${import.meta.env.BASE_URL}`,
     `origin        ${location.origin}`,
+    `memory        ${deviceMemoryGB() ?? '?'} GB — budget ${host.budgetMB} MB, resident ${host.residentMB} MB`,
+    `network       ${net.effectiveType ?? '?'}${net.saveData ? ' save-data' : ''}${net.offline ? ' OFFLINE' : ''}`,
+    `evictions     ${host.evictions}`,
     `isolated      ${self.crossOriginIsolated} (threads: ${typeof SharedArrayBuffer !== 'undefined'})`,
     // Both halves matter: navigator.gpu exists even when WebGPU is flag-gated,
     // and only a real adapter means it is actually usable.
@@ -561,22 +652,11 @@ if (offline.weights > 0) {
 el.sigil.value = game.state.sigil;
 el.cry.value = game.state.cry;
 
-// Re-warm any pipeline the player already paid for. Weights come from the
-// Transformers.js cache on a repeat launch, so this is usually near-instant
-// and needs no network.
-for (const a of ABILITIES) {
-  if (game.has(a.id) && !host.isReady(a.pipeline)) {
-    void host.load(a.pipeline, a.pipeline).then(
-      () => {
-        void resolveResonance();
-        void resolveAffinity();
-      },
-      () => {
-        /* surfaced in the pipelines tab */
-      },
-    );
-  }
-}
+// Deliberately no eager preloading. Owned pipelines are warmed only when
+// something actually needs a fresh answer (see warmIfCheap), because most
+// sessions are served entirely from the cached answers in the save — and
+// loading every owned model at launch is exactly what the budget exists to
+// stop. The Pipelines tab remains the way to force one online.
 
 let sinceSave = 0;
 new Loop((dt, elapsed) => {
@@ -595,16 +675,26 @@ new Loop((dt, elapsed) => {
 
 // Persist on the way out — visibilitychange is the reliable one on Android,
 // where the tab is often killed without ever firing unload.
+//
+// Backgrounding also releases the models. An idle game sits in the background
+// for hours, and a tab holding hundreds of megabytes is the one Android kills;
+// the cached answers mean coming back costs a session rebuild at worst.
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) save(game.state);
+  if (!document.hidden) return;
+  save(game.state);
+  host.sweepIdle(0);
 });
+
+/** Drop pipelines left untouched for a few minutes. */
+const IDLE_UNLOAD_MS = 5 * 60_000;
+setInterval(() => host.sweepIdle(IDLE_UNLOAD_MS), 60_000);
 
 /**
  * Exposed deliberately, for the smoke test and for poking at a live run from
  * devtools. This is a single-player idle game with no server, no leaderboard
  * and a save the player already owns, so there is nothing here worth hiding.
  */
-(window as unknown as { __game: Game }).__game = game;
+Object.assign(window, { __game: game, __host: host });
 
 renderAll();
 void renderDiagnostics();

@@ -26,12 +26,15 @@ export interface LoadRequest {
 
 export type ToWorker =
   | { type: 'load'; req: LoadRequest }
-  | { type: 'run'; id: number; slot: Slot; input: unknown; options?: unknown };
+  | { type: 'run'; id: number; slot: Slot; input: unknown; options?: unknown }
+  /** Release a pipeline's session and weights. Used for budget eviction. */
+  | { type: 'unload'; slot: Slot };
 
 export type FromWorker =
   /** Weight download progress for one slot, aggregated across its files. */
   | { type: 'progress'; slot: Slot; loaded: number; total: number }
   | { type: 'loaded'; slot: Slot; backend: string }
   | { type: 'loadFailed'; slot: Slot; message: string }
+  | { type: 'unloaded'; slot: Slot }
   | { type: 'result'; id: number; output: unknown }
   | { type: 'failed'; id: number; message: string };

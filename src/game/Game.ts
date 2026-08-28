@@ -256,7 +256,11 @@ export class Game {
     const keep = {
       insight: this.state.insight + gain,
       unlocked: this.state.unlocked,
+      // Model-derived answers survive prestige: recomputing them would cost a
+      // download and produce identical values.
       resonance: this.state.resonance,
+      affinities: this.state.affinities,
+      affinitySigil: this.state.affinitySigil,
       relics: this.state.relics,
       sigil: this.state.sigil,
       cry: this.state.cry,

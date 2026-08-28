@@ -24,7 +24,9 @@ env.backends.onnx.wasm!.wasmPaths = {
 
 const post = (msg: FromWorker) => self.postMessage(msg);
 
-type AnyPipeline = (input: unknown, options?: unknown) => Promise<unknown>;
+type AnyPipeline = ((input: unknown, options?: unknown) => Promise<unknown>) & {
+  dispose?: () => Promise<void>;
+};
 
 const loaded = new Map<Slot, AnyPipeline>();
 const inFlight = new Map<Slot, Promise<void>>();
@@ -107,6 +109,18 @@ self.addEventListener('message', (event: MessageEvent<ToWorker>) => {
         .finally(() => inFlight.delete(slot));
       inFlight.set(slot, job);
     }
+    return;
+  }
+
+  if (msg.type === 'unload') {
+    const pipe = loaded.get(msg.slot);
+    loaded.delete(msg.slot);
+    // dispose() releases the ORT session and its weights from the WASM heap.
+    // Reported regardless of outcome — the slot is gone either way, and a
+    // failed dispose must not leave the host thinking it is still resident.
+    void Promise.resolve(pipe?.dispose?.())
+      .catch((err: unknown) => console.warn(`[pipelines] dispose ${msg.slot} failed`, err))
+      .finally(() => post({ type: 'unloaded', slot: msg.slot }));
     return;
   }
 
