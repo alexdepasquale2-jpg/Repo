@@ -17,7 +17,16 @@ const crossOriginIsolation = {
   'Cross-Origin-Embedder-Policy': 'credentialless',
 };
 
+/**
+ * Deploy target sub-path. GitHub Pages serves a project site under /<repo>/,
+ * so the build needs BASE_PATH=/Repo/ there; local dev and any root-hosted
+ * deploy leave it alone. Everything downstream reads `import.meta.env.BASE_URL`
+ * rather than assuming '/'.
+ */
+const base = process.env['BASE_PATH'] ?? '/';
+
 export default defineConfig({
+  base,
   server: { headers: crossOriginIsolation },
   preview: { headers: crossOriginIsolation },
 
@@ -62,12 +71,13 @@ export default defineConfig({
         // launch on mobile data, so it is runtime-cached on first use instead.
         globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
         globIgnores: ['ort/**'],
-        navigateFallback: 'index.html',
+        navigateFallback: `${base}index.html`,
 
         runtimeCaching: [
           {
-            // onnxruntime-web WASM runtime, served from our own origin.
-            urlPattern: ({ url }) => url.pathname.startsWith('/ort/'),
+            // onnxruntime-web WASM runtime, served from our own origin. Matched
+            // anywhere in the path so it holds under a sub-path deploy too.
+            urlPattern: ({ url }) => url.pathname.includes('/ort/'),
             handler: 'CacheFirst',
             options: {
               cacheName: 'ort-runtime',
@@ -91,13 +101,13 @@ export default defineConfig({
       },
 
       manifest: {
-        name: 'Signal Hunt',
-        short_name: 'Signal Hunt',
+        name: 'Latent Depths',
+        short_name: 'Latent Depths',
         description:
-          'Track down a hidden word using an AI model that runs entirely on your phone.',
+          'An idle ARPG whose abilities are real AI models running on your phone.',
         lang: 'en',
-        start_url: '/',
-        scope: '/',
+        start_url: base,
+        scope: base,
         display: 'standalone',
         orientation: 'portrait',
         background_color: '#0b1020',

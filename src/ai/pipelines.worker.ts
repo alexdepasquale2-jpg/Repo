@@ -9,7 +9,8 @@ env.allowLocalModels = false;
 // Serve the ORT runtime from our own origin. The default is a jsdelivr CDN,
 // which would leave the game broken offline even with weights cached.
 // `scripts/prepare-assets.mjs` stages these files into public/ort/.
-env.backends.onnx.wasm!.wasmPaths = '/ort/';
+// BASE_URL rather than '/', so a sub-path deploy (GitHub Pages) still resolves.
+env.backends.onnx.wasm!.wasmPaths = `${import.meta.env.BASE_URL}ort/`;
 
 const post = (msg: FromWorker) => self.postMessage(msg);
 
