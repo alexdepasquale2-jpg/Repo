@@ -1,6 +1,6 @@
 // Input handling and control systems
 
-class InputManager {
+export class InputManager {
     constructor() {
         this.keys = {};
         this.mouse = { x: 0, y: 0 };
@@ -46,3 +46,11 @@ class InputManager {
         return this.keys[key.toLowerCase()] || false;
     }
 }
+
+// Adopted by Agent A as an ES module (`export class InputManager`); behaviour is
+// otherwise unchanged. GameState reads it via isPressed() and adds its own
+// pointer/touch handling on top rather than editing this file further.
+
+// SELF-TEST: In devtools console:
+//   window.game.input.isPressed('w')  // true only while W is held
+//   window.game.input.addListener((t,d) => console.log(t,d));  // logs keydown/keyup/click

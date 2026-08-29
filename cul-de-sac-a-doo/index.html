@@ -2,17 +2,49 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
     <title>Cul-de-Sac-a-Doo: Survival Night</title>
     <link rel="stylesheet" href="styles/main.css">
+    <style>
+        /* Minimal shell only. Agent D owns styles/main.css and may override
+           anything here; these rules exist so the canvas letterboxes correctly
+           even before that stylesheet has any content. */
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: #05060b;
+            overflow: hidden;
+            overscroll-behavior: none;
+        }
+        #game-container {
+            position: fixed;
+            inset: 0;
+            /* the canvas positions itself absolutely inside this box */
+        }
+        #ui-root {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;   /* Agent D re-enables per-widget */
+        }
+    </style>
 </head>
 <body>
+    <!-- Canvas is created by Renderer and appended here. -->
     <div id="game-container"></div>
+    <!-- DOM overlay layer reserved for Agent D's UIManager. -->
+    <div id="ui-root"></div>
 
-    <script src="src/game/game.js"></script>
-    <script src="src/ui/ui.js"></script>
-    <script src="src/systems/input.js"></script>
-    <script src="src/systems/audio.js"></script>
-    <script src="src/main.js"></script>
+    <!-- Single ESM entry point. Every other module is imported from here. -->
+    <script type="module" src="src/main.js"></script>
 </body>
 </html>
+
+<!-- SELF-TEST: open at a 375x812 viewport.
+     1. Exactly one <canvas id="game-canvas"> exists, centred with black bars.
+     2. DevTools Network shows only module requests (main.js and its imports) —
+        no classic <script> tags, no 404s.
+     3. #ui-root sits above the canvas and does not swallow pointer events
+        (dragging on the canvas still moves the player).
+     4. Console is empty on load. -->

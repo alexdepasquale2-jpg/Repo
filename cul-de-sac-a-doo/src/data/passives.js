@@ -275,6 +275,21 @@ export const RARITY_WEIGHTS = [100, 52, 22, 7];
 // Rarity weight drift per player level — rarer vices get likelier late.
 export const RARITY_LEVEL_DRIFT = [-0.9, 0.15, 0.5, 0.32];
 
+// XP curve. Cost of the Nth level-up = round(base * N ** exponent), with an
+// extra flat tax past `softCapLevel` so very long runs still slow down.
+// Tuned against an assumed night income of roughly four-and-a-half XP per
+// second averaged over a twelve-to-fifteen minute run, which lands the player
+// between twenty and thirty level-ups. See leveling.js `levelsForXp` self-test.
+export const XP_CURVE = {
+  base: 5,
+  exponent: 1.3,
+  softCapLevel: 30,
+  softCapStep: 40
+};
+
+// How many vices are offered per level-up.
+export const CHOICES_PER_LEVEL = 3;
+
 // SELF-TEST:
 //   node -e "import('./src/data/passives.js').then(m=>{
 //     console.log(m.PASSIVES.length >= 22);
