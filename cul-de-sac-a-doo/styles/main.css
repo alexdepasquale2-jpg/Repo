@@ -1,0 +1,65 @@
+/* Cul-de-Sac-a-Doo: Survival Night - Main Stylesheet */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0e27;
+    color: #e0e6ed;
+}
+
+#game-container {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+canvas {
+    display: block;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+}
+
+/* Portrait mode optimization */
+@media (max-width: 480px) {
+    body {
+        font-size: 14px;
+    }
+}
+
+/* No numeric UI - minimalist approach */
+.ui-overlay {
+    position: absolute;
+    display: none;
+}
+
+.ui-overlay.active {
+    display: block;
+}
+
+/* Rumor fragments - whispered, overheard style */
+.rumor-fragment {
+    position: absolute;
+    font-style: italic;
+    opacity: 0.7;
+    font-size: 12px;
+    color: #a0a6ad;
+    pointer-events: none;
+}
+
+/* Loading state */
+.loading {
+    text-align: center;
+    color: #666;
+}

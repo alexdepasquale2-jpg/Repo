@@ -1,0 +1,19 @@
+{
+  "name": "cul-de-sac-a-doo",
+  "version": "0.0.1",
+  "description": "Survival Night - A roguelite with invisible social consequences",
+  "type": "module",
+  "scripts": {
+    "start": "python3 -m http.server 8000 --directory .",
+    "build": "echo 'Build script pending'",
+    "dev": "echo 'Dev script pending'"
+  },
+  "keywords": [
+    "roguelite",
+    "game",
+    "javascript",
+    "html5"
+  ],
+  "author": "alexdepasquale2@gmail.com",
+  "license": "MIT"
+}
