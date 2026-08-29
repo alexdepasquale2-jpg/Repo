@@ -148,6 +148,102 @@ export const LADDERS = [
     'what came through the fence and has not been seen leaving',
   ],
   [
+    'the porch light at that house goes off at a very particular moment',
+    'the porch light at that house goes off the moment anybody walks past',
+    'the porch light at that house goes off the moment anybody walks past, from the inside',
+    'the porch light at that house goes off from the inside and there is nobody in there to do it',
+  ],
+  [
+    'waved with the wrong hand and it looked rehearsed',
+    'waved with the wrong hand, the way somebody does when they have practised being a person',
+    'waved with the wrong hand, and used the last owners name for themselves',
+    'answered to the last owners name and did not notice they had',
+  ],
+  [
+    'no noise from that house at all last night',
+    'no noise from that house for days, and the post is still being taken in',
+    'no noise from that house for days, and something is still taking the post in',
+    'no noise from that house for days, and whatever takes the post in does it at the same hour',
+  ],
+  [
+    'the sprinklers ran the whole night',
+    'the sprinklers ran the whole night on a lawn nobody has walked on since',
+    'the sprinklers ran the whole night and something was standing in them',
+    'the sprinklers ran the whole night and something was standing in them, waiting to be let in',
+  ],
+  [
+    'going through the Colonels crate when the Colonel is asleep',
+    'going through the Colonels crate and putting things back slightly wrong',
+    'going through the Colonels crate and taking the things he does not admit are in there',
+    'going through the Colonels crate looking for the one thing he buried and will not name',
+  ],
+  [
+    'things have been going missing and turning up in a different arrangement',
+    'things have been going missing and turning up in a different house',
+    'things have been going missing and turning up in a different house, arranged the way she likes them',
+    'things have been going missing out of rooms that were locked at the time',
+  ],
+  [
+    'taking deliveries that do not come in a van',
+    'taking deliveries that arrive on foot and do not knock',
+    'taking deliveries that arrive on foot, do not knock, and go round the back',
+    'taking deliveries that arrive on foot, go round the back, and do not come out again',
+  ],
+  [
+    'the frog knows that house by name now',
+    'the frog uses that house as an address now',
+    'the frog has been seen leaving that house in the morning',
+    'the frog has been seen leaving that house in the morning wearing something of theirs',
+  ],
+  [
+    'being extremely generous lately and nobody asked them to be',
+    'being extremely generous lately to everybody except one person',
+    'being extremely generous lately to everybody except one person, and we have all worked out which',
+    'being extremely generous lately in the order the last one went round in',
+  ],
+  [
+    'turned up with a gift again, unprompted, smiling the whole time',
+    'turned up with a gift again, unprompted, and stood in the doorway a beat too long',
+    'turned up with a gift again and looked past me down the hall the whole time',
+    'turned up with a gift again and asked, very casually, about the back door',
+  ],
+  [
+    'hosed the driveway down before it was light out',
+    'hosed the driveway down before it was light out, twice, and it still marked',
+    'hosed the driveway down before it was light out and then did the path, and then the wall',
+    'hosed the driveway down before it was light out and the water went the wrong way up the slope',
+  ],
+  [
+    'the culvert was loud last night and then the whole street went polite about it',
+    'the culvert was loud and by breakfast nobody could remember hearing it',
+    'the culvert was loud and everybody agrees nothing happened, which took some agreeing',
+    'the culvert was loud and now we all say the same sentence about it, word for word',
+  ],
+  [
+    'settled up with something and came back walking differently',
+    'settled up with something and came back with a different way of saying hello',
+    'settled up with something and came back knowing which of our windows sticks',
+    'settled up with something and came back, and something else came back with them',
+  ],
+  [
+    'carrying something out of the back garden under a cloth',
+    'carrying something out of the back garden under a cloth, holding it away from themselves',
+    'carrying something out of the back garden under a cloth that would not stay still',
+    'carrying something out of the back garden under a cloth, and it was the good tablecloth from that house',
+  ],
+  [
+    'brought me something and would not say where it came from',
+    'brought me something and got the answer wrong when I asked twice',
+    'brought me something that I am fairly sure used to be on my own windowsill',
+    'brought me something that had my own handwriting on the underside of it',
+  ],
+  [
+    'gave me back something of mine that I did not know was gone',
+    'gave me back something of mine that I did not know was gone, cleaned',
+    'gave me back something of mine, cleaned, and knew exactly which drawer it lived in',
+    'gave me back something of mine and put it away in the right drawer without being shown',
+  ],
+  [
     'counting out loud in the yard',
     'counting out loud in the yard and starting over every time somebody looked',
     'counting out loud in the yard, and there is nothing out there to count',
@@ -272,15 +368,22 @@ export const AMBIENT_FRAGMENTS = [
 // Pure helpers used by the rumor engine.
 // ---------------------------------------------------------------------------
 
-/** Apply the first matching escalation ladder rung. Returns null if nothing matched. */
+/**
+ * Climb one rung of the first ladder this text is standing on.
+ * Rungs are often prefixes of the rungs above them, so we find the HIGHEST rung
+ * present and step up from there — otherwise a story doubles back on itself and
+ * comes out as word salad instead of an accusation.
+ * Returns null if nothing matched or the ladder is already topped out.
+ */
 export function escalate(text) {
   for (const ladder of LADDERS) {
-    // Walk from the top rung down so a text already high on a ladder keeps climbing.
-    for (let i = ladder.length - 2; i >= 0; i--) {
-      if (text.includes(ladder[i])) {
-        return text.replace(ladder[i], ladder[i + 1]);
-      }
+    let highest = -1;
+    for (let i = 0; i < ladder.length; i++) {
+      if (text.includes(ladder[i])) highest = i;
     }
+    if (highest === -1) continue;              // not this ladder
+    if (highest === ladder.length - 1) continue; // already as bad as it gets
+    return text.replace(ladder[highest], ladder[highest + 1]);
   }
   return null;
 }

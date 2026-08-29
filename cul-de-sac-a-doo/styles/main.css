@@ -1,65 +1,529 @@
-/* Cul-de-Sac-a-Doo: Survival Night - Main Stylesheet */
+/* Cul-de-Sac-a-Doo — Agent D
+   Pastel daylight / dread night. Portrait 375x812, committed, not theme-aware.
+   No numeral is ever rendered; where a quantity must be felt it is carried by
+   inset, tremor, colour temperature, weight or the length of a pause. */
 
-* {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+:root {
+  --w: 375px;
+  --h: 812px;
+
+  --sky-hi: #e6eef7;
+  --sky-lo: #f8ecef;
+  --lawn: #d0e6c9;
+  --asphalt: #d7d3dc;
+  --curb: #f3eff3;
+  --ink: #463f4e;
+  --ink-soft: #7b7286;
+  --ink-faint: #a89fb0;
+  --card: #fdf8ee;
+  --card-edge: #e0d6c5;
+  --pin: #d1837f;
+  --string: #b1524e;
+  --stall-sheila: #f6d3de;
+  --stall-colonel: #ebd9c0;
+  --stall-frog: #c2d6d0;
+  --night-sky: #151829;
+  --night-ground: #1f2138;
+  --dread: #5a4a5d;
+
+  --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  --hand: 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', var(--serif);
+  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
 html, body {
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #0a0e27;
-    color: #e0e6ed;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #262230;
+  color: var(--ink);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
 }
 
 #game-container {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    position: relative;
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
 }
 
-canvas {
-    display: block;
-    image-rendering: pixelated;
-    image-rendering: crisp-edges;
+canvas { display: block; image-rendering: pixelated; }
+
+/* ---------------------------------------------------------------- stage -- */
+
+.cds-root { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+
+.cds-stage {
+  position: relative;
+  width: var(--w); height: var(--h);
+  max-width: 100vw; max-height: 100vh;
+  overflow: hidden;
+  background: var(--sky-lo);
+  box-shadow: 0 0 60px rgba(0,0,0,.45);
+  isolation: isolate;
 }
 
-/* Portrait mode optimization */
-@media (max-width: 480px) {
-    body {
-        font-size: 14px;
-    }
+.cds-layer { position: absolute; inset: 0; }
+.cds-layer[hidden] { display: none !important; }
+
+.cds-scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+/* --------------------------------------------------------------- actors -- */
+
+.cds-actors { position: absolute; inset: 0; }
+
+.cds-actor {
+  position: absolute;
+  width: 0; height: 0;
+  --depth: 1;
+  --turn: 0deg;
+  --lean: 0px;
+  --still: 1;
+  cursor: pointer;
 }
 
-/* No numeric UI - minimalist approach */
-.ui-overlay {
-    position: absolute;
-    display: none;
+.cds-actor .cds-body {
+  position: absolute;
+  left: -9px; top: -14px;
+  width: 18px; height: 30px;
+  border-radius: 8px 8px 4px 4px;
+  background: #cbbfd2;
+  transform: scale(var(--depth)) rotateY(var(--turn)) translateX(var(--lean));
+  transform-origin: 50% 100%;
+  transition: transform .5s cubic-bezier(.2,.7,.3,1);
+  box-shadow: 0 3px 0 rgba(70,63,78,.10);
 }
 
-.ui-overlay.active {
-    display: block;
+.cds-actor .cds-head {
+  position: absolute;
+  left: -7px; top: -27px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #e4d7dd;
+  transform: scale(var(--depth)) rotateY(var(--turn));
+  transition: transform .5s cubic-bezier(.2,.7,.3,1);
 }
 
-/* Rumor fragments - whispered, overheard style */
-.rumor-fragment {
-    position: absolute;
-    font-style: italic;
-    opacity: 0.7;
-    font-size: 12px;
-    color: #a0a6ad;
-    pointer-events: none;
+/* Idle is a breath. A neighbour who does not like you breathes less. */
+.cds-actor .cds-body { animation: cds-breathe 4.2s ease-in-out infinite; }
+@keyframes cds-breathe { 0%,100% { margin-top: 0 } 50% { margin-top: -1.2px } }
+.cds-actor.withdrawn .cds-body { animation-duration: 7s; filter: saturate(.7) brightness(.97); }
+.cds-actor.open .cds-body { animation-duration: 3.2s; }
+
+.cds-actor-sheila .cds-body { background: #e7b7c6; }
+.cds-actor-colonel .cds-body { background: #c8b393; }
+.cds-actor-frog .cds-body { background: #8fb0a6; border-radius: 9px; height: 22px; }
+.cds-actor-frog .cds-head { background: #7fa298; }
+.cds-actor-marge .cds-body { background: #bfc9dd; }
+.cds-actor-dwayne .cds-body { background: #cdc2b0; }
+.cds-actor-newlyweds .cds-body { background: #dfc6d8; width: 26px; left: -13px; }
+.cds-actor-previous { opacity: .28; pointer-events: none; }
+.cds-actor-previous .cds-body { background: #9fa8bd; animation: none; }
+
+.cds-halo {
+  position: absolute;
+  left: -22px; top: -26px;
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(70,63,78,.001);
+  transition: border-color .4s, transform .4s;
+  transform: scale(.85);
+}
+.cds-actor.near .cds-halo { border-color: rgba(70,63,78,.30); transform: scale(1); }
+.cds-actor.shifting .cds-body { transition: transform .22s ease-out; }
+
+.cds-player .cds-body { background: #b2c6cf; }
+.cds-player .cds-head { background: #dce8ec; }
+
+.cds-day.in-garden .cds-scene { filter: saturate(1.06); }
+
+/* --------------------------------------------------------------- porch --- */
+
+.cds-porch {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 72px;
+  display: flex; align-items: center; justify-content: space-around;
+  padding: 0 14px;
 }
 
-/* Loading state */
-.loading {
-    text-align: center;
-    color: #666;
+.cds-porch-btn, .cds-close, .cds-confirm, .cds-pinbtn {
+  font-family: var(--serif);
+  font-size: 14px;
+  letter-spacing: .02em;
+  color: var(--ink);
+  background: #fdf8ee;
+  border: 1px solid var(--card-edge);
+  border-radius: 2px;
+  padding: 9px 16px;
+  cursor: pointer;
+  box-shadow: 0 1px 0 rgba(70,63,78,.12);
+  transition: transform .18s, box-shadow .18s, opacity .2s;
+}
+.cds-porch-btn:hover, .cds-close:hover { transform: translateY(-1px); }
+.cds-porch-night { background: #d9d2e0; }
+.cds-close-quiet { background: transparent; border-color: rgba(70,63,78,.18); color: var(--ink-soft); box-shadow: none; }
+
+/* ------------------------------------------------------------ fragments -- */
+
+.cds-fragments { pointer-events: none; z-index: 6; }
+
+.cds-fragment {
+  position: absolute;
+  max-width: 210px;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 1.1s ease, transform 1.1s ease;
+  text-shadow: 0 1px 0 rgba(255,255,255,.7);
+}
+.cds-fragment.in { opacity: .92; transform: translateY(-4px); }
+
+/* -------------------------------------------------------------- panels --- */
+
+.cds-overlay { z-index: 10; }
+.cds-scrim { position: absolute; inset: 0; background: rgba(38,34,48,.34); backdrop-filter: blur(1.5px); }
+
+.cds-panel {
+  position: absolute;
+  left: 16px; right: 16px; bottom: 16px;
+  max-height: 78%;
+  overflow-y: auto;
+  background: #fbf6ef;
+  border: 1px solid var(--card-edge);
+  border-radius: 3px;
+  padding: 18px 16px 16px;
+  box-shadow: 0 10px 34px rgba(38,34,48,.34);
+  animation: cds-rise .34s cubic-bezier(.2,.8,.25,1);
+}
+@keyframes cds-rise { from { transform: translateY(22px); opacity: 0 } }
+
+.cds-panel-title {
+  font-family: var(--serif);
+  font-size: 19px;
+  letter-spacing: .01em;
+  margin-bottom: 2px;
+}
+.cds-panel-sub {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-bottom: 14px;
+}
+
+/* -------------------------------------------------------------- vendor --- */
+
+.cds-vendor { border-top: 4px solid var(--stall, #ebd9c0); }
+.cds-vendor-sheila { --stall: var(--stall-sheila); }
+.cds-vendor-colonel { --stall: var(--stall-colonel); }
+.cds-vendor-frog { --stall: var(--stall-frog); background: #f2f1ee; }
+
+.cds-stock { display: flex; flex-direction: column; gap: 9px; }
+
+/* A row's cost is its posture. Nothing here is a figure.
+   --withdraw  how far the goods sit back from your side of the counter
+   --weight    how heavily it is drawn
+   --shadow    how much it presses on the table
+   --temp      butter (freely given) -> slate (withheld)
+   --hatch     how crowded and hard to look at it is */
+.cds-offer {
+  position: relative;
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  grid-template-rows: auto auto;
+  gap: 2px 11px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--temp, #eee);
+  border: 1px solid var(--temp-edge, #ccc);
+  border-radius: 2px;
+  cursor: pointer;
+  margin-left: var(--withdraw, 0px);
+  margin-right: calc(0px - var(--withdraw, 0px) / 3);
+  filter: contrast(var(--weight, 1));
+  box-shadow: 0 var(--shadow, 2px) 0 rgba(70,63,78,.13);
+  transition: margin-left .45s cubic-bezier(.2,.8,.3,1), box-shadow .3s, opacity .3s, transform .2s;
+}
+.cds-offer::after {
+  content: '';
+  position: absolute; inset: 0;
+  pointer-events: none;
+  opacity: var(--hatch, 0);
+  background: repeating-linear-gradient(45deg, rgba(70,63,78,.5) 0 1px, transparent 1px 5px);
+}
+.cds-offer:hover { transform: translateX(-3px); }
+.cds-offer.unaffordable { cursor: default; opacity: .58; filter: grayscale(.55); }
+.cds-offer.unaffordable:hover { transform: none; }
+.cds-offer.taken { opacity: 0; transform: translateX(30px); }
+
+.cds-chip {
+  grid-row: 1 / 3;
+  width: 30px; height: 30px;
+  border: 1px solid;
+  border-radius: 2px;
+}
+.cds-offer-name { font-family: var(--serif); font-size: 15px; }
+.cds-offer-mood {
+  grid-column: 2;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+.cds-offer-rung { grid-row: 1 / 3; grid-column: 3; display: flex; gap: 3px; align-items: center; }
+.cds-pip { width: 5px; height: 5px; border-radius: 50%; background: rgba(70,63,78,.16); }
+.cds-pip.on { background: rgba(70,63,78,.52); }
+
+.cds-confirm { grid-column: 1 / 4; margin-top: 8px; background: #fff; }
+
+/* The frog's stall. Two eyes and nothing else. They blink; when a purchase
+   happens they do not, and that is the only acknowledgement that exists. */
+.cds-frog-eyes { display: flex; gap: 26px; justify-content: center; margin: 4px 0 16px; }
+.cds-frog-eye {
+  width: 15px; height: 15px; border-radius: 50%;
+  background: #2f3a37;
+  box-shadow: 0 0 0 4px #8fb0a6;
+  animation: cds-blink 5.4s infinite;
+}
+.cds-frog-eye:nth-child(2) { animation-delay: .18s; }
+.cds-frog-eyes.held .cds-frog-eye { animation-play-state: paused; }
+@keyframes cds-blink { 0%,94%,100% { transform: scaleY(1) } 96% { transform: scaleY(.08) } }
+
+/* ---------------------------------------------------------------- gift --- */
+
+.cds-shelf { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.cds-giftitem {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--serif); font-size: 14px; color: var(--ink);
+  background: var(--rare, #e9e2d6);
+  border: 1px solid rgba(70,63,78,.16);
+  border-radius: 2px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: transform .2s;
+}
+.cds-giftitem:hover { transform: translateY(-2px); }
+.cds-giftswatch { width: 12px; height: 12px; border-radius: 2px; background: rgba(70,63,78,.28); }
+.cds-empty { font-family: var(--serif); font-style: italic; color: var(--ink-soft); font-size: 13px; }
+
+/* the reaction. No words. Only how the panel holds itself, and the door. */
+.cds-panel.cds-reacting .cds-shelf { opacity: .25; transition: opacity .5s; pointer-events: none; }
+.cds-panel[data-tone='warm'] { transition: transform 1s ease; transform: translateY(-4px); }
+.cds-panel[data-tone='cool'] { transition: transform .2s ease; transform: translateY(3px); }
+.cds-panel.cds-door {
+  animation: cds-doorshut .42s cubic-bezier(.5,0,.85,.2) forwards;
+  transform-origin: 0% 50%;
+}
+.cds-panel[data-tone='cool'].cds-door { animation-duration: .17s; }
+@keyframes cds-doorshut {
+  to { transform: perspective(600px) rotateY(-78deg); opacity: 0 }
+}
+
+/* ------------------------------------------------------------ pinboard --- */
+
+.cds-pinboard { position: absolute; inset: 0; z-index: 20; }
+.cds-pinboard[hidden] { display: none; }
+
+.cds-cork {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255,255,255,.16), transparent 60%),
+    repeating-linear-gradient(38deg, #c8a878 0 2px, #c19f6d 2px 5px);
+}
+.cds-strings { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cds-string { cursor: pointer; }
+.cds-cards { position: absolute; inset: 0; }
+
+.cds-card, .cds-outcard {
+  position: absolute;
+  width: 108px;
+  min-height: 66px;
+  padding: 14px 9px 9px;
+  background: var(--card);
+  border: 1px solid var(--card-edge);
+  box-shadow: 2px 3px 7px rgba(40,30,20,.28);
+  transform: rotate(var(--tilt, 0deg));
+  cursor: grab;
+  touch-action: none;
+}
+.cds-card.dragging { cursor: grabbing; box-shadow: 5px 8px 16px rgba(40,30,20,.36); z-index: 5; }
+.cds-card.arming { outline: 1px dashed rgba(70,63,78,.45); outline-offset: 3px; }
+
+.cds-cardpin {
+  position: absolute;
+  left: 50%; top: -5px; margin-left: -5px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--pin);
+  box-shadow: 0 1px 2px rgba(0,0,0,.35);
+  cursor: pointer;
+}
+.cds-cardtext {
+  font-family: var(--hand);
+  font-size: 11.5px;
+  line-height: 1.34;
+  color: #3c3540;
+  word-break: break-word;
+}
+.cds-cardfrom {
+  margin-top: 5px;
+  font-family: var(--hand);
+  font-size: 10px;
+  color: #8a7f72;
+}
+
+.cds-boardbar {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  padding: 10px 14px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(253,248,238,.9);
+  border-top: 1px solid rgba(70,63,78,.2);
+}
+.cds-boardhint { font-family: var(--serif); font-style: italic; font-size: 11px; color: var(--ink-soft); }
+
+/* ------------------------------------------------------------- screens --- */
+
+.cds-screens { position: absolute; inset: 0; z-index: 30; }
+.cds-screens[hidden] { display: none; }
+
+.cds-outcome {
+  background: linear-gradient(#f7f1e8, #efe4dc);
+  padding: 26px 16px 16px;
+  display: flex; flex-direction: column;
+}
+.cds-outcome-title {
+  font-family: var(--serif); font-size: 21px; text-align: center;
+  color: var(--ink); margin-bottom: 18px; letter-spacing: .01em;
+}
+.cds-table { position: relative; flex: 1; }
+.cds-outcard {
+  position: relative;
+  width: auto;
+  margin: 0 0 11px;
+  padding: 15px 12px 10px;
+  cursor: default;
+}
+.cds-outcard .cds-cardtext { font-size: 13px; }
+.cds-outcard.kept { box-shadow: 2px 3px 7px rgba(40,30,20,.28), 0 0 0 2px rgba(177,82,78,.35); }
+.cds-pinbtn { position: absolute; right: 8px; bottom: 6px; padding: 3px 9px; font-size: 11px; }
+.cds-pinbtn:disabled { opacity: .5; cursor: default; }
+
+.cds-outshelf { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 14px; }
+.cds-outchip {
+  width: 22px; height: 26px; border-radius: 2px;
+  border: 1px solid rgba(70,63,78,.2);
+  transform: rotate(var(--tilt, 0deg));
+}
+
+.cds-solocard { background: #1a1726; display: flex; align-items: center; justify-content: center; }
+.cds-outcard.cds-solo { width: 190px; }
+
+/* transitions */
+.cds-transition {
+  position: absolute; inset: 0; z-index: 40;
+  display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .48s ease;
+  pointer-events: none;
+}
+.cds-transition.in { opacity: 1; }
+.cds-transition.to-night { background: radial-gradient(circle at 50% 40%, #2a2b46, #101220 70%); }
+.cds-transition.to-day { background: radial-gradient(circle at 50% 40%, #fdfaf3, #e9eef5 70%); }
+.cds-transition-word {
+  max-width: 250px; text-align: center;
+  font-family: var(--serif); font-style: italic; font-size: 15px; line-height: 1.5;
+}
+.cds-transition.to-night .cds-transition-word { color: #b9bdd6; }
+.cds-transition.to-day .cds-transition-word { color: var(--ink-soft); }
+
+/* endings */
+.cds-ending {
+  background: var(--ground, #1f2138);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 20px;
+}
+.cds-endplate {
+  width: 100%;
+  background: rgba(253,248,238,.94);
+  border: 1px solid rgba(70,63,78,.2);
+  padding: 26px 20px 18px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.42);
+}
+.cds-endtitle {
+  font-family: var(--serif); font-size: 20px; line-height: 1.3;
+  margin-bottom: 18px; color: var(--ink);
+}
+.cds-endline {
+  font-family: var(--serif); font-size: 13.5px; line-height: 1.62;
+  color: #4b4450;
+  margin-bottom: 7px;
+  min-height: 6px;
+  opacity: 0;
+  animation: cds-fadein .9s ease forwards;
+  animation-delay: calc(var(--i, 0) * .42s + .3s);
+}
+@keyframes cds-fadein { to { opacity: 1 } }
+/* the blank strip under the last line. It is the last thing on screen and it
+   is where a tally would have gone. */
+.cds-endsilence { height: 46px; }
+.cds-ending .cds-close { display: block; margin: 0 auto; }
+
+/* ---------------------------------------------------------------- night -- */
+
+.cds-night {
+  background: radial-gradient(ellipse at 50% 24%, var(--night-ground), var(--night-sky) 74%);
+  --tremor: 0px; --inset: 8px; --mist: .06; --lit: 1; --dawn: 0; --grain: 0;
+  animation: cds-tremor .09s infinite steps(2);
+  filter: brightness(calc(1 + var(--dawn) * .35));
+}
+@keyframes cds-tremor {
+  0% { transform: translate(0,0) }
+  50% { transform: translate(var(--tremor), calc(var(--tremor) * -.6)) }
+}
+
+/* health, without a bar: the frame closes in */
+.cds-vignette {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 var(--inset) calc(var(--inset) * .8) rgba(10,8,16,.92);
+  transition: box-shadow .6s ease;
+}
+/* ...and the wrong colour seeps up the edges */
+.cds-mist {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 110%, rgba(125,63,76,var(--mist)), transparent 62%),
+              radial-gradient(ellipse at 50% -10%, rgba(125,63,76,calc(var(--mist) * .7)), transparent 58%);
+  transition: background .6s ease;
+}
+/* ...and the porch light behind you goes out slowly */
+.cds-porchlight {
+  position: absolute;
+  left: 50%; bottom: 10px; margin-left: -70px;
+  width: 140px; height: 40px;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 100%, rgba(253,241,217,calc(var(--lit) * .55)), transparent 70%);
+  transition: background 1s ease;
+}
+.cds-nightword {
+  position: absolute;
+  left: 0; right: 0; top: 40px;
+  text-align: center;
+  font-family: var(--serif); font-style: italic; font-size: 14px;
+  color: rgba(224,206,210,.72);
+  pointer-events: none;
+}
+
+.cds-veil { position: absolute; inset: 0; pointer-events: none; z-index: 50; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cds-night { animation: none; }
+  .cds-actor .cds-body { animation: none; }
+  .cds-endline { animation: none; opacity: 1; }
 }

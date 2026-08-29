@@ -243,9 +243,12 @@ export class RumorEngine {
     }
 
     // Trailing clauses, capped and never repeated. Two is a rumor; five is a rant.
-    const existing = APPENDS.filter((a) => text.includes(a));
+    // Match on the period-stripped form: an earlier append loses its full stop when
+    // the next one is bolted on, so a naive includes() lets duplicates back in.
+    const bare = (a) => a.replace(/\.$/, '');
+    const existing = APPENDS.filter((a) => text.includes(bare(a)));
     if (existing.length < MAX_APPENDS && this.rng() < 0.75) {
-      const fresh = APPENDS.filter((a) => !text.includes(a));
+      const fresh = APPENDS.filter((a) => !text.includes(bare(a)));
       const add = pick(fresh, this.rng);
       if (add) text = text.replace(/[.]*$/, '') + add;
     }
@@ -319,16 +322,31 @@ export class RumorEngine {
   }
 
   _fragmentOf(r) {
-    const words = stripLead(r.text).split(' ');
-    // Take a slice from the middle. Beginnings explain and endings resolve;
-    // a fragment must do neither.
-    const start = Math.min(
-      words.length - 2,
-      Math.floor(this.rng() * Math.max(1, words.length - 6)),
-    );
-    const len = 4 + Math.floor(this.rng() * 7);
-    const slice = words.slice(Math.max(0, start), Math.max(2, start + len)).join(' ');
-    return `${pick(FRAGMENT_LEADINS, this.rng)}${slice}${pick(FRAGMENT_TRAILS, this.rng)}`;
+    // Pick ONE clause out of the story — the core accusation, or one of the
+    // trailing insinuations. Never the whole thing, never enough to act on.
+    const clauses = stripLead(r.text)
+      .split(' — ')
+      .map((c) => c.replace(/^and /, '').replace(/[.,]+$/, '').trim())
+      .filter((c) => c.split(' ').length >= 3);
+    if (clauses.length === 0) return pick(AMBIENT_FRAGMENTS, this.rng);
+
+    // Usually the accusation itself; sometimes just a trailing insinuation,
+    // which is worse because you cannot tell what it was attached to.
+    const clause = this.rng() < 0.65
+      ? clauses[0]
+      : clauses[Math.floor(this.rng() * clauses.length) % clauses.length];
+    const words = clause.split(' ');
+
+    // Start at the head of the clause so it parses, and cut the TAIL off
+    // mid-thought — that is where the menace is. The lead-in supplies the
+    // sense of having walked in on the middle of it.
+    const len = 4 + Math.floor(this.rng() * 6);
+    let slice = words.slice(0, len).join(' ').replace(/[,]$/, '');
+    if (slice.split(' ').length < 3) slice = words.slice(0, 6).join(' ');
+
+    const trail = pick(FRAGMENT_TRAILS, this.rng);
+    const joiner = trail.startsWith('…') ? '' : ' ';
+    return `${pick(FRAGMENT_LEADINS, this.rng)}${slice}${joiner}${trail}`;
   }
 
   // -------------------------------------------------------------------------
