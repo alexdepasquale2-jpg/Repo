@@ -13,6 +13,10 @@ python3 -m http.server 8000
 
 No build step, no dependencies — ES modules and one canvas.
 
+To produce a single self-contained page (for hosting somewhere that cannot serve
+the module tree), `node build.mjs` writes `dist/play.html` with everything
+inlined. It needs esbuild; nothing else does.
+
 ## What it is
 
 You are a salvager. Four rooms teach you the ruin one idea at a time, then it

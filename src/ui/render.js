@@ -7,6 +7,7 @@ import { SHAPE } from '../game/telegraph.js';
 import { MODE } from '../game/world.js';
 import { bandOf, inBand } from '../game/weapons.js';
 import { SIT_HOLD } from '../game/throne.js';
+import { MONO } from './hud.js';
 
 const PAL = {
   floor: '#15140f',
@@ -31,6 +32,10 @@ export function drawWorld(ctx, world, camera, alpha) {
   const { width, height } = ctx.canvas;
   ctx.fillStyle = PAL.floor;
   ctx.fillRect(0, 0, width, height);
+
+  // Nothing has been loaded yet at the title, so there is no room to draw — and
+  // drawing the default bounds anyway put a stray slab of floor behind the text.
+  if (world.mode === MODE.TITLE) return;
 
   ctx.save();
   camera.apply(ctx);
@@ -217,7 +222,7 @@ function drawWalls(ctx, world) {
     ctx.lineWidth = 3;
     ctx.strokeRect(d.x, d.y, d.w, d.h);
     ctx.fillStyle = 'rgba(200,180,120,0.35)';
-    ctx.font = '10px ui-monospace, monospace';
+    ctx.font = `10px ${MONO}`;
     ctx.textAlign = 'center';
     ctx.fillText('SEALED', d.x + d.w / 2, d.y + d.h + 14);
     ctx.textAlign = 'left';
@@ -541,7 +546,7 @@ function drawTargetRing(ctx, e) {
 }
 
 function drawName(ctx, e) {
-  ctx.font = '10px ui-monospace, monospace';
+  ctx.font = `10px ${MONO}`;
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(230,226,214,0.55)';
   ctx.fillText(e.pledged ? `${e.name} · pledged` : e.name, e.x, e.y - e.radius - 17);

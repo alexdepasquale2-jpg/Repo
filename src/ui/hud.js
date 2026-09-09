@@ -9,7 +9,14 @@ import { swingUptime, bandOf } from '../game/weapons.js';
 import { INTENT } from '../core/input.js';
 import { LEVELS, LEVEL_FOR_THRONE } from '../game/levels.js';
 
-const F = (px, weight = 400) => `${weight} ${px}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+// One mono for every number in the game, one condensed face for the few places
+// the game speaks in its own voice. Both fall back cleanly if the webfont never
+// arrives — canvas re-renders every frame, so there is no flash to manage.
+export const MONO = '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+export const DISPLAY = '"IBM Plex Sans Condensed", "IBM Plex Mono", ui-monospace, sans-serif';
+
+const F = (px, weight = 400) => `${weight} ${px}px ${MONO}`;
+const D = (px, weight = 700) => `${weight} ${px}px ${DISPLAY}`;
 
 export function drawHud(ctx, world, input, loopState) {
   const W = ctx.canvas.width, H = ctx.canvas.height;
@@ -347,7 +354,7 @@ function drawMercy(ctx, world, W, H) {
   ctx.fillStyle = 'rgba(8,7,5,0.86)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = F(24, 700);
+  ctx.font = D(30, 700);
   ctx.fillStyle = '#f4f1e8';
   ctx.fillText('The fungus lets go.', W / 2, H / 2 - 90);
   ctx.font = F(13);
@@ -378,7 +385,7 @@ function drawAllocation(ctx, world, input, W, H) {
   ctx.fillStyle = 'rgba(8,7,5,0.9)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = F(22, 700);
+  ctx.font = D(28, 700);
   ctx.fillStyle = '#c9a24a';
   ctx.fillText('THE ALLOCATION', W / 2, 90);
   ctx.font = F(12);
@@ -424,7 +431,7 @@ function drawResult(ctx, world, W, H) {
   ctx.fillStyle = 'rgba(8,7,5,0.92)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = F(26, 700);
+  ctx.font = D(32, 700);
   ctx.fillStyle = r.kind === 'escaped' ? '#8fd48a' : '#f4f1e8';
   ctx.fillText(r.title, W / 2, H / 2 - 60);
   ctx.font = F(13);
@@ -461,7 +468,7 @@ function drawSafeRoom(ctx, world, input, W, H) {
   ctx.fillStyle = 'rgba(8,7,5,0.88)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = F(20, 700);
+  ctx.font = D(26, 700);
   ctx.fillStyle = '#f4f1e8';
   ctx.fillText('Nothing follows you in here.', W / 2, 90);
   ctx.font = F(12);
@@ -517,7 +524,7 @@ function drawSafeRoom(ctx, world, input, W, H) {
 
 function drawTitle(ctx, W, H) {
   ctx.textAlign = 'center';
-  ctx.font = F(34, 700);
+  ctx.font = D(42, 700);
   ctx.fillStyle = '#c9a24a';
   ctx.fillText('THE CHAIR IS NOT LOCKED', W / 2, H / 2 - 70);
   ctx.font = F(13);
