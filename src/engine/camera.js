@@ -7,7 +7,11 @@ export function createCamera(viewW, viewH) {
     x: 0, y: 0,
     viewW, viewH,
     zoom: 1,
-    targetZoom: 1,
+    targetZoom: 1,        // logical zoom, in world units — what gameplay sets
+    // Device pixels per logical unit: devicePixelRatio folded together with a
+    // viewport factor. Kept here so gameplay code only ever talks about zoom,
+    // and so a phone at dpr 3 does not render the world at a third scale.
+    pixelScale: 1,
     deadzone: 48,
     shake: 0,
     shakeX: 0, shakeY: 0,
@@ -17,7 +21,14 @@ export function createCamera(viewW, viewH) {
 
     setBounds(b) { this.bounds = b; },
 
-    resize(w, h) { this.viewW = w; this.viewH = h; },
+    resize(w, h) { this.viewW = w; this.viewH = h; this.clampToBounds(); },
+    setPixelScale(v) {
+      // Snap rather than damp: a rotation or a resize should not animate.
+      const ratio = v / (this.pixelScale || 1);
+      this.pixelScale = v;
+      this.zoom *= ratio;
+      this.clampToBounds();
+    },
 
     // Nudge the camera toward what the player is locked onto, so it "looks at"
     // the fight without the player noticing it happened.
@@ -40,7 +51,7 @@ export function createCamera(viewW, viewH) {
         this.y = damp(this.y, gy, 0.09, dt);
       }
 
-      this.zoom = damp(this.zoom, this.targetZoom, 0.25, dt);
+      this.zoom = damp(this.zoom, this.targetZoom * this.pixelScale, 0.25, dt);
       this.clampToBounds();
 
       if (this.shake > 0) {

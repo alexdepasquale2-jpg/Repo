@@ -48,12 +48,22 @@ const page = `<title>The Chair Is Not Locked</title>
     background: var(--ground);
     color: var(--ink);
     font-family: var(--mono);
+    /* A game is not a document: no rubber-band scroll, no text selection from a
+       dragged thumb, no grey flash on every tap. */
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-text-size-adjust: 100%;
   }
 
   #game {
     display: block;
     width: 100vw;
     height: 100vh;
+    /* dvh follows the mobile browser's collapsing toolbars; vh does not. */
+    height: 100dvh;
     touch-action: none;
     cursor: crosshair;
     background: var(--ground);
@@ -63,6 +73,8 @@ const page = `<title>The Chair Is Not Locked</title>
   /* The canvas draws its own title screen, so this stays out of its way: a plate
      at the foot of the screen that exists only to explain why the keyboard is
      not doing anything yet. */
+  /* Touch needs no focus plate — a tap is already the gesture. It is hidden by
+     the coarse-pointer query and by the script, so neither path leaves it up. */
   #focus-plate {
     position: fixed;
     left: 50%;
@@ -113,6 +125,12 @@ const page = `<title>The Chair Is Not Locked</title>
   @media (prefers-reduced-motion: reduce) {
     #focus-plate { transition: none; }
   }
+
+  /* On a touch device the on-screen controls are the legend, and the keyboard
+     hints name keys that are not there. */
+  @media (pointer: coarse) {
+    #focus-plate, #legend { display: none !important; }
+  }
 </style>
 
 <canvas id="game" tabindex="0"></canvas>
@@ -135,12 +153,16 @@ const page = `<title>The Chair Is Not Locked</title>
   var call = plate.querySelector('.call');
   var why = plate.querySelector('.why');
 
+  var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+
   function take() {
     canvas.focus({ preventScroll: true });
     plate.hidden = true;
   }
   // Focus without a gesture is not a promise the keyboard follows, so the plate
-  // stays up until someone actually clicks or types.
+  // stays up until someone actually clicks or types. On touch there is no
+  // keyboard to wait for, so it never appears at all.
+  if (coarse) plate.hidden = true;
   canvas.focus({ preventScroll: true });
   // Any click, tap or keypress on the page is a request to play.
   document.addEventListener('pointerdown', take);
@@ -151,10 +173,15 @@ const page = `<title>The Chair Is Not Locked</title>
   // Losing focus mid-run is the one case worth interrupting for: the keys stop
   // working and nothing on screen would otherwise say why.
   window.addEventListener('blur', function () {
+    if (coarse) return;
     call.textContent = 'Click to resume';
     why.textContent = 'The keyboard went somewhere else.';
     plate.hidden = false;
   });
+
+  // Double-tap-to-zoom would otherwise fight the target button.
+  document.addEventListener('dblclick', function (e) { e.preventDefault(); }, { passive: false });
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); }, { passive: false });
   window.addEventListener('focus', function () {
     canvas.focus({ preventScroll: true });
   });
@@ -168,4 +195,29 @@ ${js}
 
 await mkdir('dist', { recursive: true });
 await writeFile('dist/play.html', page);
-console.log(`dist/play.html — ${(page.length / 1024).toFixed(1)} KB`);
+
+// play.html is a fragment: the artifact host wraps it in a document and supplies
+// the charset/viewport meta and a small reset. Locally there is no host, and a
+// page with no viewport meta lays out at 980px on a phone — which is exactly the
+// bug this preview exists to stop me shipping. Same fragment, host-shaped wrapper.
+const preview = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #fafaf9; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+${page}
+</body>
+</html>
+`;
+await writeFile('dist/preview.html', preview);
+
+console.log(`dist/play.html — ${(page.length / 1024).toFixed(1)} KB (artifact fragment)`);
+console.log('dist/preview.html — same page, wrapped for local testing');

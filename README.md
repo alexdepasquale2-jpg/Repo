@@ -41,6 +41,13 @@ anyone gets their money, and the boss knows it while he is fighting you.
 
 Then the chair is empty again, and there are fewer of you.
 
+Touch is a first-class input, not a fallback: the whole point of the intent
+layer is that gameplay code never learns where an input came from, so the
+on-screen stick and buttons drive the same intents the keyboard does. A floating
+thumb stick appears wherever you press on the left; the buttons on the right
+change with the role you are in, and every menu choice — begin, go on, spare,
+finish it, the allocation — is a button rather than a key.
+
 ## Controls
 
 | | Attacker | Seated |
@@ -54,6 +61,8 @@ Then the chair is empty again, and there are fewer of you.
 | Esc | — | change what growth spends on |
 | Enter / Esc | spare / kill a downed sitter | |
 | ` · P · [ ] | debug overlay · pause · timescale | |
+
+On touch: left thumb anywhere to walk, buttons on the right for everything else.
 
 Your weapon swings itself, but **only inside its band**, and every weapon wants a
 different distance. Holding that band while knockback, fungal ground and your own

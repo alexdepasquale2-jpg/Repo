@@ -51,6 +51,10 @@ export function createInput(target = window) {
   const pressedThisTick = new Set();
   const releasedThisTick = new Set();
   let enabled = true;
+  // A touch stick reports a direction and a magnitude, which a key cannot. It
+  // feeds the same intent layer rather than a parallel path, so gameplay code
+  // still never learns where a movement came from (T0-N02).
+  const analog = { x: 0, y: 0 };
 
   const press = (intent) => {
     if (!held.has(intent)) pressedThisTick.add(intent);
@@ -89,7 +93,13 @@ export function createInput(target = window) {
     wasReleased: (intent) => releasedThisTick.has(intent),
 
     // Normalized move vector. Diagonals do not outrun cardinals.
+    // A live stick wins over the keys — you cannot be holding both, and reading
+    // the stick first keeps its magnitude (a half-push is a half-speed walk).
     moveAxis() {
+      const mag = Math.hypot(analog.x, analog.y);
+      if (mag > 0.08) {
+        return mag > 1 ? { x: analog.x / mag, y: analog.y / mag } : { x: analog.x, y: analog.y };
+      }
       let x = 0, y = 0;
       if (api.isHeld(INTENT.MOVE_LEFT)) x -= 1;
       if (api.isHeld(INTENT.MOVE_RIGHT)) x += 1;
@@ -105,6 +115,16 @@ export function createInput(target = window) {
       pressedThisTick.clear();
       releasedThisTick.clear();
     },
+
+    // Driven by the on-screen stick. Magnitude is preserved up to 1.
+    setAnalog(x, y) { analog.x = x; analog.y = y; },
+    clearAnalog() { analog.x = 0; analog.y = 0; },
+
+    // Driven by on-screen buttons. Same edge semantics as a key, so wasPressed
+    // and isHeld behave identically whichever the player is using.
+    pressIntent(intent) { if (enabled) press(intent); },
+    releaseIntent(intent) { release(intent); },
+    releaseAllIntents() { for (const i of [...held]) release(i); },
 
     setEnabled(v) {
       enabled = v;

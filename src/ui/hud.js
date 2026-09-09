@@ -20,30 +20,34 @@ const D = (px, weight = 700) => `${weight} ${px}px ${DISPLAY}`;
 
 export function drawHud(ctx, world, input, loopState) {
   const W = ctx.canvas.width, H = ctx.canvas.height;
+  // On a phone the bottom of the screen belongs to the thumbs, and a panel
+  // sized for a desktop window eats a third of the view. Compact is a different
+  // arrangement, not the same one scaled down.
+  const ui = world.ui ?? { touch: false, compact: false, safeBottom: 0 };
   ctx.save();
   ctx.textBaseline = 'alphabetic';
 
   const playerIsBoss = world.boss?.isPlayerControlled && world.mode === MODE.FIGHT;
 
-  if (world.mode === MODE.TITLE) { drawTitle(ctx, W, H); ctx.restore(); return; }
+  if (world.mode === MODE.TITLE) { drawTitle(ctx, W, H, ui); ctx.restore(); return; }
 
   // The idle timer belongs to the room, not to one side.
   if (world.boss && (world.mode === MODE.FIGHT || world.mode === MODE.TRANSFORMATION)) {
-    drawIdleTimer(ctx, world, W);
-    drawRootArmor(ctx, world, W, H);
+    drawIdleTimer(ctx, world, W, ui);
+    drawRootArmor(ctx, world, W, H, ui);
   }
 
-  if (playerIsBoss) drawBossHud(ctx, world, input, W, H);
-  else drawAttackerHud(ctx, world, input, W, H);
+  if (playerIsBoss) drawBossHud(ctx, world, input, W, H, ui);
+  else drawAttackerHud(ctx, world, input, W, H, ui);
 
-  if (world.level?.openWorld && world.mode === MODE.RUNUP) drawObjective(ctx, world, W, H);
-  drawLog(ctx, world, W, H);
-  drawPrompts(ctx, world, input, W, H);
+  if (world.level?.openWorld && world.mode === MODE.RUNUP) drawObjective(ctx, world, W, H, ui);
+  drawLog(ctx, world, W, H, ui);
+  drawPrompts(ctx, world, input, W, H, ui);
 
-  if (world.mode === MODE.SAFEROOM) drawSafeRoom(ctx, world, input, W, H);
-  if (world.mode === MODE.MERCY) drawMercy(ctx, world, W, H);
-  if (world.mode === MODE.ALLOCATION) drawAllocation(ctx, world, input, W, H);
-  if (world.mode === MODE.RESULT) drawResult(ctx, world, W, H);
+  if (world.mode === MODE.SAFEROOM) drawSafeRoom(ctx, world, input, W, H, ui);
+  if (world.mode === MODE.MERCY) drawMercy(ctx, world, W, H, ui);
+  if (world.mode === MODE.ALLOCATION) drawAllocation(ctx, world, input, W, H, ui);
+  if (world.mode === MODE.RESULT) drawResult(ctx, world, W, H, ui);
   if (world.mode === MODE.TRANSFORMATION) drawTransformVeil(ctx, world, W, H);
   if (world.debug) drawDebug(ctx, world, loopState, W, H);
 
@@ -67,11 +71,16 @@ function panel(ctx, x, y, w, h) {
 }
 
 // ── the shared clock (T2-N06) ───────────────────────────────────────────────
-function drawIdleTimer(ctx, world, W) {
+function drawIdleTimer(ctx, world, W, ui) {
   const b = world.boss;
   const frac = clamp(b.idleTimer / b.idleLimit, 0, 1);
   const urgent = b.idleTimer < 6;
-  const w = 420, x = (W - w) / 2, y = 18;
+  // On a narrow screen the seated panel, this bar and the root readout cannot
+  // share one row, so the shared clock drops to its own line beneath them.
+  const stacked = ui.compact && W < 640;
+  const w = stacked ? W - 24 : ui.compact ? Math.min(240, W - 150) : 420;
+  const x = stacked ? 12 : (W - w) / 2;
+  const y = stacked ? 118 : ui.compact ? 16 : 18;
 
   panel(ctx, x - 10, y - 14, w + 20, 46);
   ctx.font = F(10, 600);
@@ -87,11 +96,12 @@ function drawIdleTimer(ctx, world, W) {
 }
 
 // T2-N21 · armor ticks down visibly as nodes die, so clearing reads as progress.
-function drawRootArmor(ctx, world, W, H) {
+function drawRootArmor(ctx, world, W, H, ui) {
   const b = world.boss;
   const armor = b.currentArmor();
   const open = b.rootWindow > 0;
-  const w = 260, x = W - w - 20, y = 20;
+  const w = ui.compact ? 128 : 260;
+  const x = W - w - (ui.compact ? 12 : 20), y = ui.compact ? 16 : 20;
   panel(ctx, x - 10, y - 14, w + 20, 62);
   ctx.font = F(10, 600);
   ctx.fillStyle = open ? '#8fd48a' : 'rgba(230,226,214,0.7)';
@@ -107,11 +117,12 @@ function drawRootArmor(ctx, world, W, H) {
 }
 
 // ── attacker HUD ────────────────────────────────────────────────────────────
-function drawAttackerHud(ctx, world, input, W, H) {
+function drawAttackerHud(ctx, world, input, W, H, ui) {
   const p = world.player;
   // The seated player has no weapon and no abilities — they were torn down by
   // the swap. Fall back to the spectator/downed read rather than the kit read.
   if (!p || !p.weapon) return;
+  if (ui.compact) return drawAttackerHudCompact(ctx, world, p, W, H, ui);
   const x = 20, y = H - 128;
   panel(ctx, x - 10, y - 14, 340, 128);
 
@@ -146,7 +157,45 @@ function drawAttackerHud(ctx, world, input, W, H) {
   ctx.fillStyle = p.possession > 13 ? '#a074c9' : 'rgba(230,226,214,0.6)';
   ctx.fillText(`possession ${p.possession ?? 0} · ${tier.label}`, x, y + 100);
 
-  drawAbilityBar(ctx, p, input, W, H);
+  if (!ui.touch) drawAbilityBar(ctx, p, input, W, H);
+}
+
+// Phone layout: the panel moves to the top-left, out of the way of the stick,
+// and carries only what you act on — health, what you are locked to, and whether
+// you are in your weapon's band.
+function drawAttackerHudCompact(ctx, world, p, W, H, ui) {
+  const x = 12, y = 26, w = 176;
+  panel(ctx, x - 8, y - 16, w + 16, 76);
+
+  ctx.font = F(10, 700);
+  ctx.fillStyle = p.spectating ? '#a074c9' : '#e8e2d0';
+  ctx.fillText(p.spectating ? 'DOWN' : `LVL ${p.level}`, x, y);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#c9a24a';
+  ctx.font = F(9);
+  ctx.fillText(`${p.salvage}`, x + w, y);
+  ctx.textAlign = 'left';
+
+  bar(ctx, x, y + 6, w, 9, p.hp / p.maxHp, p.spectating ? '#5b4a6b' : '#7fc08a');
+  bar(ctx, x, y + 18, w, 3, p.xp / p.xpToNext, '#6ec1e4');
+
+  const t = p.target;
+  ctx.font = F(9);
+  ctx.fillStyle = 'rgba(230,226,214,0.8)';
+  ctx.fillText(t && !t.dead ? `» ${(t.name || t.kind).slice(0, 18)}` : '» no target', x, y + 36);
+  if (t && !t.dead) bar(ctx, x, y + 41, w, 4, t.hp / t.maxHp, '#c25b4e');
+
+  // The band is the skill in the game, so it stays on screen even here.
+  const d = t && !t.dead ? Math.hypot(t.x - p.x, t.y - p.y) : Infinity;
+  const ok = inBandNow(p, d);
+  ctx.fillStyle = ok ? '#8fd48a' : 'rgba(230,226,214,0.4)';
+  ctx.fillText(ok ? 'in band' : 'out of band', x, y + 56);
+}
+
+function inBandNow(p, d) {
+  if (!p.weapon || !Number.isFinite(d)) return false;
+  const [lo, hi] = bandOf(p.weapon);
+  return d >= lo && d <= hi;
 }
 
 function drawAbilityBar(ctx, p, input, W, H) {
@@ -179,8 +228,9 @@ function drawAbilityBar(ctx, p, input, W, H) {
 }
 
 // ── boss HUD (T2-N13) ───────────────────────────────────────────────────────
-function drawBossHud(ctx, world, input, W, H) {
+function drawBossHud(ctx, world, input, W, H, ui) {
   const b = world.boss;
+  if (ui.compact) return drawBossHudCompact(ctx, world, b, W, H, ui);
   const x = 20, y = H - 150;
   panel(ctx, x - 10, y - 14, 380, 150);
 
@@ -254,24 +304,55 @@ function drawBossHud(ctx, world, input, W, H) {
   }
 }
 
+// Seated on a phone: the three bars that decide everything, and nothing else.
+// The ability costs live on the buttons themselves.
+function drawBossHudCompact(ctx, world, b, W, H, ui) {
+  const x = 12, y = 26, w = 176;
+  panel(ctx, x - 8, y - 16, w + 16, 74);
+
+  ctx.font = F(10, 700);
+  ctx.fillStyle = '#8fbf5a';
+  ctx.fillText('SEATED', x, y);
+  bar(ctx, x, y + 6, w, 8, b.entity.hp / b.entity.maxHp, '#6f8f45');
+
+  ctx.font = F(9);
+  ctx.fillStyle = '#c9a24a';
+  ctx.fillText(`biomass ${Math.floor(b.biomass)}`, x, y + 28);
+  bar(ctx, x, y + 33, w, 5, b.biomass / 220, '#c9a24a');
+
+  ctx.fillStyle = b.overgrowth > 50 ? '#a074c9' : 'rgba(230,226,214,0.55)';
+  ctx.fillText(`overgrowth ${Math.round(b.overgrowth)}%`, x, y + 52);
+  bar(ctx, x, y + 57, w, 5, b.overgrowth / 100, '#a074c9');
+
+  if (b.casting) {
+    ctx.textAlign = 'center';
+    ctx.font = F(11, 700);
+    ctx.fillStyle = '#e2685f';
+    ctx.fillText(`${BOSS_ABILITIES[b.casting.id].name} — Pull to feint`, W / 2, H - 150 - ui.safeBottom);
+    ctx.textAlign = 'left';
+  }
+}
+
 // ── contextual prompts ──────────────────────────────────────────────────────
-function drawPrompts(ctx, world, input, W, H) {
+function drawPrompts(ctx, world, input, W, H, ui) {
   const p = world.player;
   if (!p || p.spectating) return;
   const lines = [];
+  // Name the control the player actually has in front of them.
+  const useKey = ui.touch ? 'SIT' : input.keyFor(INTENT.INTERACT);
 
   if (world.mode === MODE.THRONE_STANDOFF) {
     const d = Math.hypot(p.x - world.throne.x, p.y - world.throne.y);
-    if (d < 90) lines.push(`HOLD ${input.keyFor(INTENT.INTERACT)} TO SIT`);
+    if (d < 90) lines.push(`HOLD ${useKey} TO SIT`);
     else lines.push(`${Math.ceil(world.standoffTimer)}s — someone is going to sit`);
   }
-  if (world.mode === MODE.SAFEROOM) lines.push(`${input.keyFor(INTENT.CONFIRM)} to go on`);
+  if (world.mode === MODE.SAFEROOM && !ui.touch) lines.push(`${input.keyFor(INTENT.CONFIRM)} to go on`);
   if (world.exitOpen && !world.level?.openWorld) lines.push('the way on is open');
 
   if (!lines.length) return;
   ctx.textAlign = 'center';
-  ctx.font = F(13, 700);
-  let y = H - 190;
+  ctx.font = F(ui.compact ? 12 : 13, 700);
+  let y = ui.compact ? H * 0.34 : H - 190;
   for (const l of lines) {
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillText(l, W / 2 + 1, y + 1);
@@ -284,26 +365,30 @@ function drawPrompts(ctx, world, input, W, H) {
 
 // The open world has no body count to clear, so it needs a stated goal and a
 // direction. Both live here rather than in a tutorial box.
-function drawObjective(ctx, world, W, H) {
+function drawObjective(ctx, world, W, H, ui) {
   const p = world.player;
   if (!p) return;
   const ready = p.level >= LEVEL_FOR_THRONE;
-  const x = W - 270, y = 34;
-  panel(ctx, x - 12, y - 20, 262, ready ? 52 : 66);
+  const w = ui.compact ? 150 : 250;
+  const x = W - w - (ui.compact ? 12 : 20), y = ui.compact ? 30 : 34;
+  panel(ctx, x - 12, y - 20, w + 12, ready ? 46 : (ui.compact ? 50 : 66));
 
-  ctx.font = F(10, 700);
+  ctx.font = F(ui.compact ? 9 : 10, 700);
   ctx.fillStyle = ready ? '#8fd48a' : '#c9a24a';
-  ctx.fillText(ready ? 'THE WAY DOWN IS OPEN' : `REACH LEVEL ${LEVEL_FOR_THRONE}`, x, y);
+  ctx.fillText(ready ? (ui.compact ? 'WAY DOWN OPEN' : 'THE WAY DOWN IS OPEN')
+    : `REACH LEVEL ${LEVEL_FOR_THRONE}`, x, y);
 
   ctx.font = F(9);
   ctx.fillStyle = 'rgba(230,226,214,0.6)';
   if (ready) {
-    ctx.fillText('or stay up here as long as you like', x, y + 16);
+    if (!ui.compact) ctx.fillText('or stay up here as long as you like', x, y + 16);
   } else {
-    ctx.fillText(`level ${p.level} — ${p.xpToNext - p.xp} xp to go`, x, y + 16);
-    bar(ctx, x, y + 24, 238, 6, p.xp / p.xpToNext, '#6ec1e4');
-    ctx.fillStyle = 'rgba(230,226,214,0.4)';
-    ctx.fillText('camps refill. nothing here stays cleared.', x, y + 42);
+    ctx.fillText(`level ${p.level} — ${p.xpToNext - p.xp} xp`, x, y + 16);
+    bar(ctx, x, y + 24, w - 12, 6, p.xp / p.xpToNext, '#6ec1e4');
+    if (!ui.compact) {
+      ctx.fillStyle = 'rgba(230,226,214,0.4)';
+      ctx.fillText('camps refill. nothing here stays cleared.', x, y + 42);
+    }
   }
 
   // A pointer to the exit, drawn at the screen edge when it is off-camera.
@@ -331,10 +416,14 @@ function drawExitPointer(ctx, world, W, H, ready) {
   ctx.globalAlpha = 1;
 }
 
-function drawLog(ctx, world, W, H) {
-  ctx.font = F(11);
-  let y = 92;
-  for (const l of world.log) {
+function drawLog(ctx, world, W, H, ui) {
+  ctx.font = F(ui.compact ? 10 : 11);
+  const x = ui.compact ? 12 : 20;
+  const clockStacked = ui.compact && W < 640 && world.boss;
+  let y = clockStacked ? 168 : ui.compact ? 118 : 92;
+  // Only the last few lines on a phone — the rest would run into the controls.
+  const lines = ui.compact ? world.log.slice(-4) : world.log;
+  for (const l of lines) {
     const a = clamp(l.life / 2, 0, 1);
     ctx.globalAlpha = a;
     ctx.fillStyle = l.tone === 'grave' ? '#c9a24a'
@@ -342,104 +431,116 @@ function drawLog(ctx, world, W, H) {
       : l.tone === 'warn' ? '#e2685f'
       : l.tone === 'hint' ? 'rgba(230,226,214,0.55)'
       : 'rgba(230,226,214,0.8)';
-    ctx.fillText(l.text, 20, y);
-    y += 17;
+    ctx.fillText(ui.compact ? l.text.slice(0, 46) : l.text, x, y);
+    y += ui.compact ? 14 : 17;
   }
   ctx.globalAlpha = 1;
 }
 
 // ── D4 · the mercy choice ───────────────────────────────────────────────────
-function drawMercy(ctx, world, W, H) {
+function drawMercy(ctx, world, W, H, ui) {
   const m = world.mercy;
   ctx.fillStyle = 'rgba(8,7,5,0.86)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = D(30, 700);
+  ctx.font = D(ui.compact ? 22 : 30, 700);
   ctx.fillStyle = '#f4f1e8';
-  ctx.fillText('The fungus lets go.', W / 2, H / 2 - 90);
-  ctx.font = F(13);
+  ctx.fillText('The fungus lets go.', W / 2, H * 0.3);
+  ctx.font = F(ui.compact ? 11 : 13);
   ctx.fillStyle = 'rgba(230,226,214,0.75)';
-  ctx.fillText(`${m.sitter.name} is on the floor, human again, dying.`, W / 2, H / 2 - 60);
-  ctx.fillText('Spare them and they decide who gets paid. Kill them and nobody does.', W / 2, H / 2 - 38);
+  ctx.fillText(`${m.sitter.name} is on the floor, human again, dying.`, W / 2, H * 0.3 + 30);
+  if (ui.compact) {
+    ctx.fillText('Spare them and they decide who gets paid.', W / 2, H * 0.3 + 50);
+    ctx.fillText('Kill them and nobody does.', W / 2, H * 0.3 + 68);
+  } else {
+    ctx.fillText('Spare them and they decide who gets paid. Kill them and nobody does.', W / 2, H * 0.3 + 52);
+  }
 
   if (m.playerDecides) {
-    ctx.font = F(15, 700);
-    ctx.fillStyle = '#8fd48a';
-    ctx.fillText('ENTER — spare them', W / 2, H / 2 + 20);
-    ctx.fillStyle = '#c25b4e';
-    ctx.fillText('ESC — finish it', W / 2, H / 2 + 48);
+    if (!ui.touch) {
+      ctx.font = F(15, 700);
+      ctx.fillStyle = '#8fd48a';
+      ctx.fillText('ENTER — spare them', W / 2, H / 2 + 20);
+      ctx.fillStyle = '#c25b4e';
+      ctx.fillText('ESC — finish it', W / 2, H / 2 + 48);
+    }
     ctx.font = F(11);
     ctx.fillStyle = 'rgba(230,226,214,0.5)';
-    ctx.fillText(`${Math.ceil(m.timer)}s`, W / 2, H / 2 + 82);
+    ctx.fillText(`${Math.ceil(m.timer)}s`, W / 2, ui.touch ? H * 0.3 + 96 : H / 2 + 82);
   } else {
     ctx.font = F(13);
     ctx.fillStyle = 'rgba(230,226,214,0.6)';
-    ctx.fillText('The others are deciding. You are not part of it.', W / 2, H / 2 + 24);
+    ctx.fillText('The others are deciding. You are not part of it.', W / 2, H * 0.3 + 96);
   }
   ctx.textAlign = 'left';
 }
 
 // ── T2-N34 · the allocation ─────────────────────────────────────────────────
-function drawAllocation(ctx, world, input, W, H) {
+function drawAllocation(ctx, world, input, W, H, ui) {
   const a = world.allocation;
   ctx.fillStyle = 'rgba(8,7,5,0.9)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = D(28, 700);
+  ctx.font = D(ui.compact ? 22 : 28, 700);
   ctx.fillStyle = '#c9a24a';
-  ctx.fillText('THE ALLOCATION', W / 2, 90);
-  ctx.font = F(12);
+  ctx.fillText('THE ALLOCATION', W / 2, ui.compact ? 44 : 90);
+  ctx.font = F(ui.compact ? 10 : 12);
   ctx.fillStyle = 'rgba(230,226,214,0.7)';
   const mine = a.allocator === world.player;
   ctx.fillText(mine
     ? 'You hold the chair. You decide who gets paid.'
-    : `${a.allocator.name} holds the chair. You are waiting to hear your number.`, W / 2, 116);
-  ctx.fillText(`pot ${a.pot} · unassigned ${a.remaining} · ${Math.ceil(a.timer)}s`, W / 2, 138);
+    : `${a.allocator.name} holds the chair. You wait to hear your number.`, W / 2, ui.compact ? 66 : 116);
+  ctx.fillText(`pot ${a.pot} · unassigned ${a.remaining} · ${Math.ceil(a.timer)}s`, W / 2, ui.compact ? 84 : 138);
 
-  let y = 190;
+  const rowW = ui.compact ? Math.min(W - 40, 300) : 400;
+  const rowH = ui.compact ? 22 : 30;
+  let y = ui.compact ? 116 : 190;
   a.claimants.forEach((c, i) => {
     const share = a.shares.get(c.id) ?? 0;
     const sel = mine && i === a.cursor;
     ctx.textAlign = 'left';
-    const x = W / 2 - 200;
+    const x = W / 2 - rowW / 2;
     if (sel) {
       ctx.fillStyle = 'rgba(201,162,74,0.16)';
-      ctx.fillRect(x - 10, y - 16, 420, 26);
+      ctx.fillRect(x - 10, y - 14, rowW + 20, rowH - 4);
     }
-    ctx.font = F(13, sel ? 700 : 400);
+    ctx.font = F(ui.compact ? 11 : 13, sel ? 700 : 400);
     ctx.fillStyle = c === a.allocator ? '#a074c9' : c === world.player ? '#f4f1e8' : 'rgba(230,226,214,0.75)';
-    ctx.fillText(`${c === world.player ? 'You' : c.name}${c === a.allocator ? ' (the one who sat)' : ''}`, x, y);
+    const who = `${c === world.player ? 'You' : c.name}${c === a.allocator ? (ui.compact ? ' (sat)' : ' (the one who sat)') : ''}`;
+    ctx.fillText(who, x, y);
     ctx.textAlign = 'right';
     ctx.fillStyle = share > 0 ? '#c9a24a' : 'rgba(230,226,214,0.3)';
-    ctx.fillText(String(share), x + 400, y);
-    y += 30;
+    ctx.fillText(String(share), x + rowW, y);
+    y += rowH;
   });
 
   if (mine) {
     ctx.textAlign = 'center';
-    ctx.font = F(11);
+    ctx.font = F(ui.compact ? 9 : 11);
     ctx.fillStyle = 'rgba(230,226,214,0.55)';
-    ctx.fillText(`${input.keyFor(INTENT.TARGET_NEXT)} choose · 1 give 10% · 2 give 25% · 3 take back · ENTER finish`, W / 2, H - 80);
+    if (!ui.touch) {
+      ctx.fillText(`${input.keyFor(INTENT.TARGET_NEXT)} choose · 1 give 10% · 2 give 25% · 3 take back · ENTER finish`, W / 2, H - 80);
+    }
     ctx.fillStyle = 'rgba(230,226,214,0.35)';
-    ctx.fillText('Anything you do not assign simply burns.', W / 2, H - 60);
+    ctx.fillText('Anything you do not assign simply burns.', W / 2, ui.touch ? y + 18 : H - 60);
   }
   ctx.textAlign = 'left';
 }
 
-function drawResult(ctx, world, W, H) {
+function drawResult(ctx, world, W, H, ui) {
   const r = world.result;
   ctx.fillStyle = 'rgba(8,7,5,0.92)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = D(32, 700);
+  ctx.font = D(ui.compact ? 24 : 32, 700);
   ctx.fillStyle = r.kind === 'escaped' ? '#8fd48a' : '#f4f1e8';
-  ctx.fillText(r.title, W / 2, H / 2 - 60);
-  ctx.font = F(13);
+  ctx.fillText(r.title, W / 2, H * 0.3);
+  ctx.font = F(ui.compact ? 11 : 13);
   ctx.fillStyle = 'rgba(230,226,214,0.72)';
-  ctx.fillText(r.body, W / 2, H / 2 - 26);
+  ctx.fillText(r.body, W / 2, H * 0.3 + 32);
 
   if (r.payout?.payouts?.length) {
-    let y = H / 2 + 10;
+    let y = H * 0.3 + 64;
     for (const p of r.payout.payouts) {
       ctx.fillStyle = p.who === world.player ? '#c9a24a' : 'rgba(230,226,214,0.6)';
       ctx.fillText(`${p.who === world.player ? 'You' : p.who.name}: ${p.amount}`, W / 2, y);
@@ -450,9 +551,11 @@ function drawResult(ctx, world, W, H) {
       ctx.fillText(`${r.payout.burned} burned`, W / 2, y + 6);
     }
   }
-  ctx.font = F(11);
-  ctx.fillStyle = 'rgba(230,226,214,0.45)';
-  ctx.fillText('ENTER to begin again', W / 2, H - 70);
+  if (!ui.touch) {
+    ctx.font = F(11);
+    ctx.fillStyle = 'rgba(230,226,214,0.45)';
+    ctx.fillText('ENTER to begin again', W / 2, H - 70);
+  }
   ctx.textAlign = 'left';
 }
 
@@ -463,35 +566,36 @@ function drawTransformVeil(ctx, world, W, H) {
 }
 
 // W-N10 · the room with no combat in it.
-function drawSafeRoom(ctx, world, input, W, H) {
+function drawSafeRoom(ctx, world, input, W, H, ui) {
   const p = world.player;
   ctx.fillStyle = 'rgba(8,7,5,0.88)';
   ctx.fillRect(0, 0, W, H);
   ctx.textAlign = 'center';
-  ctx.font = D(26, 700);
+  ctx.font = D(ui.compact ? 20 : 26, 700);
   ctx.fillStyle = '#f4f1e8';
-  ctx.fillText('Nothing follows you in here.', W / 2, 90);
-  ctx.font = F(12);
+  ctx.fillText('Nothing follows you in here.', W / 2, ui.compact ? 48 : 90);
+  ctx.font = F(ui.compact ? 10 : 12);
   ctx.fillStyle = 'rgba(230,226,214,0.65)';
-  ctx.fillText(`banked ${p.bankedSalvage} salvage · capacity ${p.loadout.capacity}`, W / 2, 118);
+  ctx.fillText(`banked ${p.bankedSalvage} salvage · capacity ${p.loadout.capacity}`, W / 2, ui.compact ? 70 : 118);
 
   ctx.textAlign = 'left';
-  let y = 170;
-  const x = W / 2 - 250;
-  ctx.font = F(12, 700);
+  const colW = ui.compact ? Math.min(W - 40, 320) : 500;
+  let y = ui.compact ? 104 : 170;
+  const x = W / 2 - colW / 2;
+  ctx.font = F(ui.compact ? 10 : 12, 700);
   ctx.fillStyle = '#c9a24a';
   ctx.fillText('BOUND SPIRITS', x, y);
   y += 22;
-  ctx.font = F(11);
+  ctx.font = F(ui.compact ? 9 : 11);
   for (const id of p.loadout.equipped) {
-    const s = SPIRITS[id];
-    ctx.fillStyle = s.possession >= 5 ? '#a074c9' : 'rgba(230,226,214,0.75)';
-    ctx.fillText(`${s.name} — ${s.desc}`, x, y);
+    const sp = SPIRITS[id];
+    ctx.fillStyle = sp.possession >= 5 ? '#a074c9' : 'rgba(230,226,214,0.75)';
+    ctx.fillText(ui.compact ? sp.name : `${sp.name} — ${sp.desc}`, x, y);
     ctx.textAlign = 'right';
     ctx.fillStyle = 'rgba(230,226,214,0.4)';
-    ctx.fillText(`cap ${s.capacity} · poss ${s.possession}`, x + 500, y);
+    ctx.fillText(`cap ${sp.capacity} · poss ${sp.possession}`, x + colW, y);
     ctx.textAlign = 'left';
-    y += 18;
+    y += ui.compact ? 15 : 18;
   }
   if (!p.loadout.equipped.length) {
     ctx.fillStyle = 'rgba(230,226,214,0.4)';
@@ -499,12 +603,12 @@ function drawSafeRoom(ctx, world, input, W, H) {
     y += 18;
   }
 
-  y += 24;
-  ctx.font = F(12, 700);
+  y += ui.compact ? 16 : 24;
+  ctx.font = F(ui.compact ? 10 : 12, 700);
   ctx.fillStyle = '#c9a24a';
   ctx.fillText('NEXT', x, y);
-  y += 20;
-  ctx.font = F(11);
+  y += ui.compact ? 16 : 20;
+  ctx.font = F(ui.compact ? 9 : 11);
   const next = LEVELS[world.levelIndex + 1];
   ctx.fillStyle = 'rgba(230,226,214,0.7)';
   if (next) {
@@ -515,21 +619,31 @@ function drawSafeRoom(ctx, world, input, W, H) {
       ctx.fillText(`you will be given: ${next.unlocks.replace(/_/g, ' ')}`, x, y);
     }
   }
-  ctx.textAlign = 'center';
-  ctx.font = F(12, 700);
-  ctx.fillStyle = '#f4f1e8';
-  ctx.fillText(`ENTER — go on`, W / 2, H - 70);
+  if (!ui.touch) {
+    ctx.textAlign = 'center';
+    ctx.font = F(12, 700);
+    ctx.fillStyle = '#f4f1e8';
+    ctx.fillText('ENTER — go on', W / 2, H - 70);
+  }
   ctx.textAlign = 'left';
 }
 
-function drawTitle(ctx, W, H) {
+function drawTitle(ctx, W, H, ui) {
   ctx.textAlign = 'center';
-  ctx.font = D(42, 700);
+  ctx.font = D(ui.compact ? 30 : 42, 700);
   ctx.fillStyle = '#c9a24a';
-  ctx.fillText('THE CHAIR IS NOT LOCKED', W / 2, H / 2 - 70);
-  ctx.font = F(13);
+  ctx.fillText('THE CHAIR IS NOT LOCKED', W / 2, H * (ui.compact ? 0.3 : 0.42));
+
+  ctx.font = F(ui.compact ? 11 : 13);
   ctx.fillStyle = 'rgba(230,226,214,0.7)';
-  const lines = [
+  const lines = ui.touch ? [
+    'You are a salvager. There is a rumour of something',
+    'at the bottom of this place.',
+    '',
+    'Left thumb anywhere to walk. Buttons on the right.',
+    'Your weapon swings itself, but only inside its band.',
+    'Holding that band is the game.',
+  ] : [
     'You are a salvager. There is a rumour of something at the bottom of this place.',
     '',
     'WASD move · TAB target · SPACE step · E interact/loot · 1-4 abilities',
@@ -537,8 +651,8 @@ function drawTitle(ctx, W, H) {
     '',
     'ENTER to begin',
   ];
-  let y = H / 2 - 20;
-  for (const l of lines) { ctx.fillText(l, W / 2, y); y += 22; }
+  let y = H * (ui.compact ? 0.4 : 0.5) - 20;
+  for (const l of lines) { ctx.fillText(l, W / 2, y); y += ui.compact ? 18 : 22; }
   ctx.textAlign = 'left';
 }
 
