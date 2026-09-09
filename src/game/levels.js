@@ -173,6 +173,81 @@ export const LEVELS = [
   },
   {
     id: 5,
+    name: 'The Outer Grounds',
+    subtitle: 'Open ground, and everything on it keeps coming back.',
+    teaches: 'nothing new. It asks you to be ready.',
+    bounds: { x: 0, y: 0, w: 3600, h: 2600 },
+    fungusLevel: 0.85,
+    // The one place in the run that is not a corridor. Enemies here are not a
+    // fixed set to be cleared — camps refill, patrols wander, and the way down
+    // stays shut until you are LEVEL_FOR_THRONE. This is where the run-up stops
+    // being a tutorial and becomes a place you have to survive in.
+    openWorld: true,
+    build(rng) {
+      const walls = [
+        wall(0, -40, 3600, 40), wall(0, 2600, 3600, 40),
+        wall(-40, 0, 40, 2600), wall(3600, 0, 40, 2600),
+      ];
+      // Scattered ruin. Enough cover to fight around, never enough to funnel.
+      const ruins = [
+        [430, 380, 220, 60], [520, 380, 60, 300], [980, 240, 60, 340],
+        [1240, 620, 300, 60], [760, 900, 60, 300], [1500, 300, 60, 280],
+        [1850, 780, 260, 60], [2260, 380, 60, 340], [2600, 620, 300, 60],
+        [3020, 300, 60, 320], [2900, 980, 240, 60], [420, 1400, 60, 320],
+        [700, 1700, 300, 60], [1180, 1500, 60, 300], [1500, 1900, 280, 60],
+        [1980, 1400, 60, 320], [2300, 1700, 300, 60], [2760, 1500, 60, 300],
+        [3080, 1850, 240, 60], [900, 2200, 300, 60], [1700, 2280, 60, 240],
+        [2500, 2200, 300, 60],
+      ];
+      for (const [x, y, w, h] of ruins) walls.push(wall(x, y, w, h));
+
+      // Camps hold territory. Each one refills on its own clock, so clearing a
+      // camp buys you a window, not a permanent gain (the same lesson the
+      // network teaches later with scars and regrowth).
+      const camps = [
+        { x: 700, y: 500, radius: 190, max: 4, respawn: 11, types: ['rusher', 'rusher', 'ranged'] },
+        { x: 1750, y: 420, radius: 210, max: 4, respawn: 12, types: ['ranged', 'rusher', 'tank'] },
+        { x: 2900, y: 700, radius: 200, max: 4, respawn: 12, types: ['rusher', 'tank', 'ranged'] },
+        { x: 900, y: 1750, radius: 220, max: 5, respawn: 10, types: ['rusher', 'rusher', 'disruptor'] },
+        { x: 2050, y: 1650, radius: 220, max: 5, respawn: 11, types: ['ranged', 'disruptor', 'tank'] },
+        { x: 3050, y: 1950, radius: 200, max: 4, respawn: 13, types: ['tank', 'disruptor', 'rusher'] },
+        { x: 1600, y: 2350, radius: 190, max: 4, respawn: 12, types: ['rusher', 'ranged', 'rusher'] },
+      ];
+
+      const husks = [];
+      for (let i = 0; i < 7; i++) {
+        husks.push({
+          x: rng.range(300, 3300), y: rng.range(300, 2300),
+          weapon: rng.pick(['reach_glaive', 'cleaver', 'bound_repeater', 'rot_lance', null]),
+          gear: [rng.pick(['keen_edge', 'steady_hand', 'threat_sense', 'scavenger', 'predictive_aim', 'reactive_block'])],
+          story: 'Out in the open. Whatever found them, it was not in a hurry.',
+        });
+      }
+
+      return {
+        walls, camps, husks,
+        playerStart: { x: 160, y: 1300 },
+        // Fixed patrols on top of the camps, so the ground between camps is
+        // never actually empty.
+        spawns: [
+          { x: 1300, y: 1100, type: 'rusher' }, { x: 1450, y: 1250, type: 'ranged' },
+          { x: 2400, y: 1150, type: 'tank' }, { x: 2650, y: 1350, type: 'rusher' },
+          { x: 1900, y: 2050, type: 'disruptor' }, { x: 620, y: 1050, type: 'rusher' },
+        ],
+        // The way down. Sealed until you are ready for what is behind it.
+        exit: { x: 3420, y: 1300 },
+        sealedDoor: { x: 3480, y: 1240, w: 26, h: 120 },
+        fungusPatches: [
+          { x: 700, y: 520, r: 260 }, { x: 1780, y: 460, r: 280 },
+          { x: 2920, y: 720, r: 250 }, { x: 950, y: 1780, r: 300 },
+          { x: 2080, y: 1680, r: 300 }, { x: 3080, y: 1980, r: 260 },
+          { x: 1620, y: 2360, r: 240 }, { x: 3300, y: 1300, r: 320 },
+        ],
+      };
+    },
+  },
+  {
+    id: 6,
     name: 'The Throne Room',
     subtitle: 'The door behind you closes. The chair is not locked.',
     teaches: 'nothing. It asks.',
@@ -218,11 +293,28 @@ export const LEVELS = [
   },
 ];
 
+// The way into the throne room does not open on a body count. It opens when you
+// are strong enough that sitting down is a real decision rather than a mistake
+// you were always going to make.
+export const LEVEL_FOR_THRONE = 5;
+
+// T4-N04 · elites are modifier-based, not bespoke. Adding one is a data change.
+export const ELITE = {
+  namePrefix: 'Ripened ',
+  hp: 2.3,
+  damage: 1.45,
+  speed: 1.08,
+  radiusBonus: 4,
+  xp: 2.6,
+  salvage: 2.8,
+  color: '#d08a4a',
+};
+
 export const ENEMY_TYPES = {
   // T4-N02 · each archetype punishes a different mistake.
-  dummy:     { name: 'Rooted Thing', hp: 60,  weapon: 'scavenged_blade', speed: 0,   xp: 12, salvage: 6,  color: '#7c6f5a', radius: 15, aggroRadius: 0 },
-  rusher:    { name: 'Crawler',      hp: 74,  weapon: 'scavenged_blade', speed: 205, xp: 18, salvage: 9,  color: '#a8523f', radius: 13 },
-  ranged:    { name: 'Spitter',      hp: 58,  weapon: 'rot_lance',       speed: 150, xp: 22, salvage: 11, color: '#6d8a4a', radius: 12 },
-  tank:      { name: 'Bulwark',      hp: 210, weapon: 'cleaver',         speed: 118, xp: 34, salvage: 18, color: '#5c6470', radius: 19, mass: 2.4 },
-  disruptor: { name: 'Chanter',      hp: 92,  weapon: 'rot_lance',       speed: 168, xp: 40, salvage: 22, color: '#9a6cb0', radius: 14, disruptor: true },
+  dummy:     { name: 'Rooted Thing', hp: 60,  weapon: 'scavenged_blade', speed: 0,   xp: 8, salvage: 6,  color: '#7c6f5a', radius: 15, aggroRadius: 0 },
+  rusher:    { name: 'Crawler',      hp: 74,  weapon: 'scavenged_blade', speed: 205, xp: 12, salvage: 9,  color: '#a8523f', radius: 13 },
+  ranged:    { name: 'Spitter',      hp: 58,  weapon: 'rot_lance',       speed: 150, xp: 14, salvage: 11, color: '#6d8a4a', radius: 12 },
+  tank:      { name: 'Bulwark',      hp: 210, weapon: 'cleaver',         speed: 118, xp: 22, salvage: 18, color: '#5c6470', radius: 19, mass: 2.4 },
+  disruptor: { name: 'Chanter',      hp: 92,  weapon: 'rot_lance',       speed: 168, xp: 26, salvage: 22, color: '#9a6cb0', radius: 14, disruptor: true },
 };

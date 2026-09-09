@@ -13,7 +13,7 @@ import { createNetwork, NODE_TYPE } from './network.js';
 import { createTelegraphs, SHAPE } from './telegraph.js';
 import { createBoss, BOSS_ABILITIES, PHASE } from './boss.js';
 import { updateAllyAI, updateBossAI, updateEnemyAI, createBrain } from './ai.js';
-import { LEVELS, ENEMY_TYPES } from './levels.js';
+import { ELITE, ENEMY_TYPES, LEVELS, LEVEL_FOR_THRONE } from './levels.js';
 import {
   createPlayer, integrateMovement, readPlayerIntent, tryStep,
   updatePlayerTimers, grantXp, collectSalvage,
@@ -62,6 +62,7 @@ export function createWorld({ camera, seed = Date.now() }) {
     bounds: { x: 0, y: 0, w: 1000, h: 1000 },
 
     levelIndex: 0,
+    camps: [],
     level: null,
     levelData: null,
     exit: null,
@@ -77,6 +78,7 @@ export function createWorld({ camera, seed = Date.now() }) {
     focusMark: null,
 
     successions: 0,
+    respawns: [],
     survivors: [],
     escapeTimer: 0,          // T2-N29 · hold the network at zero
     escapeAchieved: false,
@@ -292,8 +294,22 @@ export function createWorld({ camera, seed = Date.now() }) {
       world.entities.add(a);
     });
 
-    for (const s of data.spawns) spawnEnemy(s);
+    for (const s of data.spawns) spawnEnemy({ ...s, leashRadius: def.openWorld ? 1400 : 900 });
     for (const h of data.husks) addHusk(h);
+
+    // Camps only exist in the open world; elsewhere the list is simply empty.
+    world.camps = (data.camps ?? []).map((c) => ({
+      ...c, alive: [], timer: rng.range(0, 3), killed: 0,
+    }));
+    // Seed round-robin, not camp by camp: the population cap would otherwise
+    // fill the first few camps and leave the last ones standing empty.
+    const deepest = world.camps.reduce((n, c) => Math.max(n, c.max), 0);
+    for (let ring = 0; ring < deepest; ring++) {
+      for (const c of world.camps) if (c.alive.length <= ring) spawnIntoCamp(c);
+    }
+
+    world.throne = null;   // explicit: "are we in the throne room" is read elsewhere
+    world.respawns.length = 0;
 
     if (def.isThroneRoom) {
       world.throne = createThrone(data.throne.x, data.throne.y);
@@ -307,6 +323,9 @@ export function createWorld({ camera, seed = Date.now() }) {
     } else {
       world.mode = MODE.RUNUP;
       say(`${def.name} — ${def.subtitle}`, 'grave');
+      if (def.openWorld) {
+        say(`The door down will not open below level ${LEVEL_FOR_THRONE}. Go and earn it.`, 'hint');
+      }
     }
     events.emit('level-loaded', { level: def });
   }
@@ -331,26 +350,93 @@ export function createWorld({ camera, seed = Date.now() }) {
 
   function spawnEnemy(s) {
     const def = ENEMY_TYPES[s.type];
+    // T4-N04 · elite is a multiplier set applied at spawn, never a second entity
+    // definition. Out in the grounds they get commoner as you get stronger, so
+    // the ground stays worth fighting over instead of trivialising.
+    const elite = s.elite === true;
+    const m = elite ? ELITE : null;
+    const hp = Math.round(def.hp * (m?.hp ?? 1));
     const e = createEntity({
       kind: 'enemy',
-      name: def.name,
+      name: (m?.namePrefix ?? '') + def.name,
       x: s.x, y: s.y,
-      radius: def.radius,
+      radius: def.radius + (m?.radiusBonus ?? 0),
       faction: FACTION.HOSTILE,
-      hp: def.hp, maxHp: def.hp,
-      mass: def.mass ?? 1,
-      maxSpeed: def.speed,
+      hp, maxHp: hp,
+      mass: (def.mass ?? 1) * (elite ? 1.4 : 1),
+      maxSpeed: def.speed * (m?.speed ?? 1),
     });
     e.weapon = makeWeapon(def.weapon);
-    e.brain = createBrain({ aggroRadius: def.aggroRadius ?? 300, sloppiness: rng.range(-14, 22) });
-    e.color = def.color;
-    e.xpValue = def.xp;
-    e.salvageValue = def.salvage;
+    e.brain = createBrain({
+      aggroRadius: def.aggroRadius ?? 300,
+      leashRadius: s.leashRadius ?? 900,
+      sloppiness: rng.range(-14, 22),
+    });
+    e.color = elite ? m.color : def.color;
+    e.elite = elite;
+    e.damageScale = m?.damage ?? 1;
+    e.xpValue = Math.round(def.xp * (m?.xp ?? 1));
+    e.salvageValue = Math.round(def.salvage * (m?.salvage ?? 1));
     e.disruptor = def.disruptor ?? false;
     e.abilities = [];
     e.moveIntent = { x: 0, y: 0 };
     world.entities.add(e);
     return e;
+  }
+
+  // Somewhere inside the camp that is not a wall and not on top of the player.
+  function campSpawnPoint(c) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const a = rng.range(0, Math.PI * 2);
+      const d = rng.range(c.radius * 0.25, c.radius);
+      const x = c.x + Math.cos(a) * d;
+      const y = c.y + Math.sin(a) * d;
+      if (x < world.bounds.x + 40 || x > world.bounds.x + world.bounds.w - 40) continue;
+      if (y < world.bounds.y + 40 || y > world.bounds.y + world.bounds.h - 40) continue;
+      let blocked = false;
+      for (const w of world.walls) {
+        if (x > w.x - 24 && x < w.x + w.w + 24 && y > w.y - 24 && y < w.y + w.h + 24) { blocked = true; break; }
+      }
+      if (!blocked) return { x, y };
+    }
+    return null;
+  }
+
+  const MAX_OPEN_WORLD_HOSTILES = 26;   // T7-N05 · a hard cap, not a hope
+
+  function spawnIntoCamp(c) {
+    if (world.hostiles().length >= MAX_OPEN_WORLD_HOSTILES) return null;
+    const at = campSpawnPoint(c);
+    if (!at) return null;
+    // Elite chance rises with the player's level so the grounds keep pace.
+    const lvl = world.player?.level ?? 1;
+    const eliteChance = clamp(0.06 + (lvl - 1) * 0.05, 0, 0.34);
+    const e = spawnEnemy({
+      x: at.x, y: at.y,
+      type: rng.pick(c.types),
+      elite: rng.chance(eliteChance),
+      leashRadius: c.radius + 520,   // they hold the camp, they do not chase you home
+    });
+    e.brain.home = { x: c.x, y: c.y };
+    e.camp = c;
+    c.alive.push(e);
+    return e;
+  }
+
+  // Camps refill on their own clock. Clearing one buys a window, not a gain.
+  function updateSpawner(dt) {
+    if (!world.level?.openWorld) return;
+    const p = world.player;
+    for (const c of world.camps) {
+      c.alive = c.alive.filter((e) => !e.dead);
+      if (c.alive.length >= c.max) continue;
+      c.timer -= dt;
+      if (c.timer > 0) continue;
+      // Never respawn in someone's face — that reads as the game cheating.
+      if (p && !p.dead && dist(p.x, p.y, c.x, c.y) < c.radius + 220) { c.timer = 2; continue; }
+      c.timer = c.respawn;
+      spawnIntoCamp(c);
+    }
   }
 
   // T6-N06 · previous sitters as remains. Set dressing on approach, evidence in
@@ -745,11 +831,54 @@ export function createWorld({ camera, seed = Date.now() }) {
   }
 
   // ── run-up progression ───────────────────────────────────────────────────
+  // Walk back in at the entrance, whole, with nothing you had not banked.
+  function updateRespawns(dt) {
+    for (let i = world.respawns.length - 1; i >= 0; i--) {
+      const r = world.respawns[i];
+      r.timer -= dt;
+      if (r.timer > 0) continue;
+      world.respawns.splice(i, 1);
+      const e = r.entity;
+      const at = world.levelData?.playerStart ?? { x: e.x, y: e.y };
+      e.dead = false;
+      e.hp = e.maxHp;
+      e.corpseTimer = 0;
+      e.solid = true;
+      e.targetable = true;
+      e.spectating = false;
+      e.statuses.length = 0;
+      e.vx = e.vy = e.knockVx = e.knockVy = 0;
+      e.target = null;
+      e.x = at.x + (e === world.player ? 0 : rng.range(-60, 60));
+      e.y = at.y + (e === world.player ? 0 : rng.range(-60, 60));
+      if (!world.entities.byId.has(e.id)) world.entities.add(e);
+      if (e === world.player) {
+        camera.snapTo(e.x, e.y);
+        say('You wake at the edge again. Your salvage is still out there.', 'info');
+      }
+    }
+  }
+
   function updateRunup(dt) {
-    const remaining = world.hostiles().length;
-    if (remaining === 0 && world.exit && !world.exitOpen) {
-      world.exitOpen = true;
-      say('The way on is clear.', 'info');
+    updateSpawner(dt);
+    updateRespawns(dt);
+
+    if (world.level?.openWorld) {
+      // The open world is never "cleared" — the door down opens on what you are,
+      // not on what you have killed.
+      const ready = (world.player?.level ?? 1) >= LEVEL_FOR_THRONE;
+      if (ready && !world.exitOpen) {
+        world.exitOpen = true;
+        say('The way down opens. You are as ready as this place can make you.', 'grave');
+      } else if (!ready) {
+        world.exitOpen = false;
+      }
+    } else {
+      const remaining = world.hostiles().length;
+      if (remaining === 0 && world.exit && !world.exitOpen) {
+        world.exitOpen = true;
+        say('The way on is clear.', 'info');
+      }
     }
     if (world.exitOpen && world.player && dist(world.player.x, world.player.y, world.exit.x, world.exit.y) < 60) {
       world.exitOpen = false;
@@ -985,6 +1114,21 @@ export function createWorld({ camera, seed = Date.now() }) {
   function onDeath(entity, killer) {
     if (world.stats.timeToFirstDeath === null) world.stats.timeToFirstDeath = world.stats.elapsed;
 
+    // P-N06 · dying before the throne room costs progress, not the session. You
+    // drop your unbanked salvage where you fell and walk back for it. Becoming a
+    // husk is what death means in the throne room, not out here.
+    if (entity.faction === FACTION.PLAYER && entity.kind === 'attacker' && !world.throne) {
+      if (entity.salvage > 0) {
+        world.drops.push({ x: entity.x, y: entity.y, kind: 'salvage', amount: entity.salvage });
+        entity.salvage = 0;
+      }
+      world.respawns.push({ entity, timer: 3 });
+      if (entity === world.player) {
+        say('You drop what you were carrying. It stays where you fell.', 'warn');
+      }
+      return;
+    }
+
     if (entity.faction === FACTION.PLAYER && entity.kind === 'attacker') {
       // Dead attackers become husks on the floor, feeding reactivation and salvage.
       const husk = addHusk({
@@ -1041,6 +1185,7 @@ export function createWorld({ camera, seed = Date.now() }) {
       case MODE.SAFEROOM:
         handleAttackerInput(dt);
         updateEntities(dt);
+        updateRespawns(dt);
         break;
 
       case MODE.THRONE_STANDOFF:

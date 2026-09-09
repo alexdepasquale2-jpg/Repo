@@ -1,7 +1,8 @@
 # The Chair Is Not Locked
 
 A top-down 2D browser game built from the *Untitled Throne/Mycelium* tech tree (v2 + v3 + v4).
-Tab-target, auto-swing, five levels, and a throne room where somebody has to sit down.
+Tab-target, auto-swing, four teaching levels, an open world to level up in, and a
+throne room where somebody has to sit down.
 
 Open `index.html` from any static server:
 
@@ -14,7 +15,11 @@ No build step, no dependencies — ES modules and one canvas.
 
 ## What it is
 
-You are a salvager. You go down through five rooms of a ruin for gear, not glory.
+You are a salvager. Four rooms teach you the ruin one idea at a time, then it
+opens out: **the Outer Grounds**, where enemy camps hold territory, refill on
+their own clocks, and the door down stays shut until you are **level 5**. Nothing
+out there stays cleared, so you go get strong rather than tidy.
+
 At the bottom there is a chair, the door behind you is sealed, and **the loot is on
 whoever sits in it — and the one who sits decides who gets paid.** So the group
 does not wonder whether to sit. They negotiate who does.
@@ -81,7 +86,15 @@ the root, so stalling still opens him), root window and armor scaling, feints,
 husk reactivation and salvage, network-keyed phases, bloom collapse, the
 alternate exit, the mercy choice, the allocation, and successions.
 
-**Tier 3–7 fragments** — five hand-crafted levels with rising fungal
+**The Outer Grounds** — a large open zone between the run-up and the throne
+room. Seven camps with independent respawn clocks and roaming patrols, a
+population cap so it stays at 60fps, elites as a modifier set whose frequency
+rises with your level, and a gate on the way down that reads your level rather
+than a body count. Dying here follows P-N06: you drop your unbanked salvage
+where you fell and walk back in at the edge for it — a setback with a recovery
+plan, not a wall.
+
+**Tier 3–7 fragments** — six hand-crafted spaces with rising fungal
 encroachment, XP and levels, safe rooms, the sealed door in every level, husks
 as set dressing and as resource, the bound-spirit system (capacity, possession,
 and gear that starts making decisions for you), and one telegraph language used
@@ -107,3 +120,7 @@ rate, root window duration, and biomass income — not damage numbers.
 Current measured shape of one fight: about 80 seconds, three phases, armor
 falling from 0.97 to 0.4 as the network is cleared, and the boss pushed into
 overgrowth as he overspends to hold ground.
+
+Current measured shape of the run-up: the four teaching levels deliver you to the
+Outer Grounds at level 4 with roughly half the bar toward 5, and the last level
+takes a couple of minutes of real fighting out in the open.

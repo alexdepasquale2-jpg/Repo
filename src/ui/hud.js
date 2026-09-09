@@ -7,7 +7,7 @@ import { BOSS_ABILITIES } from '../game/boss.js';
 import { SPIRITS, possessionTier } from '../game/spirits.js';
 import { swingUptime, bandOf } from '../game/weapons.js';
 import { INTENT } from '../core/input.js';
-import { LEVELS } from '../game/levels.js';
+import { LEVELS, LEVEL_FOR_THRONE } from '../game/levels.js';
 
 const F = (px, weight = 400) => `${weight} ${px}px ui-monospace, SFMono-Regular, Menlo, monospace`;
 
@@ -29,6 +29,7 @@ export function drawHud(ctx, world, input, loopState) {
   if (playerIsBoss) drawBossHud(ctx, world, input, W, H);
   else drawAttackerHud(ctx, world, input, W, H);
 
+  if (world.level?.openWorld && world.mode === MODE.RUNUP) drawObjective(ctx, world, W, H);
   drawLog(ctx, world, W, H);
   drawPrompts(ctx, world, input, W, H);
 
@@ -258,7 +259,7 @@ function drawPrompts(ctx, world, input, W, H) {
     else lines.push(`${Math.ceil(world.standoffTimer)}s — someone is going to sit`);
   }
   if (world.mode === MODE.SAFEROOM) lines.push(`${input.keyFor(INTENT.CONFIRM)} to go on`);
-  if (world.exitOpen) lines.push('the way on is open');
+  if (world.exitOpen && !world.level?.openWorld) lines.push('the way on is open');
 
   if (!lines.length) return;
   ctx.textAlign = 'center';
@@ -272,6 +273,55 @@ function drawPrompts(ctx, world, input, W, H) {
     y += 20;
   }
   ctx.textAlign = 'left';
+}
+
+// The open world has no body count to clear, so it needs a stated goal and a
+// direction. Both live here rather than in a tutorial box.
+function drawObjective(ctx, world, W, H) {
+  const p = world.player;
+  if (!p) return;
+  const ready = p.level >= LEVEL_FOR_THRONE;
+  const x = W - 270, y = 34;
+  panel(ctx, x - 12, y - 20, 262, ready ? 52 : 66);
+
+  ctx.font = F(10, 700);
+  ctx.fillStyle = ready ? '#8fd48a' : '#c9a24a';
+  ctx.fillText(ready ? 'THE WAY DOWN IS OPEN' : `REACH LEVEL ${LEVEL_FOR_THRONE}`, x, y);
+
+  ctx.font = F(9);
+  ctx.fillStyle = 'rgba(230,226,214,0.6)';
+  if (ready) {
+    ctx.fillText('or stay up here as long as you like', x, y + 16);
+  } else {
+    ctx.fillText(`level ${p.level} — ${p.xpToNext - p.xp} xp to go`, x, y + 16);
+    bar(ctx, x, y + 24, 238, 6, p.xp / p.xpToNext, '#6ec1e4');
+    ctx.fillStyle = 'rgba(230,226,214,0.4)';
+    ctx.fillText('camps refill. nothing here stays cleared.', x, y + 42);
+  }
+
+  // A pointer to the exit, drawn at the screen edge when it is off-camera.
+  if (world.exit) drawExitPointer(ctx, world, W, H, ready);
+}
+
+function drawExitPointer(ctx, world, W, H, ready) {
+  const p = world.player;
+  const dx = world.exit.x - p.x, dy = world.exit.y - p.y;
+  const d = Math.hypot(dx, dy);
+  if (d < 300) return;
+  const a = Math.atan2(dy, dx);
+  const r = Math.min(W, H) * 0.36;
+  const cx = W / 2 + Math.cos(a) * r;
+  const cy = H / 2 + Math.sin(a) * r;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(a);
+  ctx.globalAlpha = ready ? 0.8 : 0.3;
+  ctx.fillStyle = ready ? '#c9a24a' : '#6b5c3f';
+  ctx.beginPath();
+  ctx.moveTo(12, 0); ctx.lineTo(-8, 7); ctx.lineTo(-8, -7);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 function drawLog(ctx, world, W, H) {

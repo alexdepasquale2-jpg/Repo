@@ -37,6 +37,7 @@ export function drawWorld(ctx, world, camera, alpha) {
 
   drawFloor(ctx, world, camera);
   drawHazards(ctx, world);
+  if (world.camps?.length) drawCamps(ctx, world);
   drawFungusPatches(ctx, world);
   if (world.network) {
     drawScars(ctx, world.network);
@@ -52,7 +53,7 @@ export function drawWorld(ctx, world, camera, alpha) {
   drawProjectiles(ctx, world);
   world.particles.draw(ctx);
   world.combat.drawFloaters(ctx);
-  if (world.exit && world.exitOpen) drawExit(ctx, world);
+  if (world.exit) drawExit(ctx, world, world.exitOpen);
 
   ctx.restore();
 }
@@ -301,15 +302,43 @@ function drawDrops(ctx, world) {
   }
 }
 
-function drawExit(ctx, world) {
+function drawExit(ctx, world, open) {
   const e = world.exit;
-  ctx.strokeStyle = '#c9a24a';
+  ctx.save();
+  // Shut is drawn too, and drawn differently — you should always know where the
+  // way on is, and whether it will let you through.
+  ctx.globalAlpha = open ? 1 : 0.4;
+  ctx.strokeStyle = open ? '#c9a24a' : '#6b5c3f';
   ctx.lineWidth = 3;
-  ctx.setLineDash([8, 6]);
+  ctx.setLineDash(open ? [8, 6] : [3, 9]);
   ctx.beginPath();
   ctx.arc(e.x, e.y, 42, 0, TAU);
   ctx.stroke();
+  if (!open) {
+    ctx.beginPath();
+    ctx.moveTo(e.x - 22, e.y - 22); ctx.lineTo(e.x + 22, e.y + 22);
+    ctx.moveTo(e.x + 22, e.y - 22); ctx.lineTo(e.x - 22, e.y + 22);
+    ctx.stroke();
+  }
   ctx.setLineDash([]);
+  ctx.restore();
+}
+
+// Camps read as territory: you can see where the ground belongs to something
+// before you walk into it.
+function drawCamps(ctx, world) {
+  for (const c of world.camps) {
+    ctx.save();
+    ctx.globalAlpha = 0.16;
+    ctx.strokeStyle = '#a8523f';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([14, 12]);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.radius, 0, TAU);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
 }
 
 // T7-N09 · shape encodes type, fill encodes timing, intensity encodes severity.
@@ -420,6 +449,17 @@ function drawEntities(ctx, world) {
       ctx.moveTo(0, 0);
       ctx.lineTo(Math.cos(e.facing) * (e.radius + 7), Math.sin(e.facing) * (e.radius + 7));
       ctx.stroke();
+    }
+
+    // Elites carry a broken outer ring — legible in grayscale, unlike colour.
+    if (e.elite) {
+      ctx.strokeStyle = '#f0b06a';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius + 6, 0, TAU);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
     // G-N15 · possession is visible on the character. You can see who is running

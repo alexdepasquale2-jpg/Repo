@@ -42,7 +42,7 @@ export function createPlayer(x, y, { name = 'You', isLocal = true } = {}) {
   p.bankedSalvage = 0;                       // survives death (P-N06)
   p.level = 1;
   p.xp = 0;
-  p.xpToNext = 60;
+  p.xpToNext = 70;
   p.stepCooldown = 0;
   p.stepTimer = 0;
   p.moveIntent = { x: 0, y: 0 };
@@ -143,7 +143,7 @@ export function grantXp(p, amount, events) {
   while (p.xp >= p.xpToNext) {
     p.xp -= p.xpToNext;
     p.level++;
-    p.xpToNext = Math.round(p.xpToNext * 1.35);
+    p.xpToNext = Math.round(p.xpToNext * 1.5);
     p.maxHp += 14;
     p.hp = Math.min(p.maxHp, p.hp + 14);
     // G-N01 · capacity grows slowly, so you still cannot run everything you own.
