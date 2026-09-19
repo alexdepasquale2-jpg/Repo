@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AGE-STT-1/U Rev.1 — Flight Mechanics Simulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cellipse cx='16' cy='16' rx='14' ry='5' fill='%2338d6ff'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#070b10; --panel:rgba(12,18,26,0.82); --panel2:rgba(16,24,34,0.92);
+    --line:#1d2c3c; --txt:#cfe2f2; --dim:#7e97ad; --hot:#ff5a3c; --warm:#ffb020;
+    --ok:#2fe08a; --cy:#38d6ff; --vio:#a07bff; --red:#ff3b52;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font:12px/1.45 ui-monospace,"SF Mono",Menlo,Consolas,monospace;overflow:hidden}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+  .panel{position:absolute;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;backdrop-filter:blur(9px);padding:9px 11px}
+  h2{margin:0 0 7px;font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--cy);font-weight:600}
+  h3{margin:9px 0 4px;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);font-weight:600}
+  #banner{top:0;left:0;right:0;border-radius:0;border-left:0;border-right:0;border-top:0;
+    background:linear-gradient(90deg,#2a0c0c,#1a1206 55%,#0a1018);padding:5px 12px;
+    display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:10.5px;letter-spacing:.05em}
+  #banner b{color:var(--warm)}
+  .tag{border:1px solid #6a3a12;background:#2a1606;color:var(--warm);padding:1px 6px;border-radius:3px;font-size:9.5px}
+  .tag.red{border-color:#7a1c28;background:#2a0a10;color:#ff8494}
+  #left{top:44px;left:10px;width:322px;max-height:calc(100% - 56px);overflow-y:auto}
+  #right{top:44px;right:10px;width:330px;max-height:calc(100% - 56px);overflow-y:auto}
+  #bottom{bottom:10px;left:50%;transform:translateX(-50%);display:flex;gap:16px;align-items:center;padding:7px 14px}
+  #toast{bottom:74px;left:50%;transform:translateX(-50%);max-width:620px;display:none;
+    border-color:#7a1c28;background:rgba(40,8,14,.93);color:#ffc4cc}
+  .row{display:flex;justify-content:space-between;gap:8px;padding:1.5px 0}
+  .row span:first-child{color:var(--dim)}
+  .row span:last-child{font-variant-numeric:tabular-nums}
+  .big{font-size:15px;color:#fff}
+  label.sl{display:block;margin:6px 0 2px;color:var(--dim);font-size:10.5px;
+    display:flex;justify-content:space-between}
+  label.sl b{color:var(--txt);font-weight:500;font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;height:16px;accent-color:#38d6ff;background:transparent;margin:0}
+  .btns{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+  button{background:#122032;color:var(--txt);border:1px solid var(--line);border-radius:5px;
+    padding:4px 8px;font:inherit;font-size:10.5px;cursor:pointer}
+  button:hover{background:#1a3048;border-color:#2c4a68}
+  button.on{background:#0d3b4e;border-color:var(--cy);color:#bff1ff}
+  button.danger{background:#3a0d16;border-color:#7a1c28;color:#ff96a4}
+  button.danger:hover{background:#55131f}
+  .chk{display:flex;align-items:center;gap:6px;padding:2px 0;color:var(--dim);cursor:pointer;font-size:10.5px}
+  .chk input{accent-color:#38d6ff}
+  table{width:100%;border-collapse:collapse;font-size:10px;font-variant-numeric:tabular-nums}
+  th,td{text-align:right;padding:1.5px 3px;border-bottom:1px solid rgba(29,44,60,.55)}
+  th{color:var(--dim);font-weight:500;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  .bar{height:5px;background:#0d1620;border-radius:3px;overflow:hidden;margin-top:2px}
+  .bar>i{display:block;height:100%;background:var(--cy);width:0%}
+  .bar.hot>i{background:linear-gradient(90deg,var(--ok),var(--warm),var(--hot))}
+  canvas.chart{width:100%;height:42px;display:block;background:#080e15;
+    border:1px solid var(--line);border-radius:4px;margin-top:3px}
+  .kbd{color:var(--dim);font-size:10px}
+  .kbd b{color:var(--txt);background:#132132;border:1px solid var(--line);
+    border-radius:3px;padding:0 4px;margin-right:2px}
+  .sep{height:1px;background:var(--line);margin:8px 0}
+  .warnline{color:#ff9a8a;font-size:10px;margin-top:5px}
+  .okline{color:var(--ok);font-size:10px;margin-top:5px}
+  ::-webkit-scrollbar{width:7px}::-webkit-scrollbar-thumb{background:#1d2c3c;border-radius:4px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="banner" class="panel">
+  <b>AGE-STT-1/U Rev. 1</b>
+  <span class="tag">SPECULATIVE</span>
+  <span class="tag">CONDITIONAL ON EQ. (4)</span>
+  <span class="tag red">NOT A FLIGHT CLAIM</span>
+  <span style="color:#9fb4c8">F = N<sub>live</sub>&kappa;&sigma;n̂ &nbsp;·&nbsp; &sigma; = max(0, u − &alpha;&gamma;B<sub>eff</sub>) &nbsp;·&nbsp; &kappa;<sub>0</sub> = 6.7×10⁻¹⁷ N·s/rad (invented)</span>
+</div>
+
+<div id="left" class="panel">
+  <h2>Variant &amp; mode</h2>
+  <div class="btns" id="variantBtns">
+    <button data-v="T" class="on">T — Restrained</button>
+    <button data-v="F">F — Free hop</button>
+    <button data-v="C">C — Climb map</button>
+    <button data-v="K">Step 0 — Coupon</button>
+  </div>
+  <div class="btns" id="modeBtns">
+    <button data-m="idle">Idle</button>
+    <button data-m="warm">Warm 0.80</button>
+    <button data-m="hover" class="on">Hover DP 1.35</button>
+    <button data-m="climb">Climb 1.67</button>
+    <button data-m="dump" class="danger">DUMP</button>
+  </div>
+
+  <h3>Heave — common I/I<sub>c</sub></h3>
+  <label class="sl">commanded I/I<sub>c</sub><b id="lCmd">1.350</b></label>
+  <input id="sCmd" type="range" min="0" max="1.67" step="0.005" value="1.35">
+  <div class="row"><span>u = &gamma;ħ&eta;I / 2eM<sub>s</sub>V</span><span id="vU">—</span></div>
+  <div class="row"><span>&alpha;&gamma;B<sub>eff</sub> (damping floor)</span><span id="vFloor">—</span></div>
+  <div class="row"><span>&sigma; = max(0, u − &alpha;&gamma;B<sub>eff</sub>)</span><span id="vSig">—</span></div>
+  <div class="row"><span>F = N<sub>live</sub>&kappa;&sigma;</span><span id="vF" class="big">—</span></div>
+  <div class="row"><span>weight mg</span><span id="vW">180.4 N</span></div>
+  <div class="row"><span>TWR</span><span id="vTWR" class="big">—</span></div>
+
+  <h3>Attitude — ±8 mT loop tilt / bank &Delta;&sigma;</h3>
+  <label class="sl">pitch cmd (B0−B4)<b id="lPit">0.00</b></label>
+  <input id="sPit" type="range" min="-1" max="1" step="0.01" value="0">
+  <label class="sl">roll cmd (B2−B6)<b id="lRol">0.00</b></label>
+  <input id="sRol" type="range" min="-1" max="1" step="0.01" value="0">
+  <label class="sl">lateral loop tilt (mT)<b id="lLat">0.0</b></label>
+  <input id="sLat" type="range" min="-8" max="8" step="0.1" value="0">
+  <div class="row"><span>n̂ deflection = atan(B<sub>loop</sub>/B<sub>eff</sub>)</span><span id="vTiltDeg">0.000°</span></div>
+  <label class="sl">yaw couple (adjacent-bank tilt)<b id="lYaw">0.00</b></label>
+  <input id="sYaw" type="range" min="-1" max="1" step="0.01" value="0">
+  <div class="chk"><input type="checkbox" id="cAuto" checked><label for="cAuto">GNC attitude hold (200 Hz) + heave hold</label></div>
+  <div class="chk"><input type="checkbox" id="cWheel" checked><label for="cWheel">15 g·cm² hub reaction wheel (yaw damper only)</label></div>
+
+  <h3>Physics constants (Eq. 1–4)</h3>
+  <label class="sl">&kappa; (N·s/rad) — invented coupling<b id="lKap">6.70e-17</b></label>
+  <input id="sKap" type="range" min="-22" max="-16" step="0.02" value="-16.174">
+  <label class="sl">&alpha; (Gilbert damping)<b id="lAlp">0.0100</b></label>
+  <input id="sAlp" type="range" min="0.004" max="0.02" step="0.0005" value="0.01">
+  <label class="sl">B<sub>eff</sub> (T)<b id="lBef">0.800</b></label>
+  <input id="sBef" type="range" min="0.4" max="1.2" step="0.005" value="0.8">
+  <label class="sl">live fraction of N<sub>des</sub><b id="lLive">12.0 %</b></label>
+  <input id="sLive" type="range" min="1" max="30" step="0.5" value="12">
+  <label class="sl">AUW (kg)<b id="lAUW">18.40</b></label>
+  <input id="sAUW" type="range" min="12" max="30" step="0.1" value="18.4">
+  <div class="chk"><input type="checkbox" id="cThermal" checked><label for="cThermal">B<sub>eff</sub>(T) PMA drift (I<sub>c</sub> re-tracked each step)</label></div>
+  <div class="chk"><input type="checkbox" id="cPower" checked><label for="cPower">Enforce source power limit (§6.2)</label></div>
+  <div class="chk"><input type="checkbox" id="cFail" checked><label for="cFail">Fail-safe ladder armed (§8)</label></div>
+  <div class="chk"><input type="checkbox" id="cWind"><label for="cWind">Wind / gusts</label></div>
+</div>
+
+<div id="right" class="panel">
+  <h2>State vector</h2>
+  <div class="row"><span>altitude AGL</span><span id="vAlt">0.000 m</span></div>
+  <div class="row"><span>vertical rate</span><span id="vVz">0.000 m/s</span></div>
+  <div class="row"><span>ground speed</span><span id="vGs">0.000 m/s</span></div>
+  <div class="row"><span>bank angle (dump &gt; 35°)</span><span id="vBank">0.0°</span></div>
+  <div class="row"><span>pitch / roll / yaw</span><span id="vEul">0.0 / 0.0 / 0.0°</span></div>
+  <div class="row"><span>body rates p,q,r</span><span id="vPqr">0.0 0.0 0.0 °/s</span></div>
+  <div class="row"><span>F vector tilt from body-z</span><span id="vTilt">0.00°</span></div>
+
+  <h3>Per-bank array (B0 = body-forward)</h3>
+  <table id="bankTbl"><thead><tr><th>Bk</th><th>I/I<sub>c</sub></th><th>&sigma; (rad/s)</th><th>F (N)</th><th>tilt mT</th><th>T (K)</th></tr></thead><tbody></tbody></table>
+
+  <h3>Power / energy / thermal (§6)</h3>
+  <div class="row"><span>bus current I<sub>live</sub></span><span id="vI">—</span></div>
+  <div class="row"><span>P<sub>bus</sub> @ 0.55 V</span><span id="vP" class="big">—</span></div>
+  <div class="row"><span>source power available</span><span id="vPav">—</span></div>
+  <div class="bar hot"><i id="barP"></i></div>
+  <div class="row"><span>mechanical power F·v</span><span id="vPm">—</span></div>
+  <div class="row"><span>electrical → mechanical &eta;</span><span id="vEta">—</span></div>
+  <div class="row"><span>deck heat flux</span><span id="vQ">—</span></div>
+  <div class="row"><span>coolant flow to hold 20 K</span><span id="vMdot">—</span></div>
+  <div class="row"><span>tile temperature</span><span id="vT">300.0 K</span></div>
+  <div class="bar hot"><i id="barT"></i></div>
+  <div class="row"><span>pack energy / draw</span><span id="vE">—</span></div>
+  <div class="row"><span>specific power</span><span id="vSp">—</span></div>
+
+  <h3>Strip charts</h3>
+  <canvas class="chart" id="chF"></canvas>
+  <canvas class="chart" id="chP"></canvas>
+  <canvas class="chart" id="chT"></canvas>
+  <div class="row" style="font-size:9.5px"><span style="color:#38d6ff">F (N) &amp; weight</span><span style="color:#a07bff">P<sub>bus</sub> / avail</span><span style="color:#ff5a3c">T<sub>tile</sub></span></div>
+
+  <h3>Systematics &amp; falsification (§10)</h3>
+  <div class="row"><span>Lorentz (2.9 MA, 50 µT)</span><span id="vLor">—</span></div>
+  <label class="sl">uncancelled conductor length (µm)<b id="lLen">7.0</b></label>
+  <input id="sLen" type="range" min="0" max="200" step="0.5" value="7">
+  <div class="row"><span>radiation pressure ceiling P/c</span><span id="vRad">—</span></div>
+  <div class="row"><span>Einstein–de Haas torque</span><span id="vEdH">≲ 1e-9 N·m, no net force</span></div>
+  <div class="row"><span>coupon 10⁴ cells, predicted F</span><span id="vCoup">—</span></div>
+  <div class="row"><span>verdict vs 1e-8 N null floor</span><span id="vVerdict">—</span></div>
+
+  <h3>Load cell (Variant T, §6.1)</h3>
+  <table><tbody>
+    <tr><td>F<sub>z</sub> apparent weight</td><td id="vLCz">—</td></tr>
+    <tr><td>M<sub>x</sub> / M<sub>y</sub> / M<sub>z</sub></td><td id="vLCm">—</td></tr>
+  </tbody></table>
+
+  <h3>View</h3>
+  <div class="btns">
+    <button id="bVec" class="on">Force vectors</button>
+    <button id="bFollow" class="on">Follow</button>
+    <button id="bField">Bank σ heatmap</button>
+    <button id="bTrail" class="on">Trail</button>
+    <button id="bChute">Parachute</button>
+    <button id="bReset">Reset</button>
+    <button id="bPause">Pause</button>
+  </div>
+  <div class="kbd" style="margin-top:6px">
+    <b>W</b><b>S</b> heave · <b>↑↓</b> pitch · <b>←→</b> roll · <b>Q</b><b>E</b> yaw ·
+    <b>A</b><b>D</b> lateral tilt · <b>Space</b> DUMP · <b>P</b> chute · <b>R</b> reset
+  </div>
+</div>
+
+<div id="bottom" class="panel">
+  <div><span style="color:var(--dim)">MODE</span> <span id="sMode" class="big">HOVER DP</span></div>
+  <div><span style="color:var(--dim)">F</span> <span id="sF" class="big">190 N</span></div>
+  <div><span style="color:var(--dim)">TWR</span> <span id="sTWR" class="big">1.05</span></div>
+  <div><span style="color:var(--dim)">P</span> <span id="sP" class="big">1.58 MW</span></div>
+  <div><span style="color:var(--dim)">ALT</span> <span id="sAlt" class="big">0.00 m</span></div>
+  <div><span style="color:var(--dim)">t</span> <span id="sT" class="big">0.00 s</span></div>
+</div>
+
+<div id="toast" class="panel"></div>
+
+<script type="importmap">
+{"imports":{
+  "three":"./vendor/three.module.js",
+  "three/addons/":"./vendor/"
+}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/OrbitControls.js';
+
+/* ============================================================================
+   AGE-STT-1/U Rev. 1 — flight mechanics simulator
+   Every number below traces to the blueprint. The lift law is INVENTED
+   (Eq. 4); the magnetization dynamics (LLGS, Eq. 1-3) are standard.
+   ========================================================================== */
+
+/* ---------- 1. Inherited physics constants (blueprint §2, §5) ------------ */
+const GAMMA   = 1.760859644e11;   // rad s^-1 T^-1
+const HBAR    = 1.054571817e-34;
+const QE      = 1.602176634e-19;
+const MU0_EARTH = 50e-6;          // T, Earth field for the Lorentz systematic
+const C_LIGHT = 2.99792458e8;
+
+const CELL = {                    // parent stack table, Rev. 1
+  a: 55e-9, b: 110e-9, t: 1.6e-9, // ellipse axes and free-layer thickness
+  Ms: 1.10e6,                     // A/m
+  eta: 0.55,                      // Slonczewski efficiency
+  R: 840,                         // ohm
+  Ic: 370e-6,                     // A
+  Jc: 7.8e10,                     // A/m^2  (7.8 MA/cm^2)
+  fL: 22.4e9                      // Larmor, Hz
+};
+CELL.A = Math.PI * (CELL.a/2) * (CELL.b/2);      // 4.75e-15 m^2
+CELL.V = CELL.A * CELL.t;                        // free-layer volume
+
+const N_DES  = 4.80e10;           // total cells on the deck
+const VDD    = 0.55;              // V bus
+const DECK_A = 0.36;              // m^2 tile deck
+const R_HULL = 0.360;             // m, 720 mm disc
+const H_HULL = 0.038;             // m mold line
+const R_BANK = 0.234;             // m, 45-deg sector centroid radius
+const NB     = 8;                 // banks B0..B7
+const TILT_MAX_MT = 8.0;          // +/- 8 mT on-chip loops
+// The loop field perturbs p and Heff against Beff, so the array normal
+// deflects by atan(B_loop / Beff): 8 mT against 0.80 T is only 0.57 deg.
+// That is why §7 calls yaw the weak axis and forbids coordinated turns.
+function tiltAngle(mT){ return Math.atan(mT*1e-3 / Math.max(BeffNow(), 1e-3)); }
+const G       = 9.80665;
+
+// Thermal: deck has almost no heat capacity -> ms-scale PMA excursions (§6.3)
+const C_TH   = 2100;              // J/K lumped deck+coldplate
+const CP_COOL= 1100;              // J/kg/K dielectric coolant
+const T_AMB  = 300;               // K
+const T_TRIP = 330;               // K, PMA band exit (20-30 K rise)
+const COOL_MAX = 80;              // kg/s loop capacity; §6 needs ~72 at DP
+const PMA_DRIFT = 1/600;          // fractional Beff loss per K
+
+// Source models (§6.1, §6.2)
+const SRC = {
+  T: {name:'ground converter + rigid busbars', pmax: 1.58e6*1.30, wh: Infinity},
+  F: {name:'5.2 kg high-C pack (BMS limited)', pmax: 5.2*20e3,    wh: 940},
+  C: {name:'5.2 kg high-C pack (BMS limited)', pmax: 5.2*20e3,    wh: 940},
+  K: {name:'coupon bench supply, 5 A / 3 W',   pmax: 3,           wh: Infinity}
+};
+
+/* ---------- 2. Mutable design parameters -------------------------------- */
+const P = {
+  kappa: 6.7e-17, alpha: 0.010, Beff0: 0.80,
+  liveFrac: 0.12, auw: 18.4,
+  variant: 'T', mode: 'hover',
+  thermal: true, powerLimit: true, failsafe: true, wind: false,
+  autoGNC: true, wheel: true, uncancelled_um: 7.0,
+  showVec: true, showHeat: false, showTrail: true, paused: false, follow: true
+};
+
+/* ---------- 3. Vehicle state -------------------------------------------- */
+const S = {
+  t: 0, restrained: true, armed: true, breaker: true,
+  pos: new THREE.Vector3(0, 0, 0),        // y = altitude AGL of deck underside
+  vel: new THREE.Vector3(),
+  quat: new THREE.Quaternion(),
+  omega: new THREE.Vector3(),             // body rates, body frame
+  cmd: 1.35, pitchCmd: 0, rollCmd: 0, latCmd: 0, yawCmd: 0,
+  bank: [], Ttile: T_AMB, wheelH: 0,
+  packWh: 940, chute: false, chuteT: 0,
+  coolantOK: true, faults: [], lastFault: '',
+  Fbody: new THREE.Vector3(), Mbody: new THREE.Vector3(),
+  loadFz: 0, loadM: new THREE.Vector3(),
+  Pbus: 0, Pavail: 0, Ilive: 0, sigmaMean: 0, Ftot: 0,
+  Flor: 0, Frad: 0, mdotNeed: 0
+};
+for (let i = 0; i < NB; i++)
+  S.bank.push({r:1.35, sigma:0, F:0, tx:0, ty:0, T:T_AMB, dead:false});
+
+/* ---------- 4. Core physics: Eq. (1)-(4) --------------------------------- */
+// u = gamma*hbar*eta*I / (2 e Ms V)  -- signed; u>0 is anti-damping (Eq. 2)
+function uOf(I){ return GAMMA*HBAR*CELL.eta*I / (2*QE*CELL.Ms*CELL.V); }
+
+// Ic = 2 e alpha Ms V Beff / (hbar eta)  (Eq. 2b) -- the critical current the
+// device actually has at the *current* Beff, i.e. it drifts with temperature.
+function IcOf(alpha, Beff){ return 2*QE*alpha*CELL.Ms*CELL.V*Beff/(HBAR*CELL.eta); }
+
+// sigma = max(0, u - alpha*gamma*Beff)   (Eq. 3)
+// With I/Ic = u/(alpha gamma Beff) this reduces to sigma = alpha*gamma*Beff*(r-1)
+function sigmaOf(r, alpha, Beff){
+  const floor = alpha*GAMMA*Beff;
+  return Math.max(0, r*floor - floor);      // r<0 (reverse polarity) -> 0. C1,C2
+}
+
+function BeffNow(){
+  if (!P.thermal) return P.Beff0;
+  return P.Beff0 * (1 - PMA_DRIFT*(S.Ttile - T_AMB));
+}
+
+function NliveTotal(){
+  if (P.variant === 'K') return 1e4;      // Step 0 coupon (§9)
+  return N_DES * P.liveFrac;
+}
+
+/* ---------- 5. Per-bank normal (loop tilt of local p and Heff, §7) ------- */
+const bankNormal = new THREE.Vector3();
+function normalOf(b, out){
+  // +/-8 mT on-chip loops tilt the LOCAL polarizer/effective field, hence the
+  // local array normal n_hat. The hull does NOT bank. (§7)
+  const ax = tiltAngle(b.tx);
+  const ay = tiltAngle(b.ty);
+  return out.set(Math.sin(ax), Math.sin(ay), Math.cos(ax)*Math.cos(ay)).normalize();
+}
+// Bank geometry: B0 body-forward (+x_body). Body frame: x fwd, y right, z up.
+const bankPos = [];
+for (let i = 0; i < NB; i++){
+  const th = i*Math.PI/4;
+  bankPos.push(new THREE.Vector3(Math.cos(th)*R_BANK, Math.sin(th)*R_BANK, 0));
+}
+
+/* ---------- 6. Control allocation (§7 channel table) --------------------- */
+function allocate(dt){
+  const lim = 0.15;                 // bank Delta(I/Ic) <= 0.15
+  let common = S.cmd;
+  if (P.mode === 'dump') common = -Math.abs(S.cmd || 1.35);
+  if (P.mode === 'idle') common = 0;
+
+  let pitch = S.pitchCmd, roll = S.rollCmd, yaw = S.yawCmd, lat = S.latCmd;
+
+  if (P.autoGNC && !S.restrained && P.mode !== 'idle' && P.mode !== 'dump'){
+    // 200 Hz attitude loop. Stick = attitude SETPOINT (+/-20 deg); without a
+    // closed loop the bank commands are open-loop and the slab tumbles.
+    // Angles are read off the body up-axis so the sign conventions of the §7
+    // channel table (positive pitch = nose up, positive roll = right down)
+    // stay explicit: up = (0,0,1) in body coords, expressed in the level frame.
+    const up = _up.set(0,0,1).applyQuaternion(S.quat);
+    const pitchAng = -Math.asin(THREE.MathUtils.clamp(up.x,-1,1)); // + = nose up
+    const rollAng  =  Math.asin(THREE.MathUtils.clamp(up.y,-1,1)); // + = right down
+    const SP = THREE.MathUtils.degToRad(20), kp = 2.0, kd = 0.9;
+    pitch = THREE.MathUtils.clamp((S.pitchCmd*SP - pitchAng)*kp + S.omega.y*kd, -1, 1);
+    roll  = THREE.MathUtils.clamp((S.rollCmd *SP - rollAng )*kp + S.omega.x*kd, -1, 1);
+    yaw   = THREE.MathUtils.clamp(S.yawCmd - S.omega.z*0.35, -1, 1);
+  }
+
+  const Beff = BeffNow();
+  for (let i = 0; i < NB; i++){
+    const b = S.bank[i];
+    const th = i*Math.PI/4;
+    // Opposite-bank differential: B0-B4 is pitch, B2-B6 is roll.
+    // r x F with F along +z gives M = (+y*F, -x*F, 0), so a stronger FRONT
+    // bank is -My = nose up, and a stronger RIGHT bank is +Mx = right side UP.
+    // The roll channel is therefore negated to match "positive roll = right
+    // side down" (§7).
+    const dPitch =  Math.cos(th)*pitch*lim;
+    const dRoll  = -Math.sin(th)*roll *lim;
+    let r = common + (common > 0 ? (dPitch + dRoll) : 0);
+    r = THREE.MathUtils.clamp(r, -1.67, 1.67);
+    if (b.dead) r = 0;
+    b.r = r;
+
+    // loop tilt: uniform part = lateral force, tangential part = yaw couple
+    let tx = lat, ty = 0;
+    tx += -Math.sin(th)*yaw*TILT_MAX_MT;    // tangential -> torque about body z
+    ty +=  Math.cos(th)*yaw*TILT_MAX_MT;
+    // attitude trim also leans the normal slightly (loop tilt assist, §7)
+    tx += Math.cos(th)*pitch*1.5; ty += -Math.sin(th)*roll*1.5;
+    const mag = Math.hypot(tx,ty);
+    if (mag > TILT_MAX_MT){ tx *= TILT_MAX_MT/mag; ty *= TILT_MAX_MT/mag; }
+    b.tx = tx; b.ty = ty;
+    b.sigma = sigmaOf(b.r, P.alpha, Beff);
+  }
+}
+
+/* ---------- 7. Power budget & brownout (§5, §6) -------------------------- */
+function powerPass(){
+  if (!S.breaker){
+    for (const b of S.bank){ b.r = 0; b.sigma = 0; }
+    S.Ilive = 0; S.Pbus = 0; S.Pavail = 0; return;
+  }
+  const Beff = BeffNow();
+  const Ic   = IcOf(P.alpha, Beff);          // drifts with tile temperature
+  const Nl   = NliveTotal(), per = Nl/NB;
+  const src  = SRC[P.variant];
+
+  let I = 0;
+  for (const b of S.bank) I += per*Math.abs(b.r)*Ic;
+  let Pdemand = I*VDD;
+  S.Pavail = src.pmax;
+
+  // A pack that cannot source the power does not magically deliver current:
+  // the bus sags and every bank's I/Ic scales down together. Below 1.0 the
+  // damping floor wins and sigma -> 0. This is why F and C do not fly. (§6.2)
+  let scale = 1;
+  if (P.powerLimit && Pdemand > src.pmax && Pdemand > 0){
+    scale = src.pmax/Pdemand;
+    for (const b of S.bank){ b.r *= scale; b.sigma = sigmaOf(b.r, P.alpha, Beff); }
+    I *= scale; Pdemand = src.pmax;
+    if (P.variant !== 'T' && P.variant !== 'K') flagFault('BROWNOUT: source cannot supply P_bus — I/Ic sags to '+(S.bank[0].r).toFixed(2));
+  }
+  S.Ilive = I; S.Pbus = Pdemand;
+  if (isFinite(src.wh)) S.packWh = Math.max(0, S.packWh - Pdemand*(1/3600)*SUB_DT);
+  if (isFinite(src.wh) && S.packWh <= 0){
+    for (const b of S.bank){ b.r = 0; b.sigma = 0; }
+    S.Ilive = 0; S.Pbus = 0; flagFault('PACK DEPLETED — 0.94 kWh spent');
+  }
+}
+
+/* ---------- 8. Thermal (§6.3) -------------------------------------------- */
+function thermalPass(dt){
+  const mdotNeed = S.Pbus/(CP_COOL*20);         // kg/s for a 20 K rise
+  const mdot = S.coolantOK ? Math.min(mdotNeed, COOL_MAX) : 0;
+  const removed = mdot*CP_COOL*(S.Ttile - T_AMB + 20);
+  const dT = (S.Pbus - removed - 12*(S.Ttile-T_AMB))/C_TH;
+  S.Ttile = Math.max(T_AMB, S.Ttile + dT*dt);
+  for (let i=0;i<NB;i++) S.bank[i].T = S.Ttile + (S.bank[i].sigma/5e8)*3.5;
+  S.mdotNeed = mdotNeed;
+  if (P.failsafe && S.breaker && S.Ttile > T_TRIP && P.mode !== 'dump'){
+    flagFault('TILE OVERTEMP '+S.Ttile.toFixed(0)+' K — PMA band exit, hardware dump');
+    setMode('dump');                                  // ladder step (2)
+  }
+  // Dump reverses polarity but still draws full bus current (§7 operating
+  // table), so it does not stop a thermal runaway. Ladder step (3) opens the
+  // contactor / busbar breaker.
+  if (P.failsafe && S.breaker && S.Ttile > T_TRIP + 60){
+    S.breaker = false;
+    flagFault('CONTACTOR / BUSBAR BREAKER OPEN at '+S.Ttile.toFixed(0)+' K — bus de-energised. Reset to re-arm.');
+    setMode('idle');
+  }
+}
+
+/* ---------- 9. Forces & moments ------------------------------------------ */
+const _n = new THREE.Vector3(), _f = new THREE.Vector3(), _m = new THREE.Vector3();
+const _up = new THREE.Vector3();
+function forcePass(){
+  const per = NliveTotal()/NB;
+  S.Fbody.set(0,0,0); S.Mbody.set(0,0,0);
+  let sSum = 0;
+  for (let i = 0; i < NB; i++){
+    const b = S.bank[i];
+    b.F = per*P.kappa*b.sigma;               // Eq. (4), extensive in Nlive (C3)
+    normalOf(b, _n);
+    _f.copy(_n).multiplyScalar(b.F);
+    S.Fbody.add(_f);
+    _m.copy(bankPos[i]).cross(_f);           // couple from differential sigma
+    S.Mbody.add(_m);
+    sSum += b.sigma;
+  }
+  S.sigmaMean = sSum/NB;
+  S.Ftot = S.Fbody.length();
+
+  // Lorentz systematic: only the *uncancelled* conductor length counts (§5)
+  S.Flor = MU0_EARTH*S.Ilive*(P.uncancelled_um*1e-6);
+  S.Frad = S.Pbus/C_LIGHT;                   // photon-recoil ceiling (§10)
+}
+
+/* ---------- 10. Rigid-body integration ----------------------------------- */
+// Disc: Izz = 1/2 m R^2 ; Ixx = Iyy = 1/4 m R^2 + 1/12 m h^2
+function inertia(){
+  const m = P.auw;
+  return {xx: 0.25*m*R_HULL*R_HULL + m*H_HULL*H_HULL/12,
+          zz: 0.5*m*R_HULL*R_HULL};
+}
+const _w = new THREE.Vector3(), _q = new THREE.Quaternion(), _v3 = new THREE.Vector3();
+// Body frame: x forward (B0), y right, z = mean array normal (lift axis).
+// R0 maps that frame into three.js world (y up). worldQ = R0 * attitude.
+const R0 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -Math.PI/2);
+const _wq = new THREE.Quaternion();
+function worldQuat(){ return _wq.copy(R0).multiply(S.quat); }
+function toWorld(v){ return v.applyQuaternion(S.quat).applyQuaternion(R0); }
+let windPhase = 0;
+
+function dynamics(dt){
+  const I = inertia(), m = P.auw;
+
+  if (S.restrained){
+    // Variant T: bolted to a 6-axis load cell. Eq. (4) shows up as a reduction
+    // in measured weight, plus moment components from bank differentials.
+    const world = toWorld(_v3.copy(S.Fbody));
+    S.loadFz = m*G - world.y;
+    S.loadM.copy(S.Mbody);
+    S.vel.set(0,0,0); S.omega.set(0,0,0);
+    return;
+  }
+
+  // translational: body force -> world, plus gravity, drag, chute, Lorentz
+  const F = toWorld(_v3.copy(S.Fbody));
+  F.y -= m*G;
+  // C4: the lift law has no velocity dependence, but the airframe still has drag
+  const rho = 1.225, Aplan = Math.PI*R_HULL*R_HULL;
+  const up = toWorld(new THREE.Vector3(0,0,1));
+  const vrel = S.vel.clone();
+  if (P.wind){
+    windPhase += dt;
+    vrel.x -= 2.2*Math.sin(windPhase*0.8) + 0.9*Math.sin(windPhase*3.1);
+    vrel.z -= 1.6*Math.cos(windPhase*0.6);
+  }
+  const speed = vrel.length();
+  if (speed > 1e-6){
+    const cosi = Math.abs(up.dot(vrel)/speed);
+    const Cd = 0.35 + 0.95*cosi;                   // edge-on vs face-on slab
+    const A  = Aplan*(0.18 + 0.82*cosi);
+    F.addScaledVector(vrel, -0.5*rho*Cd*A*speed);
+  }
+  if (S.chute){
+    const chuteA = Math.PI*0.9*0.9, Cdc = 1.35;
+    const g = Math.min(1,(S.t - S.chuteT)/0.9);    // inflation ramp
+    F.addScaledVector(vrel, -0.5*rho*Cdc*chuteA*speed*g);
+  }
+  F.x += S.Flor;                                   // uncancelled-loop artifact
+
+  S.vel.addScaledVector(F, dt/m);
+  S.pos.addScaledVector(S.vel, dt);
+
+  // rotational: Euler equations for a body of revolution
+  const Mx = S.Mbody.x, My = S.Mbody.y;
+  let Mz = S.Mbody.z;
+  if (P.wheel){
+    // 15 g.cm^2 hub wheel: 1.5e-6 kg.m^2. A yaw DAMPER, not a lift device --
+    // it saturates almost instantly against a 1.19 kg.m^2 hull.
+    const Iw = 1.5e-6, wmax = 4000;
+    const want = -S.omega.z*40;
+    const dH = THREE.MathUtils.clamp(want*dt, -Iw*wmax*dt*50, Iw*wmax*dt*50);
+    if (Math.abs(S.wheelH) < Iw*wmax){ S.wheelH += dH; Mz += -dH/dt; }
+  }
+  const wx=S.omega.x, wy=S.omega.y, wz=S.omega.z;
+  S.omega.x += dt*(Mx - (I.zz-I.xx)*wy*wz)/I.xx;
+  S.omega.y += dt*(My - (I.xx-I.zz)*wz*wx)/I.xx;
+  S.omega.z += dt*(Mz)/I.zz;
+  S.omega.multiplyScalar(1 - 0.02*dt);            // aero rate damping
+
+  _w.copy(S.omega).applyQuaternion(S.quat);
+  _q.set(_w.x, _w.y, _w.z, 0).multiply(S.quat);
+  S.quat.x += 0.5*_q.x*dt; S.quat.y += 0.5*_q.y*dt;
+  S.quat.z += 0.5*_q.z*dt; S.quat.w += 0.5*_q.w*dt;
+  S.quat.normalize();
+
+  // ground contact: 4 sprung feet, 22 mm stroke
+  if (S.pos.y <= 0){
+    S.pos.y = 0;
+    if (S.vel.y < 0) S.vel.y *= -0.12;
+    if (Math.abs(S.vel.y) < 0.05) S.vel.y = 0;
+    S.vel.x *= 0.80; S.vel.z *= 0.80;
+    S.omega.multiplyScalar(0.72);
+    const e = new THREE.Euler().setFromQuaternion(S.quat,'ZYX');
+    e.x *= 0.85; e.y *= 0.85; S.quat.setFromEuler(e);
+  }
+
+  if (P.failsafe && !S.restrained && S.pos.y > 2 && S.vel.y < -2 && S.Ftot < P.auw*G*0.5){
+    deployChute();   // ladder step (4): mandatory for any free article above 2 m
+  }
+  if (P.failsafe){
+    const bankAng = bankAngle();
+    if (bankAng > 35 && P.mode !== 'dump'){
+      flagFault('BANK ANGLE '+bankAng.toFixed(0)+'° > 35° — dump'); setMode('dump');
+      if (S.pos.y > 2) deployChute();
+    }
+  }
+}
+
+function bankAngle(){
+  const up = toWorld(new THREE.Vector3(0,0,1));
+  return THREE.MathUtils.radToDeg(Math.acos(THREE.MathUtils.clamp(up.y,-1,1)));
+}
+function deployChute(){
+  if (S.chute || P.variant === 'T' || P.variant === 'K') return;
+  S.chute = true; S.chuteT = S.t; chuteMesh.visible = true;
+  flagFault('PARACHUTE DEPLOYED — 1.8 m canopy, hub mortar');
+}
+
+/* ---------- 11. Fixed-step loop: 2 kHz current, 200 Hz attitude ---------- */
+const SUB_DT = 1/500;
+function step(dt){
+  allocate(dt); powerPass(); thermalPass(dt); forcePass(); dynamics(dt); S.t += dt;
+}
+
+/* ---------- 12. Scene ---------------------------------------------------- */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+app.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070b10);
+scene.fog = new THREE.Fog(0x070b10, 22, 130);
+
+const camera = new THREE.PerspectiveCamera(46, innerWidth/innerHeight, 0.05, 900);
+camera.position.set(1.9, 1.15, 2.3);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.6, 0);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+
+scene.add(new THREE.HemisphereLight(0x5f86b8, 0x0a0f16, 0.85));
+const key = new THREE.DirectionalLight(0xdfeeff, 1.5);
+key.position.set(5, 9, 4); key.castShadow = true;
+key.shadow.mapSize.set(2048,2048);
+key.shadow.camera.left=-8;key.shadow.camera.right=8;
+key.shadow.camera.top=8;key.shadow.camera.bottom=-8;
+scene.add(key);
+const rim = new THREE.PointLight(0x38d6ff, 26, 14); rim.position.set(-3,1.4,-2.5); scene.add(rim);
+
+// floor
+const grid = new THREE.GridHelper(120, 120, 0x1d3348, 0x111d29);
+grid.material.transparent = true; grid.material.opacity = 0.55; scene.add(grid);
+const floor = new THREE.Mesh(new THREE.CircleGeometry(60,64),
+  new THREE.MeshStandardMaterial({color:0x0a121b, roughness:0.95, metalness:0.05}));
+floor.rotation.x = -Math.PI/2; floor.position.y = -0.002; floor.receiveShadow = true;
+scene.add(floor);
+for (let i=1;i<=6;i++){                         // altitude reference rings
+  const g = new THREE.Mesh(new THREE.TorusGeometry(0.9,0.006,6,64),
+    new THREE.MeshBasicMaterial({color:0x17384d,transparent:true,opacity:0.5}));
+  g.rotation.x = Math.PI/2; g.position.y = i; scene.add(g);
+}
+
+/* ----- hull ----- */
+const hull = new THREE.Group(); scene.add(hull);
+// `rig` holds the y-up authored meshes; rotating it +90deg about x makes the
+// hull group itself a body-frame node (z = array normal), so force arrows and
+// bank sectors can be placed straight from the physics vectors.
+const rig = new THREE.Group(); rig.rotation.x = Math.PI/2; hull.add(rig);
+const bodyMat = new THREE.MeshStandardMaterial({color:0x1b2733, metalness:0.72, roughness:0.34});
+const rimMat  = new THREE.MeshStandardMaterial({color:0x2c3d4f, metalness:0.85, roughness:0.28});
+
+const shell = new THREE.Mesh(new THREE.CylinderGeometry(R_HULL, R_HULL*0.985, H_HULL, 96, 1), bodyMat);
+shell.castShadow = shell.receiveShadow = true; rig.add(shell);
+const rimRing = new THREE.Mesh(new THREE.TorusGeometry(R_HULL-0.004, 0.011, 10, 96), rimMat);
+rimRing.rotation.x = Math.PI/2; rig.add(rimRing);
+// top skin: GNSS patch opposite the array, parachute mortar at hub
+const topSkin = new THREE.Mesh(new THREE.CircleGeometry(R_HULL*0.97, 96),
+  new THREE.MeshStandardMaterial({color:0x223243, metalness:0.5, roughness:0.5}));
+topSkin.rotation.x = -Math.PI/2; topSkin.position.y = H_HULL/2+0.001; rig.add(topSkin);
+const mortar = new THREE.Mesh(new THREE.CylinderGeometry(0.052,0.052,0.028,24),
+  new THREE.MeshStandardMaterial({color:0x3a2a1a, metalness:0.6, roughness:0.4}));
+mortar.position.y = H_HULL/2+0.014; rig.add(mortar);
+const gnss = new THREE.Mesh(new THREE.BoxGeometry(0.05,0.008,0.05),
+  new THREE.MeshStandardMaterial({color:0x0d4a2a, emissive:0x093, emissiveIntensity:0.25}));
+gnss.position.set(0.20, H_HULL/2+0.006, 0.12); rig.add(gnss);
+const gnss2 = gnss.clone(); gnss2.position.set(-0.20, H_HULL/2+0.006, -0.12); rig.add(gnss2);
+
+// ventral eight-bank MTJ deck: 8 x 45deg sectors, coloured by sigma
+const sectors = [];
+for (let i = 0; i < NB; i++){
+  const a0 = i*Math.PI/4 - Math.PI/8;
+  const g = new THREE.RingGeometry(0.055, R_HULL-0.028, 24, 1, a0+0.012, Math.PI/4-0.024);
+  const m = new THREE.MeshStandardMaterial({color:0x0c1621, emissive:0x000000,
+    metalness:0.35, roughness:0.55, side:THREE.DoubleSide});
+  const s = new THREE.Mesh(g, m);
+  s.position.z = -H_HULL/2-0.0012;
+  hull.add(s); sectors.push(s);
+}
+// bank labels B0..B7
+const labelGroup = new THREE.Group(); rig.add(labelGroup);
+function textSprite(txt, color='#8fd7ff', size=52){
+  const c = document.createElement('canvas'); c.width=c.height=128;
+  const x = c.getContext('2d');
+  x.fillStyle='rgba(6,12,18,0.72)'; x.beginPath(); x.arc(64,64,52,0,7); x.fill();
+  x.strokeStyle=color; x.lineWidth=3; x.stroke();
+  x.fillStyle=color; x.font='bold '+size+'px ui-monospace,monospace';
+  x.textAlign='center'; x.textBaseline='middle'; x.fillText(txt,64,68);
+  const t = new THREE.CanvasTexture(c);
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({map:t, depthTest:false, transparent:true}));
+  s.scale.set(0.085,0.085,1); return s;
+}
+for (let i=0;i<NB;i++){
+  const sp = textSprite('B'+i, i===0?'#ffd166':'#8fd7ff');
+  sp.position.set(bankPos[i].x*1.06, -H_HULL/2-0.02, -bankPos[i].y*1.06);
+  labelGroup.add(sp);
+}
+const fwdMark = textSprite('▲', '#ffd166', 66);
+fwdMark.position.set(R_HULL*0.80, H_HULL/2+0.02, 0); fwdMark.scale.set(0.07,0.07,1);
+rig.add(fwdMark);
+
+// four sprung feet at 45-deg stations
+const feet = [];
+for (let i=0;i<4;i++){
+  const th = Math.PI/4 + i*Math.PI/2;
+  const f = new THREE.Group();
+  const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.010,0.010,0.085,12),
+    new THREE.MeshStandardMaterial({color:0x40515f, metalness:0.8, roughness:0.3}));
+  leg.position.y = -0.043; f.add(leg);
+  const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.026,0.030,0.013,16),
+    new THREE.MeshStandardMaterial({color:0x14202b, roughness:0.9}));
+  pad.position.y = -0.092; f.add(pad);
+  f.position.set(Math.cos(th)*(R_HULL-0.045), -H_HULL/2, -Math.sin(th)*(R_HULL-0.045));
+  f.castShadow = true; rig.add(f); feet.push(f);
+}
+
+// parachute (free variants only)
+const chuteMesh = new THREE.Group(); chuteMesh.visible = false; scene.add(chuteMesh);
+const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.9,28,16,0,Math.PI*2,0,Math.PI/2),
+  new THREE.MeshStandardMaterial({color:0xff7a3c, roughness:0.85, side:THREE.DoubleSide}));
+chuteMesh.add(canopy);
+const lines = new THREE.LineSegments(
+  (()=>{const g=new THREE.BufferGeometry(); const p=[];
+    for(let i=0;i<10;i++){const a=i/10*Math.PI*2;
+      p.push(Math.cos(a)*0.88,0,Math.sin(a)*0.88, 0,-1.2,0);}
+    g.setAttribute('position',new THREE.Float32BufferAttribute(p,3)); return g;})(),
+  new THREE.LineBasicMaterial({color:0xffb08a, transparent:true, opacity:0.6}));
+chuteMesh.add(lines);
+
+// Variant T umbilical: rigid laminated +/- busbars at the B2/B3 seam
+const busbar = new THREE.Group(); scene.add(busbar);
+for (const s of [-1, 1]){
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.020, 1.5),
+    new THREE.MeshStandardMaterial({color: s>0?0xb4502a:0x2a4fb4, metalness:0.9, roughness:0.25}));
+  bar.position.set(-0.28 + s*0.035, 0.085, -1.05); busbar.add(bar);
+}
+const conv = new THREE.Mesh(new THREE.BoxGeometry(0.60,0.30,0.42),
+  new THREE.MeshStandardMaterial({color:0x1a2a38, metalness:0.6, roughness:0.5}));
+conv.position.set(-0.28, 0.15, -1.62); conv.castShadow = true; busbar.add(conv);
+// 6-axis load cell under the hub: the hull is bolted down, so Eq. (4) reads
+// out as a reduction in measured weight rather than as motion (§6.1).
+const loadCell = new THREE.Mesh(new THREE.CylinderGeometry(0.105,0.145,0.062,24),
+  new THREE.MeshStandardMaterial({color:0x6a5322, metalness:0.85, roughness:0.35}));
+loadCell.position.y = 0.031; loadCell.castShadow = true; busbar.add(loadCell);
+const stand = new THREE.Mesh(new THREE.CylinderGeometry(0.048,0.048,0.040,20),
+  new THREE.MeshStandardMaterial({color:0x33424f, metalness:0.8, roughness:0.35}));
+stand.position.y = 0.082; busbar.add(stand);
+
+// coolant manifold ring (in-rim, two-pass)
+const coolRing = new THREE.Mesh(new THREE.TorusGeometry(R_HULL-0.016, 0.0055, 8, 96),
+  new THREE.MeshStandardMaterial({color:0x1f6f8f, emissive:0x0a3a4a, emissiveIntensity:0.6}));
+coolRing.position.z = -H_HULL/2+0.006; hull.add(coolRing);
+
+/* ----- force vectors ----- */
+const arrows = [];
+for (let i=0;i<NB;i++){
+  const a = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(),
+    0.3, 0x38d6ff, 0.07, 0.042);
+  hull.add(a); arrows.push(a);
+}
+const netArrow = new THREE.ArrowHelper(new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0),
+  0.6, 0x2fe08a, 0.13, 0.075);
+hull.add(netArrow);
+const wArrow = new THREE.ArrowHelper(new THREE.Vector3(0,-1,0), new THREE.Vector3(0,0,0),
+  0.5, 0xff5a3c, 0.11, 0.065);
+scene.add(wArrow);
+
+/* ----- GHz ringing halo: amplitude tracks TWR, not airspeed (§7) ----- */
+const ringGeo = new THREE.BufferGeometry();
+const RN = 420, rp = new Float32Array(RN*3);
+ringGeo.setAttribute('position', new THREE.BufferAttribute(rp,3));
+const ringPts = new THREE.Points(ringGeo, new THREE.PointsMaterial({
+  color:0xa07bff, size:0.016, transparent:true, opacity:0.0, depthWrite:false,
+  blending:THREE.AdditiveBlending}));
+hull.add(ringPts);
+
+/* ----- trail ----- */
+const TN = 1400, tpos = new Float32Array(TN*3);
+const trailGeo = new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(tpos,3));
+const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({
+  color:0x38d6ff, transparent:true, opacity:0.55}));
+scene.add(trail); let tHead = 0, tCount = 0;
+
+/* ---------- 13. UI wiring ------------------------------------------------ */
+const $ = id => document.getElementById(id);
+function flagFault(msg){
+  if (S.lastFault === msg) return;
+  S.lastFault = msg; S.faultT = S.t;
+  const el = $('toast'); el.textContent = '⚠  ' + msg; el.style.display = 'block';
+  clearTimeout(flagFault._h);
+  flagFault._h = setTimeout(()=>{ el.style.display='none'; S.lastFault=''; }, 4200);
+}
+const MODES = {
+  idle:  {r:0,    label:'IDLE'},
+  warm:  {r:0.80, label:'WARM 0.80 — subcritical, F must read 0'},
+  hover: {r:1.35, label:'HOVER DP 1.35'},
+  climb: {r:1.67, label:'CLIMB 1.67'},
+  dump:  {r:1.35, label:'DUMP — polarity reversed, σ→0'}
+};
+function setMode(m){
+  P.mode = m; S.cmd = MODES[m].r;
+  $('sCmd').value = S.cmd; $('lCmd').textContent = S.cmd.toFixed(3);
+  for (const b of $('modeBtns').children) b.classList.toggle('on', b.dataset.m === m);
+  $('sMode').textContent = MODES[m].label.split(' —')[0];
+}
+$('modeBtns').onclick = e => { if (e.target.dataset.m) setMode(e.target.dataset.m); };
+
+function setVariant(v){
+  P.variant = v;
+  S.restrained = (v === 'T' || v === 'K');
+  busbar.visible = (v === 'T');
+  hull.visible = (v !== 'K');
+  labelGroup.visible = (v !== 'K');
+  coupon.visible = (v === 'K');
+  S.packWh = 940; S.chute = false; S.breaker = true; S.coolantOK = true;
+  chuteMesh.visible = false;
+  resetState(false);
+  for (const b of $('variantBtns').children) b.classList.toggle('on', b.dataset.v === v);
+  if (v === 'F') flagFault('Variant F is paper-only: the 5.2 kg pack tops out near 104 kW against a 1.58 MW demand (§6.2).');
+  if (v === 'C') flagFault('Variant C climb map: 363 N / TWR 2.01 — valid only if you disable the source power limit.');
+  if (v === 'K') flagFault('Step 0 coupon: 10⁴ cells on a torsion fibre, 5 A / ~3 W. Do not skip this step (§9).');
+  if (v === 'T') flagFault('Variant T is a RESTRAINED article. Eq. (4) appears as a 190 N drop in measured weight (§6.1).');
+}
+$('variantBtns').onclick = e => { if (e.target.dataset.v) setVariant(e.target.dataset.v); };
+
+// coupon article (Step 0)
+const coupon = new THREE.Group(); coupon.visible = false; scene.add(coupon);
+{
+  const fibre = new THREE.Mesh(new THREE.CylinderGeometry(0.0015,0.0015,1.4,6),
+    new THREE.MeshBasicMaterial({color:0x7e97ad}));
+  fibre.position.y = 1.4; coupon.add(fibre);
+  const die = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.012,0.16),
+    new THREE.MeshStandardMaterial({color:0x2a3d4f, metalness:0.7, roughness:0.3}));
+  die.position.y = 0.70; coupon.add(die);
+  const bell = new THREE.Mesh(new THREE.CylinderGeometry(0.45,0.45,1.6,32,1,true),
+    new THREE.MeshPhysicalMaterial({color:0x9fd8ff, transparent:true, opacity:0.10,
+      roughness:0.05, transmission:0.9, side:THREE.DoubleSide}));
+  bell.position.y = 0.85; coupon.add(bell);
+  coupon.userData.die = die;
+}
+
+const sliders = [
+  ['sCmd','lCmd', v=>{S.cmd=v; return v.toFixed(3);}],
+  ['sPit','lPit', v=>{S.pitchCmd=v; return v.toFixed(2);}],
+  ['sRol','lRol', v=>{S.rollCmd=v; return v.toFixed(2);}],
+  ['sLat','lLat', v=>{S.latCmd=v; return v.toFixed(1);}],
+  ['sYaw','lYaw', v=>{S.yawCmd=v; return v.toFixed(2);}],
+  ['sKap','lKap', v=>{P.kappa=Math.pow(10,v); return P.kappa.toExponential(2);}],
+  ['sAlp','lAlp', v=>{P.alpha=v; return v.toFixed(4);}],
+  ['sBef','lBef', v=>{P.Beff0=v; return v.toFixed(3);}],
+  ['sLive','lLive',v=>{P.liveFrac=v/100; return v.toFixed(1)+' %';}],
+  ['sAUW','lAUW', v=>{P.auw=v; return v.toFixed(2);}],
+  ['sLen','lLen', v=>{P.uncancelled_um=v; return v.toFixed(1);}]
+];
+for (const [s,l,fn] of sliders){
+  const el = $(s);
+  const upd = () => { $(l).textContent = fn(parseFloat(el.value)); };
+  el.addEventListener('input', upd); upd();
+}
+const checks = [['cThermal','thermal'],['cPower','powerLimit'],['cFail','failsafe'],
+  ['cWind','wind'],['cAuto','autoGNC'],['cWheel','wheel']];
+for (const [id,k] of checks){
+  const el=$(id); el.checked = P[k];
+  el.onchange = () => { P[k] = el.checked;
+    if (k==='powerLimit' && !el.checked)
+      flagFault('Source power limit OFF — this is the paper-only regime. The blueprint says free flight does not close (§6, §11).'); };
+}
+$('bVec').onclick   = e=>{P.showVec=!P.showVec; e.target.classList.toggle('on',P.showVec);};
+$('bFollow').onclick= e=>{P.follow=!P.follow; e.target.classList.toggle('on',P.follow);};
+$('bField').onclick = e=>{P.showHeat=!P.showHeat; e.target.classList.toggle('on',P.showHeat);};
+$('bTrail').onclick = e=>{P.showTrail=!P.showTrail; e.target.classList.toggle('on',P.showTrail);
+  trail.visible=P.showTrail;};
+$('bChute').onclick = ()=>deployChute();
+$('bReset').onclick = ()=>resetState(true);
+$('bPause').onclick = e=>{P.paused=!P.paused; e.target.classList.toggle('on',P.paused);
+  e.target.textContent = P.paused?'Resume':'Pause';};
+
+function resetState(full){
+  S.pos.set(0,0,0); S.vel.set(0,0,0); S.omega.set(0,0,0);
+  S.quat.identity(); S.Ttile = T_AMB; S.wheelH = 0; S.chute=false;
+  S.breaker = true; S.coolantOK = true;
+  chuteMesh.visible=false; S.packWh=940; tCount=0; tHead=0;
+  for (const b of S.bank) b.dead=false;
+  if (full){ S.t=0; hist.F.length=0; hist.P.length=0; hist.T.length=0; }
+}
+
+const keys = {};
+addEventListener('keydown', e=>{
+  keys[e.code]=true;
+  if (e.code==='Space'){ setMode(P.mode==='dump'?'hover':'dump'); e.preventDefault(); }
+  if (e.code==='KeyP') deployChute();
+  if (e.code==='KeyR') resetState(true);
+});
+addEventListener('keyup', e=>keys[e.code]=false);
+function readKeys(dt){
+  const rate = 0.9*dt, tr = 2.2*dt;
+  if (keys.KeyW){ S.cmd = Math.min(1.67, S.cmd + rate); $('sCmd').value=S.cmd; $('lCmd').textContent=S.cmd.toFixed(3); }
+  if (keys.KeyS){ S.cmd = Math.max(0,    S.cmd - rate); $('sCmd').value=S.cmd; $('lCmd').textContent=S.cmd.toFixed(3); }
+  const set=(id,l,k,v)=>{ $(id).value=v; $(l).textContent=(id==='sLat'?v.toFixed(1):v.toFixed(2)); S[k]=v; };
+  if (keys.ArrowUp)    set('sPit','lPit','pitchCmd', Math.min(1, S.pitchCmd+tr));
+  if (keys.ArrowDown)  set('sPit','lPit','pitchCmd', Math.max(-1,S.pitchCmd-tr));
+  if (keys.ArrowRight) set('sRol','lRol','rollCmd',  Math.min(1, S.rollCmd+tr));
+  if (keys.ArrowLeft)  set('sRol','lRol','rollCmd',  Math.max(-1,S.rollCmd-tr));
+  if (keys.KeyQ)       set('sYaw','lYaw','yawCmd',   Math.max(-1,S.yawCmd-tr));
+  if (keys.KeyE)       set('sYaw','lYaw','yawCmd',   Math.min(1, S.yawCmd+tr));
+  if (keys.KeyD)       set('sLat','lLat','latCmd',   Math.min(8, S.latCmd+tr*6));
+  if (keys.KeyA)       set('sLat','lLat','latCmd',   Math.max(-8,S.latCmd-tr*6));
+}
+
+/* ---------- 14. Strip charts --------------------------------------------- */
+const hist = {F:[], P:[], T:[]};
+function chart(id, series, color, min, max, refs){
+  const c = $(id);
+  if (c.width !== c.clientWidth*2){ c.width=c.clientWidth*2; c.height=84; }
+  const x = c.getContext('2d');
+  x.clearRect(0,0,c.width,c.height);
+  x.strokeStyle='#15222f'; x.lineWidth=1;
+  for(let i=1;i<4;i++){const y=c.height*i/4; x.beginPath();x.moveTo(0,y);x.lineTo(c.width,y);x.stroke();}
+  for (const r of refs||[]){
+    const y = c.height - (r.v-min)/(max-min)*c.height;
+    x.strokeStyle=r.c; x.setLineDash([4,4]); x.beginPath();
+    x.moveTo(0,y);x.lineTo(c.width,y);x.stroke(); x.setLineDash([]);
+  }
+  x.strokeStyle=color; x.lineWidth=1.6; x.beginPath();
+  const n = series.length;
+  for (let i=0;i<n;i++){
+    const px = i/(Math.max(n,2)-1)*c.width;
+    const py = c.height - THREE.MathUtils.clamp((series[i]-min)/(max-min),0,1)*c.height;
+    i?x.lineTo(px,py):x.moveTo(px,py);
+  }
+  x.stroke();
+}
+
+/* ---------- 15. HUD ------------------------------------------------------ */
+const tbody = document.querySelector('#bankTbl tbody');
+for (let i=0;i<NB;i++){
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td>B'+i+'</td><td></td><td></td><td></td><td></td><td></td>';
+  tbody.appendChild(tr);
+}
+const fmt = (v,d=2)=>Number(v).toFixed(d);
+const eng = v => {
+  const a = Math.abs(v);
+  if (a >= 1e6) return (v/1e6).toFixed(2)+' M';
+  if (a >= 1e3) return (v/1e3).toFixed(2)+' k';
+  if (a >= 1)   return v.toFixed(2)+' ';
+  if (a >= 1e-3)return (v*1e3).toFixed(2)+' m';
+  if (a >= 1e-6)return (v*1e6).toFixed(2)+' µ';
+  return v.toExponential(2)+' ';
+};
+
+function hud(){
+  const Beff = BeffNow(), floor = P.alpha*GAMMA*Beff;
+  const Ic = IcOf(P.alpha, Beff);
+  const rEff = S.bank[0].r;
+  $('vU').textContent     = eng(uOf(rEff*Ic))+'rad/s';
+  $('vFloor').textContent = eng(floor)+'rad/s';
+  $('vSig').textContent   = eng(S.sigmaMean)+'rad/s';
+  $('vF').textContent     = fmt(S.Ftot,1)+' N';
+  const W = P.auw*G;
+  $('vW').textContent     = fmt(W,1)+' N';
+  $('vTWR').textContent   = fmt(S.Ftot/W,3);
+
+  $('vAlt').textContent   = fmt(S.pos.y,3)+' m';
+  $('vVz').textContent    = fmt(S.vel.y,3)+' m/s';
+  $('vGs').textContent    = fmt(Math.hypot(S.vel.x,S.vel.z),3)+' m/s';
+  const ba = bankAngle();
+  $('vBank').textContent  = fmt(ba,1)+'°';
+  $('vBank').style.color  = ba>35?'#ff5a3c':(ba>20?'#ffb020':'');
+  const e = new THREE.Euler().setFromQuaternion(S.quat,'ZYX');
+  $('vEul').textContent = [e.x,e.y,e.z].map(v=>fmt(THREE.MathUtils.radToDeg(v),1)).join(' / ')+'°';
+  $('vPqr').textContent = [S.omega.x,S.omega.y,S.omega.z]
+    .map(v=>fmt(THREE.MathUtils.radToDeg(v),1)).join(' ')+' °/s';
+  $('vTiltDeg').textContent = fmt(THREE.MathUtils.radToDeg(tiltAngle(Math.abs(S.latCmd))),3)+'°';
+  const tiltDeg = S.Ftot>1e-9
+    ? THREE.MathUtils.radToDeg(Math.acos(THREE.MathUtils.clamp(S.Fbody.z/S.Ftot,-1,1))) : 0;
+  $('vTilt').textContent = fmt(tiltDeg,2)+'°';
+
+  for (let i=0;i<NB;i++){
+    const b = S.bank[i], td = tbody.children[i].children;
+    td[1].textContent = fmt(b.r,3);
+    td[2].textContent = b.sigma>0 ? b.sigma.toExponential(2) : '0';
+    td[3].textContent = fmt(b.F,1);
+    td[4].textContent = fmt(Math.hypot(b.tx,b.ty),1);
+    td[5].textContent = fmt(b.T,1);
+    td[3].style.color = b.F>0?'#38d6ff':'#7e97ad';
+  }
+
+  $('vI').textContent   = eng(S.Ilive)+'A';
+  $('vP').textContent   = eng(S.Pbus)+'W';
+  $('vPav').textContent = (isFinite(S.Pavail)?eng(S.Pavail)+'W':'∞')+'  ('+SRC[P.variant].name+')';
+  $('barP').style.width = Math.min(100, S.Pbus/Math.max(S.Pavail,1)*100)+'%';
+  const Pmech = Math.max(0, S.Ftot*S.vel.y);
+  $('vPm').textContent  = eng(Pmech)+'W';
+  $('vEta').textContent = S.Pbus>0 ? (Pmech/S.Pbus*100).toFixed(4)+' %' : '—';
+  $('vQ').textContent   = eng(S.Pbus/DECK_A)+'W/m²  ('+(S.Pbus/DECK_A/1e4).toFixed(0)+' W/cm²)';
+  $('vMdot').textContent= fmt(S.mdotNeed,1)+' / '+COOL_MAX+' kg/s'
+    + (S.coolantOK ? (S.mdotNeed>COOL_MAX?'  [LOOP SATURATED]':'') : '  [LOOP LOST]');
+  $('vMdot').style.color = (!S.coolantOK||S.mdotNeed>COOL_MAX)?'#ff5a3c':'';
+  $('vT').textContent   = fmt(S.Ttile,1)+' K   (trip '+T_TRIP+' K)'
+    + (S.breaker ? '' : '   [BREAKER OPEN]');
+  $('vT').style.color = S.breaker ? (S.Ttile>T_TRIP?'#ff5a3c':'') : '#ff5a3c';
+  $('barT').style.width = THREE.MathUtils.clamp((S.Ttile-T_AMB)/(T_TRIP-T_AMB)*100,0,100)+'%';
+  $('vE').textContent   = isFinite(SRC[P.variant].wh)
+    ? fmt(S.packWh,0)+' Wh left  ·  '+ (S.Pbus>0?fmt(S.packWh*3.6/Math.max(S.Pbus/1000,1e-9),2)+' s':'—')
+    : 'grid-fed';
+  $('vSp').textContent  = eng(S.Pbus/P.auw)+'W/kg';
+
+  $('vLor').textContent = eng(S.Flor)+'N'+(S.Flor>1e-3?'  ← exceeds 1 mN budget':'');
+  $('vLor').style.color = S.Flor>1e-3?'#ff5a3c':'';
+  $('vRad').textContent = eng(S.Frad)+'N  (if all P were a directed beam)';
+  const coupF = 1e4*P.kappa*S.sigmaMean;
+  $('vCoup').textContent = coupF>0?coupF.toExponential(2)+' N':'0 N';
+  const verdict = coupF > 1e-8
+    ? 'DETECTABLE — tracks σ ⇒ authorizes Step 1'
+    : 'NULL at 1e-8 N ⇒ κ < 2e-21 ⇒ PROGRAM RETIRED';
+  $('vVerdict').textContent = verdict;
+  $('vVerdict').style.color = coupF>1e-8?'#2fe08a':'#ff5a3c';
+
+  $('vLCz').textContent = S.restrained ? fmt(S.loadFz,1)+' N  (Δ '+fmt(S.loadFz-P.auw*G,1)+' N)' : '—';
+  $('vLCm').textContent = S.restrained
+    ? [S.loadM.x,S.loadM.y,S.loadM.z].map(v=>fmt(v,2)).join(' / ')+' N·m' : '—';
+
+  $('sF').textContent   = fmt(S.Ftot,0)+' N';
+  $('sTWR').textContent = fmt(S.Ftot/W,2);
+  $('sP').textContent   = eng(S.Pbus)+'W';
+  $('sAlt').textContent = fmt(S.pos.y,2)+' m';
+  $('sT').textContent   = fmt(S.t,2)+' s';
+}
+
+/* ---------- 16. Visual update -------------------------------------------- */
+const _c = new THREE.Color();
+function visuals(dt){
+  hull.position.set(S.pos.x, S.pos.y + 0.10 + H_HULL/2, S.pos.z);
+  hull.quaternion.copy(worldQuat());
+
+  chuteMesh.position.set(hull.position.x, hull.position.y + 1.25, hull.position.z);
+  chuteMesh.scale.setScalar(S.chute ? Math.min(1,(S.t-S.chuteT)/0.9) : 0.01);
+
+  const maxF = Math.max(30, S.bank.reduce((a,b)=>Math.max(a,b.F),0));
+  for (let i=0;i<NB;i++){
+    const b = S.bank[i], a = arrows[i];
+    a.visible = P.showVec && b.F > 1e-6;
+    if (a.visible){
+      normalOf(b, bankNormal);
+      a.position.set(bankPos[i].x, bankPos[i].y, -H_HULL/2);
+      a.setDirection(bankNormal);
+      a.setLength(0.07 + 0.55*b.F/maxF, 0.055, 0.032);
+      a.setColor(_c.setHSL(0.55 - 0.42*(b.F/maxF), 0.95, 0.58));
+    }
+    // sector shading: sigma heatmap or temperature
+    const m = sectors[i].material;
+    if (P.showHeat){
+      const f = THREE.MathUtils.clamp((b.T-T_AMB)/(T_TRIP-T_AMB+8),0,1);
+      m.color.setHSL(0.62-0.62*f, 0.85, 0.12+0.22*f);
+      m.emissive.setHSL(0.62-0.62*f, 0.95, 0.10+0.34*f);
+    } else {
+      const f = THREE.MathUtils.clamp(b.sigma/9.4e8,0,1);
+      const rev = b.r < 0;
+      m.color.setHex(rev?0x3a1020:0x0c1621);
+      m.emissive.setHSL(rev?0.98:0.52-0.10*f, 0.95, rev?0.14:0.03+0.42*f);
+    }
+    m.emissiveIntensity = 1;
+  }
+  netArrow.visible = P.showVec && S.Ftot > 1e-6;
+  if (netArrow.visible){
+    netArrow.position.set(0,0,-H_HULL/2);
+    netArrow.setDirection(_v3.copy(S.Fbody).normalize());
+    netArrow.setLength(0.25 + 0.9*S.Ftot/400, 0.10, 0.058);
+  }
+  wArrow.visible = P.showVec && !S.restrained;
+  wArrow.position.copy(hull.position);
+  wArrow.setLength(0.25 + 0.9*P.auw*G/400, 0.09, 0.05);
+
+  // GHz ringing halo, amplitude tracks TWR (§7)
+  const twr = S.Ftot/(P.auw*G);
+  ringPts.material.opacity = THREE.MathUtils.clamp(twr*0.42, 0, 0.55);
+  if (ringPts.material.opacity > 0.01){
+    const arr = ringGeo.attributes.position.array;
+    for (let i=0;i<RN;i++){
+      const ph = S.t*CELL.fL*1e-9*6 + i*0.618;
+      const rr = R_HULL*(0.25+0.78*((i%37)/37));
+      const a  = i*2.399 + S.t*2.0;
+      arr[i*3]   = Math.cos(a)*rr;
+      arr[i*3+1] = Math.sin(a)*rr;
+      arr[i*3+2] = -H_HULL/2 - 0.02 - 0.16*Math.abs(Math.sin(ph))*twr;
+    }
+    ringGeo.attributes.position.needsUpdate = true;
+  }
+
+  // coupon torsion deflection
+  if (P.variant === 'K'){
+    const coupF = 1e4*P.kappa*S.sigmaMean;
+    coupon.userData.die.rotation.y = THREE.MathUtils.clamp(coupF/3.3e-4, -3, 3)*0.5;
+    coupon.userData.die.position.x  = THREE.MathUtils.clamp(coupF/3.3e-4, -3, 3)*0.05;
+  }
+
+  if (P.showTrail && !S.restrained){
+    tpos[tHead*3]=hull.position.x; tpos[tHead*3+1]=hull.position.y; tpos[tHead*3+2]=hull.position.z;
+    tHead=(tHead+1)%TN; tCount=Math.min(tCount+1,TN);
+    trailGeo.setDrawRange(0,tCount);
+    trailGeo.attributes.position.needsUpdate = true;
+  }
+  coolRing.material.emissiveIntensity = S.coolantOK ? 0.4+0.5*Math.sin(S.t*8)**2 : 0.05;
+}
+
+/* ---------- 17. Main loop ------------------------------------------------ */
+let last = performance.now(), acc = 0, hAcc = 0;
+setVariant('T'); setMode('hover');
+
+function frame(now){
+  requestAnimationFrame(frame);
+  const wall = Math.min((now-last)/1000, 0.1); last = now;
+  if (!P.paused){
+    readKeys(wall);
+    acc += wall;
+    let guard = 0;
+    while (acc >= SUB_DT && guard++ < 60){ step(SUB_DT); acc -= SUB_DT; }
+    hAcc += wall;
+    if (hAcc > 0.05){
+      hAcc = 0;
+      hist.F.push(S.Ftot); hist.P.push(S.Pbus); hist.T.push(S.Ttile);
+      for (const k in hist) if (hist[k].length > 300) hist[k].shift();
+    }
+  }
+  visuals(wall);
+  hud();
+  chart('chF', hist.F, '#38d6ff', 0, 420, [{v:P.auw*G, c:'#ff5a3c'}, {v:190, c:'#2a4a5e'}]);
+  chart('chP', hist.P, '#a07bff', 0, 2.1e6, [{v:Math.min(S.Pavail,2.1e6), c:'#ff5a3c'}]);
+  chart('chT', hist.T, '#ff5a3c', T_AMB-2, T_TRIP+15, [{v:T_TRIP, c:'#ffb020'}]);
+  if (P.follow){
+    // chase the hull without fighting the user's orbit input
+    const d = _v3.copy(hull.position).sub(controls.target);
+    if (d.lengthSq() > 1e-8){
+      const k = 1 - Math.pow(0.001, wall);
+      controls.target.addScaledVector(d, k);
+      camera.position.addScaledVector(d, k);
+    }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(frame);
+
+// Debug / scripting hook: inspect or drive the model from the console,
+// e.g. SIM.P.kappa = 1e-20, SIM.setMode('climb'), SIM.S.pos.y
+window.SIM = {S, P, setMode, setVariant, sigmaOf, uOf, IcOf, CELL, deployChute};
+
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// coolant-loss demo: shift-click the rim ring
+addEventListener('keydown', e=>{
+  if (e.code === 'KeyL'){
+    S.coolantOK = !S.coolantOK;
+    flagFault(S.coolantOK ? 'Coolant loop restored.'
+      : 'COOLANT FLOW LOST — tiles have little heat capacity; PMA band exits in ms (§6.3)');
+  }
+  if (e.code === 'KeyK'){
+    const i = Math.floor(Math.random()*NB);
+    S.bank[i].dead = !S.bank[i].dead;
+    flagFault('Bank B'+i+(S.bank[i].dead?' driver failed — asymmetric σ':' restored'));
+  }
+});
+</script>
+</body>
+</html>
