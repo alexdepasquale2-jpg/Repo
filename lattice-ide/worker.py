@@ -26,6 +26,8 @@ Environment:
   LATTICE_TOKEN      optional bearer token for everything but OPTIONS and GET /health
   LATTICE_COSMOS_CMD / LATTICE_HY_CMD        command prefix overrides
   LATTICE_COSMOS_MODULE / LATTICE_HY_MODULE  engine module names for detection
+  LATTICE_REGION     ISO 3166 alpha-2 where this worker runs (HY-World territory gate)
+  LATTICE_GPU_USD_HR optional $/GPU-hour used to compute Status.metrics.cost_usd
 
 HF tokens arrive only as the `X-HF-Token` header on POST /jobs, live in memory for
 that job only, are passed to the subprocess as HF_TOKEN, and are redacted from logs.
@@ -95,6 +97,47 @@ LICENSE_IDS = {
     "hyworld": "Tencent-HY-World-2.0",
     "bridge": "OpenMDW-1.1+Tencent-HY-World-2.0",
 }
+# HY-World 2.0 license "does not apply" in the EU, UK and South Korea (preamble, §1(l), §5(c)).
+EU27 = {"AT", "BE", "BG", "HR", "CY", "CZ", "DK", "EE", "FI", "FR", "DE", "GR", "HU", "IE", "IT", "LV",
+        "LT", "LU", "MT", "NL", "PL", "PT", "RO", "SK", "SI", "ES", "SE"}
+HY_EXCLUDED = EU27 | {"GB", "KR"}
+HY_ENGINES = {"hyworld", "bridge"}
+COSMOS_ENGINES = {"cosmos", "bridge"}
+REGION_RE = re.compile(r"^[A-Z]{2}$")
+
+NOTICE_HY = """Tencent HY-WORLD 2.0 NOTICE
+===========================
+Tencent HY-WORLD 2.0 is licensed under the Tencent HY-WORLD 2.0 Community License Agreement,
+Copyright \u00a9 2026 Tencent. All Rights Reserved. The trademark rights of \u201cTencent HY\u201d are
+owned by Tencent or its affiliate.
+
+This run used Tencent HY-WORLD 2.0. The governing terms are Tencent's own License.txt shipped with
+the HY-WORLD 2.0 model materials (Tencent HY-WORLD 2.0 Community License Agreement and its
+Acceptable Use Policy). Read that file; it controls over this summary. Lattice does not relicense it.
+
+Key restrictions (summary, not legal advice -- see License.txt):
+- Territory: the license does NOT apply in the European Union, the United Kingdom or South Korea.
+  Do not use, reproduce, modify, distribute or display the Works, Outputs or results there (§5(c)).
+- Outputs may not be used to improve any other AI model (other than Tencent HY-WORLD 2.0 or its
+  Model Derivatives) (§5(b)). Do not use these outputs as training data for other models.
+- Recipients of distributed Model Materials must receive a copy of the agreement and this notice (§3).
+- Licensees whose products exceeded 1 million monthly active users must request a license from
+  Tencent (§4).
+"""
+NOTICE_COSMOS = """NVIDIA Cosmos 3 NOTICE
+======================
+This run used NVIDIA Cosmos 3 model weights, made available under the OpenMDW License
+(version 1.1 as stated by the model card; verify at https://openmdw.ai/license/).
+
+- If you distribute any portion of the model materials you must retain a copy of the license and
+  all copyright and other notices of origin included in the model materials.
+- The license imposes no restrictions or obligations on the use, modification or sharing of
+  outputs generated with the model materials.
+- Offering the model as a competing public model API may be restricted; check the license and
+  NVIDIA's model card before doing so.
+Summary only, not legal advice. The license text governs.
+"""
+
 ENGINE_LICENSE = {"cosmos": "OpenMDW-1.1", "hyworld": "Tencent HY-World 2.0 License.txt"}
 
 # Whitelisted params: name -> validator returning a normalized value or raising ValueError.
@@ -158,7 +201,8 @@ ARTIFACT_KINDS = {
     ".ply": "splat", ".spz": "splat", ".splat": "splat",
     ".glb": "mesh", ".usd": "mesh", ".usdz": "mesh", ".obj": "mesh",
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
-    ".json": "json", ".txt": "text",
+    ".usda": "mesh", ".usdc": "mesh",
+    ".json": "json", ".txt": "text", ".zip": "bundle",
 }
 HIDDEN = {"job.json", "status.json", "log.txt"}
 
@@ -186,6 +230,39 @@ def sanitize_name(name: str, fallback: str) -> str:
 
 class JobError(Exception):
     pass
+
+
+def norm_region(v) -> str | None:
+    """Normalize an ISO 3166 alpha-2 code (UK -> GB); None when empty."""
+    if v is None or v == "":
+        return None
+    if not isinstance(v, str) or not REGION_RE.match(v.strip().upper()):
+        raise ValueError("must be an ISO 3166 alpha-2 country code")
+    v = v.strip().upper()
+    return "GB" if v == "UK" else v
+
+
+# Mirror of exporters.SUPPORTED, used when the package is not importable.
+EXPORT_SUPPORTED = {"unity": ["ply", "spz", "glb", "usd"], "unreal": ["ply", "spz", "glb", "usd"],
+                    "isaac": ["ply", "glb", "usd"]}
+
+
+def export_supported() -> dict:
+    mod = load_exporters()
+    sup = getattr(mod, "SUPPORTED", None) if mod else None
+    return sup if isinstance(sup, dict) else EXPORT_SUPPORTED
+
+
+def load_exporters():
+    """Import the optional exporters package lazily; None if absent."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    try:
+        import exporters  # type: ignore
+    except ImportError:
+        return None
+    return exporters if callable(getattr(exporters, "export", None)) else None
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +334,9 @@ def validate_job(job) -> dict:
                 clean[k] = PARAMS[k](v)
             except (ValueError, TypeError) as e:
                 raise JobError(f"inputs.params.{k} {e}")
+    tgt, fmt = clean.get("export_target"), clean.get("format")
+    if tgt and fmt and fmt not in export_supported().get(tgt, []):
+        raise JobError(f"{tgt} export does not support {fmt}")
     return clean
 
 
@@ -273,6 +353,9 @@ class Job:
         self.hf_token = hf_token  # memory only; cleared when the job finishes
         self.cancel = threading.Event()
         self.proc: subprocess.Popen | None = None
+        self.stages: list = []  # per-stage metrics records
+        self.cur = None
+        self.t0 = time.time()
 
 
 class Worker:
@@ -288,6 +371,16 @@ class Worker:
         self.cosmos_mod = os.environ.get("LATTICE_COSMOS_MODULE") or "cosmos3"
         self.hy_mod = os.environ.get("LATTICE_HY_MODULE") or "hyworld"
         self.gpu = detect_gpu()
+        self.gpu_count = gpu_count() if self.gpu else 0
+        try:
+            self.region = norm_region(os.environ.get("LATTICE_REGION"))
+        except ValueError:
+            print("warning: LATTICE_REGION is not an ISO alpha-2 code; treating as unset", file=sys.stderr)
+            self.region = None
+        try:
+            self.usd_hr = float(os.environ["LATTICE_GPU_USD_HR"]) if os.environ.get("LATTICE_GPU_USD_HR") else None
+        except ValueError:
+            self.usd_hr = None
         self._reload()
         threading.Thread(target=self._loop, name="lattice-runner", daemon=True).start()
 
@@ -317,7 +410,20 @@ class Worker:
         return {"ok": True, "service": "lattice-worker", "version": VERSION, "schema": SCHEMA,
                 "dry_run": self.global_dry(), "exec": self.exec and not self.force_dry,
                 "auth": bool(self.token), "engines": self.engines(), "gpu": self.gpu,
-                "queue": self.q.qsize(), "runs_dir": str(self.runs)}
+                "queue": self.q.qsize(), "runs_dir": str(self.runs),
+                "region": self.region, "hy_territory_ok": self.region not in HY_EXCLUDED,
+                "gpu_usd_hr": self.usd_hr}
+
+    def territory_check(self, job: dict):
+        if job.get("engine") not in HY_ENGINES:
+            return
+        try:
+            user = norm_region((job.get("license") or {}).get("territory"))
+        except ValueError as e:
+            raise JobError(f"license.territory {e}")
+        for where in (self.region, user):
+            if where in HY_EXCLUDED:
+                raise JobError(f"HY-World 2.0 license does not apply in {where}")
 
     # -- persistence -------------------------------------------------------
     def _reload(self):
@@ -369,6 +475,7 @@ class Worker:
     # -- API ops -----------------------------------------------------------
     def submit(self, job: dict, hf_token: str | None) -> dict:
         params = validate_job(job)
+        self.territory_check(job)
         jid = job.get("id")
         if not isinstance(jid, str) or not ID_RE.match(jid):
             jid = None
@@ -423,7 +530,7 @@ class Worker:
         status = {"id": jid, "status": "queued", "progress": 0.0, "stage": "queued",
                   "engine": engine, "mode": stored["mode"], "model": stored["model"],
                   "created": ts, "updated": ts, "dry_run": dry, "error": None,
-                  "log": [], "artifacts": []}
+                  "log": [], "artifacts": [], "metrics": None}
         j = Job(status, run_dir, stored, params, hf_token or None)
         with self.lock:
             self.jobs[jid] = j
@@ -472,8 +579,11 @@ class Worker:
             j = self.jobs.get(jid)
             if not j or j.status["status"] != "queued" or j.cancel.is_set():
                 continue
+            j.stages = []
+            j.t0 = time.time()
             try:
                 self.update(j, status="running", stage=STAGES[j.job["engine"]][0])
+                self._notices(j)
                 if j.status["dry_run"]:
                     self._dry(j)
                 else:
@@ -482,6 +592,7 @@ class Worker:
                     self.update(j, status="cancelled", stage="cancelled")
                     self.log(j, "cancelled")
                 else:
+                    self._finish_metrics(j)
                     self._collect(j)
                     self.update(j, status="done", stage="done", progress=1.0)
                     self.log(j, "done")
@@ -493,10 +604,95 @@ class Worker:
                     msg = self.redact(j, str(e)) or e.__class__.__name__
                     self.update(j, status="failed", error=msg)
                     self.log(j, f"failed: {msg}")
+                    self._finish_metrics(j)
                     self._collect(j)
             finally:
+                self._stage_end(j)
                 j.hf_token = None
                 j.proc = None
+
+    # -- notices / metrics / export -----------------------------------------
+    def _notices(self, j: Job):
+        eng = j.job["engine"]
+        if eng in HY_ENGINES:
+            (j.run_dir / "NOTICE-HY-World.txt").write_text(NOTICE_HY, "utf-8")
+        if eng in COSMOS_ENGINES:
+            (j.run_dir / "NOTICE-Cosmos.txt").write_text(NOTICE_COSMOS, "utf-8")
+
+    def _stage_begin(self, j: Job, stage: str):
+        self._stage_end(j)
+        rec = {"stage": stage, "started": now_iso(), "ended": None, "wall_s": None,
+               "gpu_name": self.gpu["name"] if self.gpu else None, "gpu_count": self.gpu_count,
+               "peak_vram_mb": None, "exit_code": None}
+        j.cur = (rec, time.time(), VramPoller() if self.gpu and not j.status.get("dry_run") else None)
+        j.stages.append(rec)
+
+    def _stage_end(self, j: Job, exit_code: int | None = None):
+        cur = getattr(j, "cur", None)
+        if not cur:
+            return
+        rec, t, poller = cur
+        j.cur = None
+        rec["ended"] = now_iso()
+        rec["wall_s"] = round(time.time() - t, 3)
+        if poller:
+            rec["peak_vram_mb"] = poller.stop()
+        if exit_code is not None:
+            rec["exit_code"] = exit_code
+        elif rec["exit_code"] is None and j.status.get("dry_run"):
+            rec["exit_code"] = 0
+
+    def _finish_metrics(self, j: Job):
+        self._stage_end(j)
+        wall = round(time.time() - getattr(j, "t0", time.time()), 3)
+        # A dry run uses no GPU, so it bills nothing (keeps batch totals honest).
+        if j.status.get("dry_run"):
+            gpu_h = 0.0
+        else:
+            gpu_h = sum((s["wall_s"] or 0) * max(1, s["gpu_count"] or 0) for s in j.stages) / 3600.0
+        cost = round(gpu_h * self.usd_hr, 6) if self.usd_hr is not None and not j.status.get("dry_run") else None
+        m = {"wall_s": wall, "gpu_hours": round(gpu_h, 6), "cost_usd": cost,
+             "gpu_usd_hr": self.usd_hr, "stages": j.stages}
+        doc = {"schema": "lattice.metrics/1", "id": j.status["id"], "engine": j.job.get("engine"),
+               "model": j.job.get("model"), "target": j.job.get("target", "rtx"),
+               "dry_run": j.status.get("dry_run"), **m,
+               "note": "cost_usd = gpu_hours x LATTICE_GPU_USD_HR; gpu_hours counts max(1, gpu_count) per stage; dry runs bill 0."}
+        try:
+            (j.run_dir / "metrics.json").write_text(json.dumps(doc, indent=2), "utf-8")
+        except OSError:
+            pass
+        self.update(j, metrics=m)
+
+    def _export(self, j: Job, placeholder: bool):
+        target = j.params.get("export_target")
+        if not target or j.job["engine"] not in HY_ENGINES:
+            return
+        fmt = j.params.get("format", "ply")
+        mod = load_exporters()
+        if mod is None:
+            self.log(j, f"export_target={target}: exporters package not installed; skipping bundle")
+            return
+        if placeholder:
+            ph = j.run_dir / "placeholder"
+            ph.mkdir(exist_ok=True)
+            f = ph / "placeholder-dry-run-scene.ply"
+            f.write_text("ply\nformat ascii 1.0\ncomment LATTICE DRY-RUN PLACEHOLDER - not a real scene\n"
+                         "element vertex 3\nproperty float x\nproperty float y\nproperty float z\n"
+                         "end_header\n0 0 0\n1 0 0\n0 1 0\n", "utf-8")
+            scene = [f]
+        else:
+            scene = sorted(p for p in j.run_dir.rglob("*")
+                           if p.is_file() and p.suffix.lower() in (".ply", ".spz", ".splat", ".glb", ".usd",
+                                                                    ".usda", ".usdc", ".usdz")
+                           and not p.relative_to(j.run_dir).as_posix().startswith(("inputs/", "export/")))
+        if not scene:
+            self.log(j, "export: no splat/mesh files produced; skipping bundle")
+            return
+        try:
+            out = mod.export(j.run_dir, target, fmt, scene_files=scene, log=lambda s: self.log(j, "export: " + str(s)))
+            self.log(j, f"export {target}/{fmt}: {len(out or [])} file(s)")
+        except ValueError as e:
+            self.log(j, f"export {target}/{fmt} rejected: {e}")
 
     # argv builders use whitelisted fields only; the client `code` field is ignored.
     def _inputs(self, j: Job) -> list:
@@ -551,6 +747,7 @@ class Worker:
             if j.cancel.is_set():
                 return
             self.update(j, stage=stage, progress=round(i / len(stages), 3))
+            self._stage_begin(j, stage)
             self.log(j, f"stage {stage}")
             for s, argv in cmds:
                 if s == stage:
@@ -559,6 +756,9 @@ class Worker:
             while time.time() < end:
                 if j.cancel.wait(0.05):
                     return
+            if stage == "export":
+                self._export(j, placeholder=True)
+        self._stage_end(j)
         plan = {"schema": "lattice.plan/1", "id": j.status["id"], "dry_run": True,
                 "engine": eng, "mode": j.job["mode"], "model": j.job["model"],
                 "target": j.job.get("target", "rtx"), "stages": stages,
@@ -594,6 +794,9 @@ class Worker:
                     pass
             self.log(j, line)
         rc = j.proc.wait()
+        cur = getattr(j, "cur", None)
+        if cur:
+            cur[0]["exit_code"] = rc
         if j.cancel.is_set():
             return
         if rc != 0:
@@ -604,20 +807,28 @@ class Worker:
         cmds = dict(self.commands(j))
         self.update(j, stage="validate", progress=0.02)
         self.log(j, "executing pipeline (client code field ignored; argv built from whitelisted fields)")
+        self._stage_begin(j, "validate")
         if eng != "bridge":
             stage = "infer" if eng == "cosmos" else "pano"
             self.update(j, stage=stage)
+            self._stage_begin(j, stage)
             self._run(j, cmds[stage], 0.05, 0.95)
             self.update(j, stage=STAGES[eng][-1])
+            self._stage_begin(j, STAGES[eng][-1])
+            if eng == "hyworld" and j.job["mode"] == "export":
+                self._export(j, placeholder=False)
+            self._stage_end(j, 0)
             return
         (j.run_dir / "rollout").mkdir(exist_ok=True)
         kf = j.run_dir / "keyframes"
         kf.mkdir(exist_ok=True)
         self.update(j, stage="cosmos-rollout")
+        self._stage_begin(j, "cosmos-rollout")
         self._run(j, cmds["cosmos-rollout"], 0.05, 0.5)
         if j.cancel.is_set():
             return
         self.update(j, stage="keyframes", progress=0.5)
+        self._stage_begin(j, "keyframes")
         vids = sorted(p for p in (j.run_dir / "rollout").rglob("*") if p.suffix.lower() in (".mp4", ".webm"))
         if not vids:
             raise RuntimeError("cosmos rollout produced no video")
@@ -631,8 +842,12 @@ class Worker:
         if j.cancel.is_set():
             return
         self.update(j, stage="hy-freeze", progress=0.6)
+        self._stage_begin(j, "hy-freeze")
         self._run(j, cmds["hy-freeze"], 0.6, 0.95)
         self.update(j, stage="export")
+        self._stage_begin(j, "export")
+        self._export(j, placeholder=False)
+        self._stage_end(j, 0)
 
     def _collect(self, j: Job):
         arts = []
@@ -650,6 +865,47 @@ class Worker:
                          "url": f"/runs/{j.status['id']}/" + urllib.parse.quote(rel),
                          "bytes": p.stat().st_size})
         self.update(j, artifacts=arts)
+
+
+def gpu_count() -> int:
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return 0
+    try:
+        out = subprocess.run([exe, "--query-gpu=name", "--format=csv,noheader"],
+                             capture_output=True, text=True, timeout=5).stdout
+        return len([ln for ln in out.splitlines() if ln.strip()])
+    except (OSError, subprocess.SubprocessError):
+        return 0
+
+
+class VramPoller:
+    """Polls nvidia-smi once a second; stop() returns peak total used MiB (or None)."""
+
+    def __init__(self, interval: float = 1.0):
+        self.exe = shutil.which("nvidia-smi")
+        self.peak = None
+        self.ev = threading.Event()
+        self.interval = interval
+        if self.exe:
+            self.t = threading.Thread(target=self._loop, daemon=True)
+            self.t.start()
+
+    def _loop(self):
+        while True:
+            try:
+                out = subprocess.run([self.exe, "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+                                     capture_output=True, text=True, timeout=5).stdout
+                used = sum(int(float(x)) for x in out.split() if x.strip())
+                self.peak = used if self.peak is None else max(self.peak, used)
+            except (OSError, subprocess.SubprocessError, ValueError):
+                pass
+            if self.ev.wait(self.interval):
+                return
+
+    def stop(self):
+        self.ev.set()
+        return self.peak
 
 
 def detect_gpu():
@@ -866,6 +1122,7 @@ def main(argv=None):
     print(f"  runs dir: {worker.runs}", flush=True)
     print(f"  auth: {'on (Bearer token required)' if worker.token else 'off'}", flush=True)
     print(f"  gpu: {h['gpu']['name'] if h['gpu'] else 'none detected'}", flush=True)
+    print(f"  region: {worker.region or 'unset'}  hy_territory_ok={h['hy_territory_ok']}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

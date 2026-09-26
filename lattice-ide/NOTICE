@@ -1,0 +1,29 @@
+Lattice
+Copyright (c) 2026 Lattice contributors
+Lattice (PWA UI, worker.py, batch.py, exporters/) is licensed under the MIT License (see LICENSE).
+
+THIRD-PARTY MODELS -- NOT INCLUDED
+Lattice does not ship, bundle, or redistribute any model weights. It is a control surface that
+invokes models the operator installs and licenses separately. Those models remain under their own
+licenses; Lattice does not relicense them.
+
+1. NVIDIA Cosmos 3 (cosmos3-edge-4b, -nano-16b, -super-64b, -i2v, -droid-policy)
+   License: OpenMDW License (version 1.1 per the model card; verify at https://openmdw.ai/license/).
+   Anyone redistributing the model materials must keep a copy of the license and all notices of origin.
+   Outputs are not restricted by the license.
+
+2. Tencent HY-WORLD 2.0
+   Tencent HY-WORLD 2.0 is licensed under the Tencent HY-WORLD 2.0 Community License Agreement,
+   Copyright (c) 2026 Tencent. All Rights Reserved. The trademark rights of "Tencent HY" are owned
+   by Tencent or its affiliate.
+   The governing text is Tencent's License.txt distributed with the model. Among its terms: it does
+   not apply in the European Union, the United Kingdom or South Korea; Outputs may not be used to
+   improve any other AI model; licensees above 1M monthly active users must request a license from
+   Tencent. The Lattice worker writes NOTICE-HY-World.txt / NOTICE-Cosmos.txt into every run
+   directory that uses these models, and those files are included in export bundles.
+
+OTHER TOOLS
+ffmpeg (optional, invoked as an external program if installed) is licensed separately (LGPL/GPL).
+Lattice does not distribute it.
+
+This file is a summary, not legal advice.

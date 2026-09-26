@@ -150,6 +150,46 @@ On disk, each run lives in `./runs/<id>/`, which holds `job.json` (media replace
 - No fake on-device Super 64B, or on-device inference of any kind.
 - No relicensing of Hunyuan / HY-World.
 
+## Platform settings
+
+| Env | Meaning |
+|---|---|
+| `LATTICE_REGION` | ISO 3166 alpha-2 code for where the worker runs (e.g. `US`). If it is an EU-27 country, `GB` or `KR`, HY-World and Bridge jobs are rejected with 400 "HY-World 2.0 license does not apply in <X>". |
+| `LATTICE_GPU_USD_HR` | Optional $/GPU-hour; enables `metrics.cost_usd`. Dry runs bill 0. |
+
+Jobs may carry `license.territory` (the requesting user's country); the same EU/GB/KR rule applies. The gate only acts when a region or territory is given.
+
+`GET /health` also reports `region`, `hy_territory_ok` and `gpu_usd_hr`. Each finished job has `metrics` in its Status and a `metrics.json` artifact: `wall_s`, `gpu_hours`, `cost_usd`, and per-stage `{stage, started, ended, wall_s, gpu_name, gpu_count, peak_vram_mb, exit_code}` (peak VRAM via `nvidia-smi` when present).
+
+Runs using HY-World get `NOTICE-HY-World.txt`; Cosmos runs get `NOTICE-Cosmos.txt`. See `DEPLOY.md` for private deployment (requires counsel sign-off before selling) and `NOTICE` for third-party terms.
+
+## Engine export bundles
+
+Set `params.export_target` (`unity` | `unreal` | `isaac`) and `params.format` (`ply` | `spz` | `glb` | `usd`) on a HY-World `export` job or a Bridge job. The worker writes `runs/<id>/export/<target>/` and a `<target>-bundle.zip` artifact (kind `bundle`). Isaac does not take `spz` (400). Each bundle contains:
+
+- `lattice-export.json` (`lattice.export/1`): files, splat point count and bounds, coordinate conversion, units, source run, required plugins and manual steps.
+- The run's `NOTICE-*.txt` files.
+- **Unity:** `Assets/Lattice/<run>/` + `Editor/LatticeImporter.cs` (flips X for left-handed axes, adds MeshColliders). Splats need a 3DGS package such as aras-p/UnityGaussianSplatting (not bundled).
+- **Unreal:** `Content/Lattice/<run>/` + `import_lattice.py` (Y-up to Z-up, ×100 cm, collision on). Splats need a 3DGS plugin.
+- **Isaac Sim:** `stage.usda` (Z-up, metersPerUnit 1, physics scene, collidable ground, mesh payload) + `isaac_load.py`. Splat PLYs are included with conversion steps.
+
+Dry runs export a clearly marked placeholder scene. The importer scripts have not yet been run inside the engines.
+
+## Batch datasets (`batch.py`)
+
+Sweep prompts × seeds through a worker into a dataset:
+
+    python3 batch.py examples/sweep-droid.json --worker http://jetson:8787 \
+        [--token $LATTICE_TOKEN] [--hf-token-env HF_TOKEN] [--out dataset/] [--limit N] [--dry]
+
+Each (prompt, seed) pair becomes one `lattice.job/1` job. Artifacts land in `dataset/<name>/<job_id>/`, with `dataset/<name>/manifest.json` (`lattice.dataset/1`: items, per-item metrics, totals) and `NOTICE-Cosmos.txt`. The manifest is saved after every item, so Ctrl-C is safe; re-run the same command to resume. `--dry` prints the plan and posts nothing.
+
+**Cosmos only.** HY-World and Bridge sweeps are refused: the HY-World 2.0 license §5(b) forbids using its Outputs to improve other AI models.
+
+## Tests
+
+    cd lattice-ide && python3 -m unittest discover -s tests
+
 ## Files
 
 | File | Purpose |
@@ -158,4 +198,8 @@ On disk, each run lives in `./runs/<id>/`, which holds `job.json` (media replace
 | `sw.js` | Service worker (app shell cache; never touches worker API traffic) |
 | `manifest.json`, `icon.svg` | Install metadata and icon |
 | `worker.py` | GPU-side job runner (Python 3.10+, stdlib only) |
+| `exporters/` | Unity / Unreal / Isaac export bundles |
+| `batch.py`, `examples/` | Cosmos dataset sweeps |
+| `tests/` | Worker, exporter and batch tests (stdlib unittest) |
+| `DEPLOY.md`, `NOTICE` | Private deployment runbook, third-party notices |
 | `README.md`, `LICENSE` | Docs, and MIT license with a third-party model notice |
