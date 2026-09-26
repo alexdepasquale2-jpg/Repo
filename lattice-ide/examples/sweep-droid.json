@@ -1,0 +1,16 @@
+{
+  "name": "droid-pick-place-v1",
+  "engine": "cosmos",
+  "mode": "action",
+  "model": "cosmos3-droid-policy",
+  "target": "jetson",
+  "prompts": [
+    "Pick up the red cube and place it in the bowl",
+    "Open the top drawer of the cabinet",
+    "Push the blue cup to the left edge of the table",
+    "Stack the green block on the yellow block"
+  ],
+  "seeds": [0, 1, 2],
+  "params": {"frames": 33, "fps": 15, "resolution": "480p", "steps": 20},
+  "license": {"accepted": true}
+}
