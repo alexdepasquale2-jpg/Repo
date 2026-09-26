@@ -186,6 +186,29 @@ Each (prompt, seed) pair becomes one `lattice.job/1` job. Artifacts land in `dat
 
 **Cosmos only.** HY-World and Bridge sweeps are refused: the HY-World 2.0 license §5(b) forbids using its Outputs to improve other AI models.
 
+## App: metrics, bundles and territory
+
+- Job detail shows wall time, GPU-hours and cost ("not billed (dry run)" for dry runs, "no rate set" without `LATTICE_GPU_USD_HR`), plus a per-stage table.
+- Export bundles appear as a card with size and a download link.
+- More → Settings → "Your country (ISO code)" is optional and sent as `license.territory`. If it or the worker's `LATTICE_REGION` is in the EU-27, GB or KR, HY-World and Bridge submits are disabled; Cosmos is unaffected.
+- The format picker only offers formats the export target supports (Isaac: ply, glb, usd).
+
+## Real execution path
+
+With `LATTICE_EXEC=1` and an engine installed, the default engine command is `<this python> -m <LATTICE_*_MODULE>.cli` (override with `LATTICE_COSMOS_CMD` / `LATTICE_HY_CMD`).
+
+- Engines get `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN` only from the job's `X-HF-Token`, never from the server's environment.
+- Progress streams from `PROGRESS 0.5` or `PROGRESS 50%` lines.
+- Cancel sends SIGTERM to the engine's process group, then SIGKILL after 5 s.
+- Bridge keyframes: if ffmpeg is missing or fails, the rollout video goes to HY-World directly.
+- Failures read `<program> exited with code N: <last output line>`, with tokens redacted.
+
+`tests/test_exec.py` covers this path without a GPU using `tests/fake_engine.py`. To try it by hand:
+
+    LATTICE_EXEC=1 LATTICE_COSMOS_MODULE=json LATTICE_HY_MODULE=json \
+    LATTICE_COSMOS_CMD="python3 tests/fake_engine.py cosmos" \
+    LATTICE_HY_CMD="python3 tests/fake_engine.py hy" python3 worker.py
+
 ## Tests
 
     cd lattice-ide && python3 -m unittest discover -s tests

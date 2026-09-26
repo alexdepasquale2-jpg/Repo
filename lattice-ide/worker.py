@@ -25,7 +25,8 @@ Environment:
   LATTICE_EXEC=1     allow real subprocess execution (otherwise dry run)
   LATTICE_TOKEN      optional bearer token for everything but OPTIONS and GET /health
   LATTICE_COSMOS_CMD / LATTICE_HY_CMD        command prefix overrides
-  LATTICE_COSMOS_MODULE / LATTICE_HY_MODULE  engine module names for detection
+  LATTICE_COSMOS_MODULE / LATTICE_HY_MODULE  engine module names for detection (default CLI:
+                     <sys.executable> -m <module>.cli)
   LATTICE_REGION     ISO 3166 alpha-2 where this worker runs (HY-World territory gate)
   LATTICE_GPU_USD_HR optional $/GPU-hour used to compute Status.metrics.cost_usd
 
@@ -50,6 +51,7 @@ import re
 import secrets
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -566,10 +568,7 @@ class Worker:
                 j.cancel.set()
                 self.log(j, "cancel requested")
                 if j.proc and j.proc.poll() is None:
-                    try:
-                        j.proc.terminate()
-                    except OSError:
-                        pass
+                    self._kill(j.proc)
             return json.loads(json.dumps(j.status))
 
     # -- runner ------------------------------------------------------------
@@ -714,8 +713,9 @@ class Worker:
         eng, mode, model = j.job["engine"], j.job["mode"], j.job["model"]
         prompt = j.job.get("inputs", {}).get("prompt", "") or ""
         rd = str(j.run_dir)
-        cprefix = shlex.split(os.environ.get("LATTICE_COSMOS_CMD") or "python -m cosmos3.cli")
-        hprefix = shlex.split(os.environ.get("LATTICE_HY_CMD") or "python -m hyworld.cli")
+        py = sys.executable or "python3"  # a bare "python" is often missing on GPU hosts
+        cprefix = shlex.split(os.environ.get("LATTICE_COSMOS_CMD") or "") or [py, "-m", f"{self.cosmos_mod}.cli"]
+        hprefix = shlex.split(os.environ.get("LATTICE_HY_CMD") or "") or [py, "-m", f"{self.hy_mod}.cli"]
         if eng == "cosmos":
             return [("infer", [*cprefix, mode, "--model", model, "--prompt", prompt, "--out", rd,
                                *self._inputs(j), *self._params(j)])]
@@ -774,33 +774,79 @@ class Worker:
         lines += ["", "HF_TOKEN is passed via environment only and is never written to disk."]
         (j.run_dir / "plan.txt").write_text("\n".join(lines) + "\n", "utf-8")
 
+    @staticmethod
+    def _kill(proc: subprocess.Popen, grace: float = 5.0):
+        """SIGTERM the subprocess's whole process group, SIGKILL it after `grace` seconds."""
+        if proc.poll() is not None:
+            return
+
+        def sig(kill: bool):
+            try:
+                if os.name == "posix":  # started with start_new_session, so pgid == pid
+                    os.killpg(proc.pid, signal.SIGKILL if kill else signal.SIGTERM)
+                else:
+                    proc.kill() if kill else proc.terminate()
+            except OSError:
+                pass
+
+        def later():
+            try:
+                proc.wait(grace)
+            except subprocess.TimeoutExpired:
+                sig(True)
+
+        sig(False)
+        threading.Thread(target=later, daemon=True).start()
+
     def _run(self, j: Job, argv: list, p0: float, p1: float, cwd: Path | None = None):
+        if j.cancel.is_set():
+            return None
         env = dict(os.environ)
-        env.pop("LATTICE_TOKEN", None)
+        for k in ("LATTICE_TOKEN", "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+            env.pop(k, None)  # never leak the worker secret; the HF token comes from the job only
         if j.hf_token:
             env["HF_TOKEN"] = j.hf_token
+            env["HUGGING_FACE_HUB_TOKEN"] = j.hf_token
+        env["PYTHONUNBUFFERED"] = "1"  # stream PROGRESS lines instead of block-buffering them
         self.log(j, "run: " + shlex.join(argv))
-        j.proc = subprocess.Popen(argv, cwd=str(cwd or j.run_dir), env=env, stdin=subprocess.DEVNULL,
-                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                  errors="replace", bufsize=1)
-        for line in j.proc.stdout:
-            m = re.match(r"^\s*PROGRESS\s+([0-9.]+)", line)
+        try:
+            proc = subprocess.Popen(argv, cwd=str(cwd or j.run_dir), env=env, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                    errors="replace", bufsize=1, start_new_session=(os.name == "posix"))
+        except OSError as e:
+            cur = getattr(j, "cur", None)
+            if cur:
+                cur[0]["exit_code"] = 127
+            raise RuntimeError(f"cannot start {os.path.basename(argv[0])}: {e.strerror or e.__class__.__name__}")
+        with self.lock:
+            j.proc = proc
+            if j.cancel.is_set():  # cancel arrived between the check above and Popen
+                self._kill(proc)
+        tail = []
+        for line in proc.stdout:
+            m = re.match(r"^\s*PROGRESS\s+([0-9]*\.?[0-9]+)\s*(%?)", line)
             if m:
                 try:
-                    f = max(0.0, min(1.0, float(m.group(1))))
+                    f = float(m.group(1)) / (100.0 if m.group(2) else 1.0)
+                    f = max(0.0, min(1.0, f))
                     self.update(j, progress=round(p0 + (p1 - p0) * f, 3))
                     continue
                 except ValueError:
                     pass
+            if line.strip():
+                tail = (tail + [line.strip()])[-1:]
             self.log(j, line)
-        rc = j.proc.wait()
+        rc = proc.wait()
+        proc.stdout.close()
         cur = getattr(j, "cur", None)
         if cur:
             cur[0]["exit_code"] = rc
         if j.cancel.is_set():
-            return
+            return rc
         if rc != 0:
-            raise RuntimeError(f"{argv[0]} exited with code {rc}")
+            last = f": {tail[-1][:200]}" if tail else ""
+            raise RuntimeError(self.redact(j, f"{os.path.basename(argv[0])} exited with code {rc}{last}"))
+        return rc
 
     def _real(self, j: Job):
         eng = j.job["engine"]
@@ -808,11 +854,14 @@ class Worker:
         self.update(j, stage="validate", progress=0.02)
         self.log(j, "executing pipeline (client code field ignored; argv built from whitelisted fields)")
         self._stage_begin(j, "validate")
+        self._stage_end(j, 0)
         if eng != "bridge":
             stage = "infer" if eng == "cosmos" else "pano"
             self.update(j, stage=stage)
             self._stage_begin(j, stage)
             self._run(j, cmds[stage], 0.05, 0.95)
+            if j.cancel.is_set():
+                return
             self.update(j, stage=STAGES[eng][-1])
             self._stage_begin(j, STAGES[eng][-1])
             if eng == "hyworld" and j.job["mode"] == "export":
@@ -832,18 +881,29 @@ class Worker:
         vids = sorted(p for p in (j.run_dir / "rollout").rglob("*") if p.suffix.lower() in (".mp4", ".webm"))
         if not vids:
             raise RuntimeError("cosmos rollout produced no video")
-        if shutil.which("ffmpeg"):
+        ff = shutil.which("ffmpeg")
+        ok = False
+        if ff:
             argv = list(cmds["keyframes"])
-            argv[3] = str(vids[0])
-            self._run(j, argv, 0.5, 0.6)
+            argv[0], argv[3] = ff, str(vids[0])
+            try:
+                self._run(j, argv, 0.5, 0.6)
+                ok = any(kf.glob("*.png"))
+            except RuntimeError as e:
+                self.log(j, f"keyframe extraction failed ({e})")
+            if j.cancel.is_set():
+                return
         else:
-            self.log(j, "ffmpeg not found; passing rollout video to HY-World directly")
+            self.log(j, "ffmpeg not found")
+        if not ok:
+            self.log(j, "passing rollout video to HY-World directly")
             shutil.copy(vids[0], kf / vids[0].name)
-        if j.cancel.is_set():
-            return
+        self._stage_end(j, 0)
         self.update(j, stage="hy-freeze", progress=0.6)
         self._stage_begin(j, "hy-freeze")
         self._run(j, cmds["hy-freeze"], 0.6, 0.95)
+        if j.cancel.is_set():
+            return
         self.update(j, stage="export")
         self._stage_begin(j, "export")
         self._export(j, placeholder=False)
