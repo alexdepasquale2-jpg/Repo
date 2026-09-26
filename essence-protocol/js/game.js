@@ -656,9 +656,11 @@
       else if (['Enter', ' ', 'z', 'Z', 'e', 'E'].includes(e.key)) { interact(); e.preventDefault(); }
       else if (['Escape', 'm', 'M', 'x', 'X'].includes(e.key)) openSheet('party');
     } else if (mode === 'battle') {
-      if ('1234'.includes(e.key) && !$('bctrl').classList.contains('hidden')) { const b = $('moves').children[+e.key - 1]; if (b && !b.disabled) b.click(); }
-      else if (e.key === 'Escape' && !$('bpanel').classList.contains('hidden')) { const bb = $('bpanel').querySelector('[data-back]'); if (bb) bb.click(); }
-      else if (e.key === ' ') { skipping = true; e.preventDefault(); }
+      const open = !$('bpanel').classList.contains('hidden');
+      if ('1234'.includes(e.key) && !open) useSlot(+e.key - 1);
+      else if (e.key === 'Escape' && open) { const bb = $('bpanel').querySelector('[data-back]'); if (bb) bb.click(); }
+      else if (e.key === ' ') { e.preventDefault(); skipping = true; if (!open && B && B.rt) setPaused(!paused); }
+      else if ((e.key === 'r' || e.key === 'R') && !open && B && B.rt) utility({ type: 'defrag' }, 'Rest is cooling down.');
     } else if (e.key === 'Escape' && !$('sheet').classList.contains('hidden')) closeSheet();
   });
   addEventListener('keyup', e => { if (KEYMAP[e.key] === held) held = null; });
@@ -757,8 +759,10 @@
     else if (o.rift) await logMsg(`Rift floor ${o.floor}${o.floor % 5 === 0 ? ': a guardian awaits' : ''}. ${fr.dName} emerges!`);
     else { await logMsg(`${o.trainer.name} ${o.rematch ? 'accepts the rematch' : 'challenges you'}!`); await logMsg(`${o.trainer.name} deploys ${fr.dName}!`); }
     await logMsg(`Go, ${dName(B.act(0))}!`);
-    tip('battle', 'Tap a merge to use it. ▲ means it is strong against this foe, ▼ means weak. Tap a card to inspect a daemon.');
-    showControls();
+    B.startRealtime();
+    B.rt[0].queued = defaultAttack();
+    tip('battle', 'Combat is live. Red ATTACKS repeat on your global cooldown: tap one to queue it. Violet ACTIVES fire instantly and then cool down. Gold PASSIVES are always on. Space pauses.');
+    buildControls(); setPaused(false); startLoop();
   }
 
   function snapshot(i) {
@@ -783,13 +787,14 @@
       el.innerHTML = `<span class="nm"><b>${esc(u.name)}${u.prism ? ' <em class="prism">✦</em>' : ''}</b><span>Lv ${u.level}</span></span>
         <span class="sub2">${genomeDots(u.key)}<span>${TIER[E.parseKey(u.key).subs.length]}</span></span>
         <span class="bar"><i style="width:${pct * 100}%;background:${col}"></i><b style="left:${pct * 100}%;width:${Math.min(sh, 1 - pct) * 100}%"></b></span>
-        ${i === 0 ? `<span class="nums"><span>${u.hp}/${u.max} HP</span><span>${u.flux}/${u.fmax} Flux</span></span>` : ''}
+        ${i === 0 ? `<span class="nums"><span>${u.hp}/${u.max} HP</span><span>${Math.floor(u.flux)}/${u.fmax} Flux</span></span>` : ''}
         <span class="bar flux"><i style="width:${clamp(u.flux / u.fmax, 0, 1) * 100}%"></i></span>
+        <span class="bar cast" title="${i === 0 ? 'Your global cooldown' : 'Foe is winding up its next action'}"><i id="cast${i}"></i></span>
         ${chips.length ? `<span class="stat-chips">${chips.join('')}</span>` : ''}`;
     }
   }
-  $('allyCard').onclick = () => { if (!$('bctrl').classList.contains('hidden')) panelInfo(0); };
-  $('foeCard').onclick = () => { if (!$('bctrl').classList.contains('hidden')) panelInfo(1); };
+  $('allyCard').onclick = () => { if (B && !B.over && !$('bctrl').classList.contains('hidden')) panelInfo(0); };
+  $('foeCard').onclick = () => { if (B && !B.over && !$('bctrl').classList.contains('hidden')) panelInfo(1); };
 
   function renderResidue(res, field) {
     res = res || B.residue; field = field === undefined ? B.field : field;
@@ -960,17 +965,19 @@
     const box = $('blog');
     [...box.children].forEach(c => c.classList.add('old'));
     const d = document.createElement('div'); d.textContent = text; box.appendChild(d);
-    while (box.children.length > 2) box.firstChild.remove();
+    while (box.children.length > 3) box.firstChild.remove();
   }
-  async function logMsg(text) { print(text); await sleep(skipping ? 110 : S.settings.speed === 'fast' ? 320 : 600); }
+  async function logMsg(text) { print(text); await sleep(skipping ? 110 : 520); }
   $('blog').addEventListener('click', () => { skipping = true; });
-  $('arena').addEventListener('click', () => { if ($('bctrl').classList.contains('hidden') && $('bpanel').classList.contains('hidden')) skipping = true; });
 
-  async function play(events) {
+  // ---- live event rendering (never blocks the clock)
+  function consume(events) {
+    let dirty = false;
     for (const e of events) {
       switch (e.type) {
         case 'msg': {
-          if (e.anim === 'cast' && e.key) { print(e.text); await animateCast(e.side, e.key); break; }
+          print(e.text);
+          if (e.anim === 'cast' && e.key) { animateCast(e.side, e.key); break; }
           if (e.anim === 'glitch') { const [x, y] = centerOf(spriteEl(e.side == null ? 0 : e.side)); burstAt(x, y, ['#ff5cf0', '#46f3ff', '#ffffff'], 40, 1.4); shakeArena(); beep(90, 0.25, 'sawtooth', 0.05); }
           else if (e.anim === 'react') {
             const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, [MAINC(e.el), MAINC(e.el2), '#fff'], 60, 1.5); ring(x, y, 10, 120, MAINC(e.el2), 500);
@@ -983,9 +990,8 @@
           else if (STATUS_COL[e.anim] && e.side != null) { const [x, y] = centerOf(spriteEl(e.side)); ring(x, y, 70, 20, STATUS_COL[e.anim], 400); burstAt(x, y, [STATUS_COL[e.anim]], 16, 0.8); }
           else if (e.anim === 'levelup') { beep(988, 0.2, 'triangle', 0.05); const [x, y] = centerOf(spriteEl(0)); sparkles(x, y, '#ffd23d', 24); }
           else if (e.anim === 'bound') { beep(784, 0.15, 'sine'); setTimeout(() => beep(1046, 0.25, 'sine'), 150); const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, ['#46f3ff', '#ffffff', '#ffd23d'], 50); }
-          else if (e.anim === 'bind') { const [x0, y0] = centerOf(spriteEl(0)), [x1, y1] = centerOf(spriteEl(1)); shot(x0, y0, x1, y1, '#46f3ff', 7, 380, ['#46f3ff', '#ffffff'], 0, 70); print(e.text); await sleep(400); ring(x1, y1, 90, 30, '#46f3ff', 400, 0, { hex: true }); break; }
+          else if (e.anim === 'bind') { const [x0, y0] = centerOf(spriteEl(0)), [x1, y1] = centerOf(spriteEl(1)); shot(x0, y0, x1, y1, '#46f3ff', 7, 380, ['#46f3ff', '#ffffff'], 0, 70); ring(x1, y1, 90, 30, '#46f3ff', 400, 380, { hex: true }); }
           else if (e.anim === 'miss') dmgNum(e.side, 'MISS', 'miss');
-          await logMsg(e.text);
           break;
         }
         case 'hit':
@@ -996,29 +1002,46 @@
           break;
         case 'healed': dmgNum(e.side, '+' + e.amount, 'heal'); break;
         case 'absorb': dmgNum(e.side, '◈' + e.amount, 'absorb'); break;
-        case 'hp': ui[e.side].hp = e.hp; ui[e.side].max = e.max; ui[e.side].shield = e.shield; renderCards(); await wait(160); break;
-        case 'flux': ui[e.side].flux = e.flux; ui[e.side].fmax = e.max; renderCards(); break;
-        case 'status': Object.assign(ui[e.side], { status: e.status, stages: e.stages, soak: e.soak, shield: e.shield, regen: e.regen }); renderCards(); break;
+        case 'hp': ui[e.side].hp = e.hp; ui[e.side].max = e.max; ui[e.side].shield = e.shield; dirty = true; break;
+        case 'flux': ui[e.side].flux = e.flux; ui[e.side].fmax = e.max; dirty = true; break;
+        case 'status': Object.assign(ui[e.side], { status: e.status, stages: e.stages, soak: e.soak, shield: e.shield, regen: e.regen }); dirty = true; break;
         case 'field': renderResidue(e.residue, e.field); break;
         case 'switch': {
           ui[e.side] = snapshot(e.side);
           const el = spriteEl(e.side); el.classList.remove('faint', 'enter'); void el.offsetWidth; el.classList.add('enter');
-          paintSide(e.side); renderCards(); seen.add(e.key);
+          paintSide(e.side); dirty = true; seen.add(e.key);
           const [x, y] = centerOf(el); ring(x, y, 10, 90, MAINC(e.key[0]), 400);
-          await wait(250);
+          if (e.side === 0 && B.rt) { B.rt[0].queued = defaultAttack(); buildControls(); }
           break;
         }
-        case 'faint': spriteEl(e.side).classList.add('faint'); beep(110, 0.4, 'sawtooth', 0.05); await wait(500); break;
+        case 'faint': spriteEl(e.side).classList.add('faint'); beep(110, 0.4, 'sawtooth', 0.05); break;
         case 'discover': markDiscovered(e.key); break;
-        case 'shake': { const el = spriteEl(1); el.classList.add('wobble'); beep(300 + e.n * 100, 0.08); await sleep(480); el.classList.remove('wobble'); await sleep(120); break; }
-        case 'unbind': { const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, ['#46f3ff'], 24); break; }
+        case 'shake': { const el = spriteEl(1); setTimeout(() => { el.classList.add('wobble'); beep(300 + e.n * 100, 0.08); setTimeout(() => el.classList.remove('wobble'), 420); }, (e.n - 1) * 480); break; }
+        case 'unbind': { const [x, y] = centerOf(spriteEl(1)); setTimeout(() => burstAt(x, y, ['#46f3ff'], 24), 1000); break; }
         case 'xp': pendingXp.push(e); break;
         default: break;
       }
     }
+    if (dirty) renderCards();
   }
 
-  // ---- controls
+  // ---- the real-time loop
+  let loopOn = false, paused = false, lastT = 0, uiT = 0;
+  const pace = () => (S.settings.speed === 'fast' ? 1.15 : 0.85);
+  function startLoop() { if (loopOn) return; loopOn = true; lastT = performance.now(); requestAnimationFrame(loop); }
+  function loop(t) {
+    if (!loopOn || !B) { loopOn = false; return; }
+    const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+    if (!paused && !B.over && !B.needSwitch) consume(B.tick(dt * pace()));
+    uiT -= dt; if (uiT <= 0) { uiT = 0.08; refreshControls(); }
+    if (B.over) { loopOn = false; $('bctrl').classList.add('locked'); setTimeout(endBattle, B.result === 'bind' ? 1700 : 900); return; }
+    if (B.needSwitch) { loopOn = false; panelSwitch(true); return; }
+    requestAnimationFrame(loop);
+  }
+  function setPaused(p) { paused = p; $('battle').classList.toggle('paused', p); refreshControls(); }
+  addEventListener('blur', () => { if (mode === 'battle' && B && !paused) setPaused(true); });
+
+  // ---- controls: color-coded ATTACK / ACTIVE / PASSIVE / UTILITY
   function chanceWith(lat) { const t = B.act(1), v = B.sides[1].v; return ENG.captureChance(t, t.hp, v.stats.hp, lat, !!v.status); }
   function bestLattice() {
     let best = null, bc = -1;
@@ -1029,92 +1052,170 @@
     }
     return best;
   }
+  const defaultAttack = () => { const d = B.act(0); return d.memory.find(k => k && ENG.isAttack(k)) || null; };
+  function kindBadge(k) { return ENG.isAttack(k) ? '<span class="kb atk">Attack · GCD</span>' : `<span class="kb act">Active · ${ENG.cooldownFor(ENG.rec(k))}s CD</span>`; }
 
-  function moveBtn(k, flux) {
-    const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k);
+  function abilityBtn(k, i) {
+    const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k), atk = ENG.isAttack(k);
     const eff = ENG.effectiveness(k, ui[1].key);
-    const showEff = !known || r.damaging;
-    const effTxt = showEff && eff >= 1.2 ? '<span class="eff up">▲</span>' : showEff && eff <= 0.83 ? '<span class="eff dn">▼</span>' : '';
-    return `<button class="move ${known ? '' : 'unk'}" data-key="${k}" data-tip="m:${k}" style="--c:${MAINC(p.a)};--c2:${MAINC(p.b)}" ${r.flux > flux ? 'disabled' : ''}>
-      <span class="mn">${known ? esc(r.name) : '? ? ?'}${effTxt}</span>
-      <span class="mm">${genomeDots(k)}<span>${known ? r.cls : 'Unknown'}</span><span class="fl">${r.flux}◆</span></span></button>`;
+    const effTxt = r.damaging && eff >= 1.2 ? '<span class="eff up">▲</span>' : r.damaging && eff <= 0.83 ? '<span class="eff dn">▼</span>' : '';
+    return `<button class="ab ${atk ? 'atk' : 'act'} ${known ? '' : 'unk'}" data-slot="${i}" data-key="${k}" data-tip="m:${k}" style="--c:${MAINC(p.a)};--c2:${MAINC(p.b)}">
+      <span class="cdo" id="cd${i}"></span>
+      <span class="an">${known ? esc(r.name) : '? ? ?'}${effTxt}</span>
+      <span class="am">${genomeDots(k)}<span>${known ? r.cls : 'Unknown'}</span><span class="fl">${r.flux}◆</span></span>
+      <span class="ak">${atk ? '<em class="qtag">Queued</em><em class="rtag">Tap to queue</em>' : `<em>Instant · ${ENG.cooldownFor(r)}s cooldown</em>`}</span></button>`;
   }
 
-  function showControls() {
-    skipping = false;
-    $('bpanel').classList.add('hidden'); $('bctrl').classList.remove('hidden');
-    const d = B.act(0);
-    const bind = $('bindBtn');
-    if (bctx.wild) {
-      const lat = bestLattice(), ch = lat ? chanceWith(lat) : 0;
-      bind.classList.remove('hidden');
-      bind.disabled = !lat;
-      bind.classList.toggle('hot', ch >= 0.35);
-      bind.innerHTML = lat ? `<span>◇ Bind</span><b>${Math.round(ch * 100)}%</b><small>${esc(lat.name)} ×${lat.count}</small>` : '<span>◇ Bind</span><small>No lattices left</small>';
-      bind.onclick = () => { if (!lat) return; lat.count--; if (lat.count <= 0 && lat.id !== 'lattice:basic') delete S.bag[lat.id]; doTurn({ type: 'bind', item: lat }); };
-      if (ui[1].hp / ui[1].max < 0.5) tip('bind', 'The foe is weak. Tap Bind to capture it. Lower HP and status effects raise the odds.');
-    } else bind.classList.add('hidden');
-    const mv = $('moves');
-    mv.innerHTML = d.memory.map((k, i) => (k ? moveBtn(k, ui[0].flux) : `<button class="move empty" data-empty="${i}"><span class="mn">Empty slot</span><span class="mm">Tap to compose</span></button>`)).join('');
-    mv.querySelectorAll('[data-key]').forEach(b => { b.onclick = () => doTurn({ type: 'merge', key: b.dataset.key }); });
-    mv.querySelectorAll('[data-empty]').forEach(b => { b.onclick = () => panelCompose(); });
-    const affordable = d.memory.some(k => k && ENG.rec(k).flux <= ui[0].flux);
-    const ut = $('utils');
-    const btns = [['compose', '⚗', 'Compose'], ['swap', '⇄', 'Swap'], ['bag', '✚', 'Items'], ['rest', '↻', 'Rest'], bctx.wild ? ['run', '↩', 'Run'] : ['info', 'ⓘ', 'Info']];
-    ut.innerHTML = btns.map(([id, ic, lb]) => `<button data-u="${id}" class="${id === 'rest' && !affordable ? 'hot' : ''}"><i>${ic}</i>${lb}</button>`).join('');
-    ut.querySelector('[data-u=compose]').onclick = () => panelCompose();
-    ut.querySelector('[data-u=swap]').onclick = () => panelSwitch(false);
-    ut.querySelector('[data-u=bag]').onclick = () => panelBag();
-    ut.querySelector('[data-u=rest]').onclick = () => doTurn({ type: 'defrag' });
-    const last = ut.querySelector('[data-u=run]') || ut.querySelector('[data-u=info]');
-    last.onclick = () => (bctx.wild ? doTurn({ type: 'run' }) : panelInfo(1));
-    if (!affordable) tip('flux', 'Not enough Flux for your merges. Rest to recover a big chunk of it.');
+  function buildControls() {
+    const d = B.act(0), r = ENG.rec(d.key), pv = ENG.PASSIVES[r.dPassive];
+    const slots = d.memory.map((k, i) => ({ k, i }));
+    const atks = slots.filter(x => x.k && ENG.isAttack(x.k)), acts = slots.filter(x => x.k && !ENG.isAttack(x.k));
+    const empties = slots.filter(x => !x.k);
+    const uts = [['compose', '⚗', 'Compose'], ['swap', '⇄', 'Swap'], ['bag', '✚', 'Items'], ['rest', '↻', 'Rest'], ['pause', '❚❚', 'Pause']].concat(bctx.wild ? [['run', '↩', 'Run']] : [['info', 'ⓘ', 'Info']]);
+    $('bctrl').classList.remove('locked');
+    $('bctrl').innerHTML = `
+      <div class="lane atk"><span class="lbl">Attack</span><div class="gcd"><i id="gcdFill"></i><span id="gcdText"></span></div></div>
+      <div class="abgrid">${atks.map(x => abilityBtn(x.k, x.i)).join('') || '<p class="fine">No attacks in memory. Compose one.</p>'}</div>
+      <div class="lane act"><span class="lbl">Active</span><div class="abgrid acts">${acts.map(x => abilityBtn(x.k, x.i)).join('')}${empties.map(x => `<button class="ab empty" data-empty="${x.i}"><span class="an">＋ Empty slot</span><span class="am">Compose an attack or active</span></button>`).join('') || (acts.length ? '' : '<p class="fine">Hex, Ward, Mend and Field merges become actives.</p>')}</div></div>
+      <div class="lane pas"><span class="lbl">Passive</span><span class="pchip" data-tip="p:${r.dPassive}"><b>${pv[0]}</b> ${esc(pv[1])}</span></div>
+      ${bctx.wild ? '<button class="bind utl" id="bindBtn"></button>' : ''}
+      <div class="utils">${uts.map(([id, ic, lb]) => `<button class="ub" data-u="${id}"><span class="cdo" id="cdu-${id}"></span><i>${ic}</i>${lb}</button>`).join('')}</div>`;
+    const c = $('bctrl');
+    c.querySelectorAll('.ab[data-key]').forEach(b => { b.onclick = () => useSlot(+b.dataset.slot); });
+    c.querySelectorAll('[data-empty]').forEach(b => { b.onclick = () => panelCompose(); });
+    c.querySelector('[data-u=compose]').onclick = () => panelCompose();
+    c.querySelector('[data-u=swap]').onclick = () => panelSwitch(false);
+    c.querySelector('[data-u=bag]').onclick = () => panelBag();
+    c.querySelector('[data-u=rest]').onclick = () => utility({ type: 'defrag' }, 'Rest is cooling down.');
+    c.querySelector('[data-u=pause]').onclick = () => setPaused(!paused);
+    const last = c.querySelector('[data-u=run]') || c.querySelector('[data-u=info]');
+    last.onclick = () => (bctx.wild ? utility({ type: 'run' }, 'Wait for your global cooldown.') : panelInfo(1));
+    if (bctx.wild) $('bindBtn').onclick = () => {
+      const lat = bestLattice(); if (!lat) return;
+      const ev = B.useUtility({ type: 'bind', item: lat });
+      if (!ev) return toast('Wait for your global cooldown.');
+      lat.count--; if (lat.count <= 0 && lat.id !== 'lattice:basic') delete S.bag[lat.id];
+      consume(ev);
+    };
+    refreshControls();
   }
+
+  function useSlot(i) {
+    if (!B || B.over || !B.rt) return;
+    const k = B.act(0).memory[i]; if (!k) return;
+    if (ENG.isAttack(k)) { B.rt[0].queued = k; refreshControls(); beep(520, 0.03, 'square', 0.02); return; }
+    if (paused) setPaused(false);
+    const ev = B.useActive(k);
+    if (!ev) { toast(B.rt[0].cds[k] > 0 ? 'That active is cooling down.' : 'Not enough Flux.'); return; }
+    consume(ev);
+  }
+  function utility(action, busyMsg) {
+    if (!B || B.over) return false;
+    const ev = B.useUtility(action);
+    if (!ev) { toast(busyMsg); return false; }
+    consume(ev); refreshControls();
+    return true;
+  }
+
+  function refreshControls() {
+    if (!B || !B.rt || !ui) return;
+    const rt = B.rt[0], d = B.act(0), flux = B.sides[0].v.flux;
+    const q = rt.queued, qr = q && ENG.rec(q);
+    const full = B.gcdFor(0, qr);
+    const fill = $('gcdFill'), txt = $('gcdText');
+    if (fill) {
+      fill.style.width = (clamp(1 - rt.gcd / full, 0, 1) * 100) + '%';
+      fill.classList.toggle('ready', rt.gcd <= 0);
+      txt.textContent = paused ? 'Paused · tap Pause or press Space to resume'
+        : !q ? 'Tap a red attack to queue it'
+        : rt.starved ? `${mergeLabel(q)}: waiting for Flux (${Math.floor(flux)}/${qr.flux})`
+        : rt.gcd > 0 ? `Next: ${mergeLabel(q)} in ${rt.gcd.toFixed(1)}s` : `Firing ${mergeLabel(q)}`;
+      if (rt.starved) tip('flux', 'Your queued attack needs more Flux. Rest (↻) refills a big chunk, or queue a cheaper attack.');
+    }
+    document.querySelectorAll('#bctrl .ab[data-key]').forEach(b => {
+      const k = b.dataset.key, r = ENG.rec(k), cdEl = b.querySelector('.cdo');
+      const short = r.flux > flux;
+      if (ENG.isAttack(k)) { b.classList.toggle('q', k === q); b.classList.toggle('short', short); }
+      else {
+        const cd = rt.cds[k] || 0, tot = ENG.cooldownFor(r);
+        b.classList.toggle('cooling', cd > 0); b.classList.toggle('short', short); b.classList.toggle('ready', !cd && !short);
+        cdEl.style.setProperty('--p', cd > 0 ? (cd / tot * 360) + 'deg' : '0deg');
+        cdEl.textContent = cd > 0 ? Math.ceil(cd) + 's' : '';
+      }
+    });
+    const cdu = (id, key, lock) => {
+      const el = $('cdu-' + id); if (!el) return;
+      const cd = key ? rt.cds[key] || 0 : 0, tot = key ? ENG.UTIL_CD[key] || 1 : 1;
+      el.style.setProperty('--p', cd > 0 ? (cd / tot * 360) + 'deg' : '0deg');
+      el.textContent = cd > 0 ? Math.ceil(cd) + 's' : '';
+      el.parentElement.classList.toggle('cooling', cd > 0 || !!lock);
+    };
+    cdu('rest', 'defrag'); cdu('bag', 'item'); cdu('swap', 'switch', rt.gcd > 0);
+    const pb = document.querySelector('#bctrl [data-u=pause]'); if (pb) pb.classList.toggle('on', paused);
+    const rb = document.querySelector('#bctrl [data-u=rest]'); if (rb) rb.classList.toggle('hot', flux < (qr ? qr.flux : 0) && !rt.cds.defrag);
+    const bind = $('bindBtn');
+    if (bind) {
+      const lat = bestLattice(), ch = lat ? chanceWith(lat) : 0;
+      bind.disabled = !lat || rt.gcd > 0;
+      bind.classList.toggle('hot', ch >= 0.35);
+      bind.innerHTML = lat ? `<span>◇ Bind</span><b>${Math.round(ch * 100)}%</b><small>${esc(lat.name)} ×${lat.count}${rt.gcd > 0 ? ' · after GCD' : ''}</small>` : '<span>◇ Bind</span><small>No lattices left</small>';
+      if (ui[1].hp / ui[1].max < 0.5) tip('bind', 'The foe is weak. Tap Bind to capture it. Lower HP and status effects raise the odds.');
+    }
+    // foe cast bar telegraphs its next action
+    const fc = $('cast1'); if (fc) { const e = B.rt[1]; fc.style.width = (clamp(1 - e.gcd / B.gcdFor(1, null), 0, 1) * 100) + '%'; }
+    const pc = $('cast0'); if (pc) pc.style.width = (clamp(1 - rt.gcd / full, 0, 1) * 100) + '%';
+  }
+
   function panel(title, html, back) {
+    setPaused(true);
     const p = $('bpanel'); $('bctrl').classList.add('hidden'); p.classList.remove('hidden');
-    p.innerHTML = `<div class="ph"><span>${title}</span>${back !== false ? '<button class="btn small" data-back>Back</button>' : ''}</div>${html}`;
-    const bb = p.querySelector('[data-back]'); if (bb) bb.onclick = showControls;
+    p.innerHTML = `<div class="ph"><span>${title} <em class="fine">· paused</em></span>${back !== false ? '<button class="btn small" data-back>Back</button>' : ''}</div>${html}`;
+    const bb = p.querySelector('[data-back]'); if (bb) bb.onclick = closePanel;
     p.scrollTop = 0;
     return p;
   }
+  function closePanel() { $('bpanel').classList.add('hidden'); $('bctrl').classList.remove('hidden'); buildControls(); setPaused(false); }
 
   function panelCompose() {
     const d = B.act(0), w = ENG.width(d);
-    tip('compose', 'Choose two main essences and bind sub-essences to either one. An unknown merge only reveals itself once cast, but the hints show what each piece tends to do.');
+    tip('compose', 'Choose two main essences and bind sub-essences to either one. Strike, Barrage and Siphon merges become red attacks; Hex, Ward, Mend and Field become violet actives with a cooldown.');
     const p = panel(`Compose · up to ${w} sub${w > 1 ? 's' : ''}`, '<div id="cmp"></div>');
+    const remember = k => { if (!d.memory.includes(k)) { const i = d.memory.indexOf(null); if (i >= 0) { d.memory[i] = k; toast(`Saved to memory slot ${i + 1}.`); } } };
     composer(p.querySelector('#cmp'), {
-      mains: ENG.mainsOf(d.key), subs: d.attuned, width: w,
+      mains: ENG.mainsOf(d.key), subs: d.attuned, width: w, extra: k => `<div class="row">${kindBadge(k)}</div>`,
       actions: [
-        { label: 'Cast', pri: true, ok: k => ENG.rec(k).flux <= ui[0].flux, fn: k => {
-          if (!d.memory.includes(k)) { const i = d.memory.indexOf(null); if (i >= 0) { d.memory[i] = k; toast(`Saved to memory slot ${i + 1}.`); } }
-          doTurn({ type: 'merge', key: k });
+        { label: 'Use now', pri: true, ok: k => ENG.rec(k).flux <= B.sides[0].v.flux, fn: k => {
+          remember(k); closePanel();
+          if (ENG.isAttack(k)) { B.rt[0].queued = k; refreshControls(); }
+          else { const ev = B.useActive(k); if (ev) consume(ev); else toast('That active is cooling down.'); }
         } },
-        { label: 'Save to memory', ok: k => !d.memory.includes(k), fn: k => { const i = d.memory.indexOf(null), slot = i >= 0 ? i : 3; d.memory[slot] = k; toast(`Saved to memory slot ${slot + 1}.`); showControls(); } },
+        { label: 'Save to memory', ok: k => !d.memory.includes(k), fn: k => { const i = d.memory.indexOf(null), slot = i >= 0 ? i : 3; d.memory[slot] = k; toast(`Saved to memory slot ${slot + 1}.`); closePanel(); } },
       ],
     });
   }
 
   function panelSwitch(forced) {
-    const html = `<div class="plist">${S.party.map((d, i) => partyCard(d, i === B.sides[0].active)).join('')}</div>`;
+    const html = `<div class="plist">${S.party.map((d, i) => partyCard(d, i === B.sides[0].active)).join('')}</div>${forced ? '' : '<p class="fine">Swapping uses your global cooldown and has a 4s cooldown.</p>'}`;
     const p = panel(forced ? 'Choose your next daemon' : 'Swap daemon', html, !forced);
-    p.querySelectorAll('[data-i]').forEach(b => { b.onclick = async () => {
+    p.querySelectorAll('[data-i]').forEach(b => { b.onclick = () => {
       const i = +b.dataset.i, d = S.party[i];
       if (d.hp <= 0 || i === B.sides[0].active) return;
-      if (forced) { $('bpanel').classList.add('hidden'); await play(B.forceSwitch(i)); afterTurn(); }
-      else doTurn({ type: 'switch', idx: i });
+      if (forced) { const ev = B.forceSwitch(i); closePanel(); consume(ev); startLoop(); return; }
+      closePanel();
+      utility({ type: 'switch', idx: i }, 'Wait for your global cooldown before swapping.');
     }; });
     hydrateCanvases(p);
   }
 
   function panelBag() {
     const items = Object.values(S.bag).filter(it => it.count > 0 && ['patch', 'ward', 'catalyst', 'cell'].includes(it.kind));
-    const html = items.length ? `<div class="mlist">${items.map(it => `<button class="mbtn" data-id="${esc(it.id)}" data-tip="i:${esc(it.id)}"><span class="t">${esc(it.name)} ×${it.count}</span><span class="m">${itemDesc(it)}</span></button>`).join('')}</div>`
+    const html = items.length ? `<div class="mlist">${items.map(it => `<button class="mbtn" data-id="${esc(it.id)}" data-tip="i:${esc(it.id)}"><span class="t">${esc(it.name)} ×${it.count}</span><span class="m">${itemDesc(it)}</span></button>`).join('')}</div><p class="fine">Items fire instantly and share a 6s cooldown.</p>`
       : '<p class="sub">No battle items. Forge Patches, Modules, Catalysts and Flux Cells from motes at the Nexus Forge.</p>';
     const p = panel('Items', html);
     p.querySelectorAll('[data-id]').forEach(b => { b.onclick = () => {
       const it = S.bag[b.dataset.id];
-      it.count--; if (it.count <= 0 && it.id !== 'lattice:basic') delete S.bag[it.id];
-      doTurn({ type: 'item', item: it });
+      closePanel();
+      if (utility({ type: 'item', item: it }, 'Items are cooling down.')) { it.count--; if (it.count <= 0 && it.id !== 'lattice:basic') delete S.bag[it.id]; }
     }; });
   }
 
@@ -1123,27 +1224,15 @@
     const st = side === 0 ? v.stats : null;
     const nm = { atk: 'Logic', def: 'Firewall', spd: 'Clock', acc: 'Accuracy', eva: 'Evasion' };
     const stages = Object.entries(v.stages).filter(([, x]) => x).map(([k, x]) => `${nm[k]} ${x > 0 ? '+' : ''}${x}`).join(', ') || 'none';
-    const status = v.status ? `${ENG.STATUS[v.status.id].name} (${v.status.turns} turn${v.status.turns > 1 ? 's' : ''} left)` : 'none';
+    const status = v.status ? `${ENG.STATUS[v.status.id].name} (${v.status.turns * ENG.PULSE}s left)` : 'none';
     const html = `<div class="info"><canvas data-sprite="${d.key}" ${d.prism ? 'data-prism="1"' : ''} width="96" height="96"></canvas><div>
       <div class="pn">${esc(dName(d))} <span class="fine">Lv ${d.level} · ${TIER[r.tier]}</span></div>${genomeHTML(d.key)}
-      <p class="fine">Passive <b>${pv[0]}</b>: ${esc(pv[1])}</p>
-      <p class="fine">Status: ${esc(status)} · Stat changes: ${esc(stages)}${v.shield ? ` · Shield ${v.shield}` : ''}</p>
+      <p class="fine"><span class="kb pas">Passive</span> <b>${pv[0]}</b>: ${esc(pv[1])}</p>
+      <p class="fine">Status: ${esc(status)} · Stat changes: ${esc(stages)}${v.shield ? ` · Shield ${v.shield}` : ''} · Global cooldown ${B.gcdFor(side, null).toFixed(1)}s</p>
       ${st ? `<p class="fine">Logic ${st.atk} · Firewall ${st.def} · Clock ${st.spd} · Coherence ${st.coh}</p>` : `<p class="fine">Pure merges against it: ${E.MAINS.map(m => `<span style="color:${MAINC(m)}">${E.MAIN[m].name} ×${ENG.effectiveness(m + m, d.key)}</span>`).join(' · ')}</p>`}
       </div></div>`;
     const p = panel(side === 0 ? 'Your daemon' : 'Foe', html);
     hydrateCanvases(p);
-  }
-
-  async function doTurn(action) {
-    $('bctrl').classList.add('hidden'); $('bpanel').classList.add('hidden');
-    const ev = B.turnWith(action);
-    await play(ev);
-    afterTurn();
-  }
-  function afterTurn() {
-    if (B.over) return endBattle();
-    if (B.needSwitch) return panelSwitch(true);
-    showControls();
   }
 
   async function endBattle() {
@@ -1361,7 +1450,7 @@
       const pk = a + b;
       const fxHTML = known ? r.fx.map(f => `<span class="st ${E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf'}">${esc(ENG.describeFx(f))}</span>`).join('') : '';
       const prev = known ? `<div class="preview">
-          <span class="genome"><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}</span>
+          <span class="genome">${kindBadge(k)}<span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}</span>
           <div class="pn">${esc(r.name)}</div>
           <div class="pm">${r.damaging ? `<span>Power <b>${r.power}${r.hits > 1 ? '×' + r.hits : ''}</b></span>` : ''}<span>Acc <b>${r.acc > 100 ? 'sure' : r.acc}</b></span><span>Flux <b>${r.flux}</b></span>${r.prio ? `<span>Priority <b>${r.prio > 0 ? '+' : ''}${r.prio}</b></span>` : ''}<span>Instability <b style="color:${r.instab >= 35 ? 'var(--bad)' : r.instab >= 18 ? 'var(--warn)' : 'var(--good)'}">${r.instab}%</b></span></div>
           <div class="fxl">${fxHTML}</div>
@@ -1448,7 +1537,7 @@
       </div>
       ${rc.length ? '<div class="btnrow gap"><button class="btn pri" data-rc>Recompile into a new form…</button></div>' : ''}
       <h3>Memory</h3>
-      <div class="mem">${d.memory.map((k, i) => `<button class="mbtn" data-slot="${i}" ${k ? `data-tip="m:${k}"` : ''} style="--lc:${k ? MAINC(k[0]) : 'var(--line)'}"><span class="t">${k ? esc(mergeLabel(k)) : '— empty slot —'}</span>${k ? `<span class="m">${genomeDots(k)}${discovered.has(k) ? `<span class="cls">${ENG.rec(k).cls}</span>` : ''}<span>Flux ${ENG.rec(k).flux}</span></span>` : '<span class="m">Tap to compose</span>'}</button>`).join('')}</div>
+      <div class="mem">${d.memory.map((k, i) => `<button class="mbtn" data-slot="${i}" ${k ? `data-tip="m:${k}"` : ''} style="--lc:${k ? (ENG.isAttack(k) ? 'var(--atk)' : 'var(--act)') : 'var(--line)'}"><span class="t">${k ? esc(mergeLabel(k)) : '— empty slot —'}</span>${k ? `<span class="m">${genomeDots(k)}${discovered.has(k) ? `<span class="cls">${ENG.rec(k).cls}</span>` : ''}<span>Flux ${ENG.rec(k).flux}</span></span>` : '<span class="m">Tap to compose</span>'}</button>`).join('')}</div>
       <div id="memEdit"></div>
       <h3>Attuned essences · merges up to ${w} sub${w > 1 ? 's' : ''}</h3>
       <span class="genome">${ENG.mainsOf(d.key).map(m => essChip(m)).join('')}${d.attuned.map(s => essChip(s)).join('')}</span>
@@ -1582,7 +1671,7 @@
       <div class="filters"><button data-f="all" class="${codexFilter === 'all' ? 'on' : ''}">All</button>${pairs.map(pk => `<button data-f="${pk}" class="${codexFilter === pk ? 'on' : ''}"><span style="color:${MAINC(pk[0])}">${E.MAIN[pk[0]].name[0]}</span>›<span style="color:${MAINC(pk[1])}">${E.MAIN[pk[1]].name[0]}</span> ${countPair(pk)}/${pairTotal(pk)}</button>`).join('')}</div>
       <input class="search" id="codexSearch" placeholder="Search names or resonances…" value="${esc(codexSearch)}">
       <div id="cdet"></div>
-      <div class="clist">${list.slice(0, 300).map(k => { const r = ENG.rec(k); return `<button class="crow" data-k="${k}" data-tip="m:${k}" style="--lc:${MAINC(k[0])}"><span class="t">${esc(r.name)}</span><span class="cls">${r.cls}</span><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span></button>`; }).join('') || '<p class="sub">Nothing here yet. Compose merges in battle, watch what your opponents cast, or experiment at the Forge.</p>'}</div>
+      <div class="clist">${list.slice(0, 300).map(k => { const r = ENG.rec(k); return `<button class="crow" data-k="${k}" data-tip="m:${k}" style="--lc:${MAINC(k[0])}"><span class="t">${esc(r.name)}</span>${kindBadge(k)}<span class="rar r${r.rarity}">${RARITY[r.rarity]}</span></button>`; }).join('') || '<p class="sub">Nothing here yet. Compose merges in battle, watch what your opponents cast, or experiment at the Forge.</p>'}</div>
       ${list.length > 300 ? `<p class="fine">Showing 300 of ${list.length}. Filter to narrow it down.</p>` : ''}`;
     body.querySelectorAll('[data-f]').forEach(b => { b.onclick = () => { codexFilter = b.dataset.f; renderSheet(); }; });
     const inp = body.querySelector('#codexSearch');
@@ -1613,7 +1702,12 @@
     const reactions = Object.values(E.REACTION).map(rx => `<div class="lexc"><div class="hd"><b>${Object.entries(rx.names).map(([m, nm]) => `<span style="color:${MAINC(m)}">${nm}</span>`).join(' / ')}</b>${rx.volatile ? '<span class="st bad">volatile</span>' : ''}</div><p>${esc(rx.line)}</p></div>`).join('');
     const subCard = s => { const sub = E.SUB[s]; return `<div class="lexc"><div class="hd">${essChip(s)}<span class="fine">${sub.host ? E.MAIN[sub.host].name + ' only' : 'any host'}</span></div><p>${esc(sub.desc)}</p>${!sub.host ? `<div class="facets">${E.MAINS.map(m => `<span style="color:${MAINC(m)}">on ${E.MAIN[m].name}</span><span>${E.FACET[s][m].name}: ${E.EFFECTS[E.FACET[s][m].fx]}</span>`).join('')}</div>` : ''}<p class="fine">As lead sub: ${ENG.PASSIVES[s][0]}</p></div>`; };
     const KIND = { blast: 'Steam scalds the target for 10% of its HP.', boost: 'The merge hits 30% harder.', guard: 'Caster Firewall +1.', quench: 'Caster sheds burn and heals 10%.', blind: 'Target accuracy −1.', chill: 'Target Clock −1.', soak: 'Target is soaked.', burn: 'May burn the target.', shield: 'Caster gains a small shield.', veil: 'Caster evasion +1.' };
-    body.innerHTML = `<h3>How merges work</h3><p class="fine">A merge has a lead Main, a second Main (the same one makes a pure merge), and up to three sub-essences, each bound to one of the two. The lead carries more weight in the merge and in combat typing (65/35).</p>
+    body.innerHTML = `<h3>How combat works</h3><div class="lex">
+        <div class="lexc kc atk"><div class="hd"><span class="kb atk">Attack</span></div><p>Strike, Barrage and Siphon merges. Queue one and it repeats every global cooldown (GCD). The GCD is shorter with more Clock and longer for heavy merges.</p></div>
+        <div class="lexc kc act"><div class="hd"><span class="kb act">Active</span></div><p>Hex, Ward, Mend and Field merges. They fire instantly, off the GCD, then go on their own cooldown (5s + 0.7s per Flux).</p></div>
+        <div class="lexc kc pas"><div class="hd"><span class="kb pas">Passive</span></div><p>Always on. One per daemon, from its genome's lead sub-essence or main essence.</p></div>
+        <div class="lexc kc utl"><div class="hd"><span class="kb utl">Utility</span></div><p>Rest (14s cooldown, big Flux refill), Swap (uses the GCD), Items (6s shared cooldown), Bind and Run. Statuses tick every 2 seconds. Opening a menu pauses the fight.</p></div></div>
+      <h3>How merges work</h3><p class="fine">A merge has a lead Main, a second Main (the same one makes a pure merge), and up to three sub-essences, each bound to one of the two. The lead carries more weight in the merge and in combat typing (65/35).</p>
       <h3>Type chart</h3>${chart}
       <h3>Main reactions</h3><div class="lex">${reactions}</div>
       <h3>Residue reactions</h3><p class="fine">Every merge leaves residue of its essences in the arena. A merge whose lead lands in 2+ residue of another essence triggers a reaction and consumes it.</p>
@@ -1758,7 +1852,7 @@
     const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k), rx = E.REACTION[E.pairId(p.a, p.b)];
     let h = `<div class="th">${known ? esc(r.name) : 'Undiscovered merge'}</div>${genomeHTML(k)}`;
     if (!known) return h + `<div class="tfx">${composeHints(p.a, p.b, p.subs.map(t => t.s + t.h))}</div>` + row('Flux', r.flux) + (full ? `<p>${esc(rx.line)}</p><p class="fine">Cast or forge it to reveal its stats.</p>` : '');
-    h += `<div class="tfx"><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}</div>`;
+    h += `<div class="tfx">${kindBadge(k)}<span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}</div>`;
     if (r.damaging) h += row('Power', r.power + (r.hits > 1 ? ` × ${r.hits} hits` : ''));
     h += row('Accuracy', r.acc > 100 ? 'never misses' : r.acc + '%') + row('Flux cost', r.flux);
     if (B && ui && r.damaging) { const eff = ENG.effectiveness(k, ui[1].key); h += row('Vs. current foe', `×${eff}`); }
@@ -1816,6 +1910,7 @@
     if (kind === 's' && ENG.STATUS[id]) return `<div class="th">${ENG.STATUS[id].name}</div><p>${STATUS_TXT[id]}</p>` + (full ? row('Base duration', ENG.STATUS[id].turns + ' turns') : '');
     if (kind === 'i' && S.bag[id]) { const it = S.bag[id]; return `<div class="th">${esc(it.name)}</div><p>${itemDesc(it)}</p>` + row('Owned', it.count) + (full && M.table[id.split(':')[1]] ? tipMerge(id.split(':')[1], false) : ''); }
     if (kind === 'd') return tipSide(+id, full);
+    if (kind === 'p' && ENG.PASSIVES[id]) return `<div class="th"><span class="kb pas">Passive</span> ${ENG.PASSIVES[id][0]}</div><p>${esc(ENG.PASSIVES[id][1])}</p>` + (full ? '<p class="fine">Always on. It comes from the genome\'s lead sub-essence (or its main essence if it has none), so recompiling can change it.</p>' : '');
     if (kind === 'r') { const r = E.RESONANCE.concat(E.TRINITY).find(x => x.name === id); if (r) return `<div class="th">${esc(r.name)}</div><span class="genome">${r.subs.map(x => essChip(x)).join('')}</span>` + (full ? row('Adds', Object.entries(r.traits).map(([t, v]) => `${t} +${v}`).join(', ') + (r.fx.length ? ' · ' + r.fx.map(f => `${E.EFFECTS[f[0]]} ${f[1]}%`).join(', ') : '')) : ''); }
     return '';
   }

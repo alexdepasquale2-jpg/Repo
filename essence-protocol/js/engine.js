@@ -294,6 +294,7 @@
         if (!k) continue;
         const r = rec(k);
         if (!r || r.flux > v.flux) continue;
+        if (this.rt && !isAttack(k) && (this.rt[1].cds[k] || 0) > 0) continue;
         let s = 0;
         if (r.damaging) {
           s = r.power * r.hits * Math.min(r.acc, 100) / 100 * effectiveness(k, foe.key) * (1 - r.instab / 150);
@@ -758,9 +759,15 @@
     }
 
     endOfTurn() {
-      for (const i of [0, 1]) {
+      for (const i of [0, 1]) this.sideEnd(i, true);
+      this.fieldEnd();
+    }
+
+    // Periodic effects for one side: a turn end in turn-based play, a pulse in real time.
+    sideEnd(i, regenFlux) {
+      {
         const s = this.sides[i], d = this.act(i), v = s.v;
-        if (d.hp <= 0) continue;
+        if (d.hp <= 0) return;
         v.turnsIn++;
         if (v.phase > 0) v.phase--;
         if (v.echo) {
@@ -794,20 +801,100 @@
             this.statusEv(i);
           }
         }
-        if (d.hp <= 0) continue;
+        if (d.hp <= 0) return;
         if (v.soak > 0) { v.soak--; if (!v.soak) this.statusEv(i); }
         if (v.regen > 0) { v.regen--; this.heal(i, v.stats.hp * v.regenMag / 100, true); if (!v.regen) this.statusEv(i); }
         const pv = passiveOf(d);
         if (pv === 'W') this.heal(i, v.stats.hp / 20, true);
         if (pv === 'Ro') this.heal(i, v.stats.hp / 16, true);
-        const regen = 2 + Math.round(v.stats.flux * 0.08);
-        v.flux = Math.min(v.stats.flux, v.flux + regen);
-        this.fluxEv(i);
+        if (regenFlux) {
+          const regen = 2 + Math.round(v.stats.flux * 0.08);
+          v.flux = Math.min(v.stats.flux, v.flux + regen);
+          this.fluxEv(i);
+        }
         v.hpHist.push(d.hp); if (v.hpHist.length > 2) v.hpHist.shift();
       }
+    }
+
+    fieldEnd() {
       if (this.field) { this.field.turns--; if (this.field.turns <= 0) { this.msg(`The ${E.MAIN[this.field.el].name} field dissipates.`); this.field = null; } }
       if (this.turn % 3 === 0) for (const k of Object.keys(this.residue)) this.residue[k] = Math.max(0, this.residue[k] - 1);
       this.stateEv();
+    }
+
+    // ---- real-time mode ------------------------------------------------
+    // Attacks go through a global cooldown (GCD) whose length depends on
+    // Clock and the merge's weight. Actives (Hex/Ward/Mend/Field) fire
+    // instantly off the GCD and have their own cooldown. Statuses, regen,
+    // echoes and delayed hits tick on a 2-second pulse per side.
+    startRealtime() {
+      this.rt = [{ gcd: 0.6, cds: {}, pulse: PULSE, queued: null, starved: false }, { gcd: 1.4, cds: {}, pulse: PULSE * 1.5, queued: null }];
+      this.fieldPulse = PULSE;
+    }
+    gcdFor(i, r) {
+      let g = 2.4 * 100 / (100 + 1.5 * this.speedOf(i));
+      if (r) { g *= 1 + r.flux / 80; if (r.prio > 0) g *= 0.75; if (r.prio < 0) g *= 1.25; }
+      return clamp(g, 0.8, 3.2);
+    }
+    run(fn) {
+      this.events = [];
+      if (this.over || this.needSwitch) return this.events;
+      fn();
+      this.checkFaints();
+      return this.events;
+    }
+    // Advance the clock; returns the events that happened.
+    tick(dt) {
+      this.events = [];
+      if (this.over || this.needSwitch || !this.rt) return this.events;
+      for (const i of [0, 1]) {
+        const rt = this.rt[i], v = this.sides[i].v;
+        rt.gcd -= dt;
+        for (const k in rt.cds) { rt.cds[k] -= dt; if (rt.cds[k] <= 0) delete rt.cds[k]; }
+        const before = Math.floor(v.flux);
+        v.flux = Math.min(v.stats.flux, v.flux + (2 + v.stats.flux * 0.08) / PULSE * dt);
+        if (Math.floor(v.flux) !== before) this.fluxEv(i);
+        rt.pulse -= dt;
+        if (rt.pulse <= 0) { rt.pulse += PULSE; this.sideEnd(i, false); if (this.checkFaints()) return this.events; }
+      }
+      this.fieldPulse -= dt;
+      if (this.fieldPulse <= 0) { this.fieldPulse += PULSE; this.turn++; this.fieldEnd(); }
+      // player: fire the queued attack whenever the GCD is ready
+      const p = this.rt[0];
+      if (p.gcd <= 0 && p.queued) {
+        const r = rec(p.queued);
+        if (r.flux <= this.sides[0].v.flux) { p.starved = false; this.doMerge(0, p.queued); p.gcd = this.gcdFor(0, r); if (this.checkFaints()) return this.events; }
+        else p.starved = true;
+      }
+      // enemy
+      const e = this.rt[1];
+      if (!this.over && e.gcd <= 0) {
+        const a = this.chooseEnemy();
+        if (a.type === 'merge') {
+          const r = rec(a.key);
+          this.doMerge(1, a.key);
+          if (!isAttack(a.key)) { e.cds[a.key] = cooldownFor(r); e.gcd = 0.9; } else e.gcd = this.gcdFor(1, r);
+        } else { this.doDefrag(1); e.gcd = 1.8; }
+        this.checkFaints();
+      }
+      return this.events;
+    }
+    // Player actions that don't wait for the GCD. Return events, or null if not ready.
+    useActive(key) {
+      const rt = this.rt[0], r = rec(key);
+      if (!r || rt.cds[key] > 0 || r.flux > this.sides[0].v.flux) return null;
+      rt.cds[key] = cooldownFor(r);
+      return this.run(() => this.doMerge(0, key));
+    }
+    useUtility(action) {
+      const rt = this.rt[0];
+      const cdKey = action.type === 'item' ? 'item' : action.type;
+      if (rt.cds[cdKey] > 0) return null;
+      if ((action.type === 'bind' || action.type === 'run' || action.type === 'switch') && rt.gcd > 0) return null;
+      const ev = this.run(() => this.perform(0, action));
+      rt.cds[cdKey] = UTIL_CD[cdKey] || 0;
+      if (action.type !== 'defrag' && action.type !== 'item') rt.gcd = Math.max(rt.gcd, action.type === 'bind' ? 2 : 1.2);
+      return ev;
     }
 
     // Returns true if something fainted (the turn should stop).
@@ -874,6 +961,11 @@
     }
   }
 
+  const PULSE = 2;
+  const UTIL_CD = { defrag: 14, item: 6, switch: 4, bind: 0, run: 0 };
+  function isAttack(key) { const r = rec(key); return r.cls === 'Strike' || r.cls === 'Barrage' || r.cls === 'Siphon'; }
+  function cooldownFor(r) { return Math.round(5 + r.flux * 0.7); }
+
   function describeFx(f) {
     const nm = E.EFFECTS[f.code] || f.code;
     if (['pierce', 'crit', 'fork', 'overflow'].includes(f.code)) return nm;
@@ -886,6 +978,7 @@
   return {
     rec, PASSIVES, STATUS, REACT, ATTUNE_LEVELS, RECOMPILE_LEVELS, LEVEL_CAP,
     calcStats, levelWidth, width, xpFor, tierOf, mainsOf, eligibleSubs, composableFor, canCompose, autoMemory,
+    isAttack, cooldownFor, UTIL_CD, PULSE,
     createDaemon, recompileOptions, recompile, gainXp, xpYield, effectiveness, captureChance, Battle, describeFx, passiveOf,
   };
 });

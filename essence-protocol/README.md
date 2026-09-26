@@ -38,6 +38,19 @@ Because every outcome comes from a few interacting rules rather than a hand-made
 - **Daemons.** Every identity is also a genome. A daemon with no subs is Seed-tier. At levels 12, 22 and 32 it can **recompile**, binding one attuned sub into its genome to become a new form. That gives branching evolution up to Prime tier (3 subs).
 - **Items.** Defeated daemons drop **motes** of their essences. The Nexus Forge merges motes, and the merge's class decides the item: Mend makes a Patch, Ward a Module, Hex a Lattice (for binding daemons), Field a Catalyst, other merges with subs an Attune Script, and plain merges a Flux Cell.
 
+### Real-time combat
+
+Battles run live on a clock instead of taking turns, and every ability is color-coded by kind:
+
+| Kind | Color | How it works |
+|---|---|---|
+| **Attack** | red | Strike, Barrage and Siphon merges. Tap one to queue it and it fires every time your **global cooldown** (GCD) finishes, until you queue something else. The GCD is shorter with more Clock, longer for heavy (high-Flux) merges, and shifted by priority. |
+| **Active** | violet | Hex, Ward, Mend and Field merges. They fire instantly, off the GCD, then go on their own cooldown (5s + 0.7s per Flux). |
+| **Passive** | gold | Always on. One per daemon, from its genome. |
+| **Utility** | cyan | Rest (14s cooldown, big Flux refill), Swap (uses the GCD, 4s cooldown), Items (6s shared cooldown), Bind, Run, Pause. |
+
+Flux regenerates continuously, and statuses, regen, echoes and delayed hits tick every 2 seconds. The foe's card has a wind-up bar that shows when it will act next. Opening Compose, Items, Swap or Info pauses the fight. Keys: 1–4 use memory slots, Space pauses, R rests.
+
 ### Battle depth
 
 - Type cycle: Water > Fire > Air > Earth > Water. It's weighted 65/35 on both the merge and the defender, so multipliers are graded rather than binary.

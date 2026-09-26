@@ -62,6 +62,31 @@ for (let seed = 1; seed <= 300; seed++) {
   results[b.result || 'timeout'] = (results[b.result || 'timeout'] || 0) + 1;
 }
 console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, results);
+// 4b. Real-time (GCD) battles: queue the first affordable attack, fire actives when ready.
+{
+  const rtRes = {};
+  let secs = 0;
+  for (let seed = 1; seed <= 150; seed++) {
+    const rng = mulberry(seed * 7 + 3);
+    const pick = () => all[Math.floor(rng() * all.length)];
+    const team = n => Array.from({ length: n }, () => ENG.createDaemon(pick(), 5 + Math.floor(rng() * 40), { rng }));
+    const b = new ENG.Battle({ player: team(3), enemy: team(1 + Math.floor(rng() * 3)), wild: rng() < 0.5, trainer: { name: 'Test' }, rng });
+    b.startRealtime();
+    let t = 0;
+    while (!b.over && t < 400) {
+      if (b.needSwitch) { b.forceSwitch(b.sides[0].team.findIndex(d => d.hp > 0)); continue; }
+      const d = b.act(0);
+      const atk = d.memory.filter(k => k && ENG.isAttack(k));
+      b.rt[0].queued = atk[0] || null;
+      for (const k of d.memory) if (k && !ENG.isAttack(k)) b.useActive(k);
+      if (!atk.length && b.rt[0].gcd <= 0) b.useUtility({ type: 'defrag' });
+      b.tick(0.1); t += 0.1;
+    }
+    secs += t;
+    rtRes[b.result || 'timeout'] = (rtRes[b.result || 'timeout'] || 0) + 1;
+  }
+  console.log(`ok: 150 real-time battles, avg ${(secs / 150).toFixed(1)}s`, rtRes);
+}
 
 // 6. Map: every room row is well-formed and every NPC, terminal and gate is reachable from spawn
 //    when gates are treated as open.
