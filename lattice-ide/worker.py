@@ -29,8 +29,10 @@ Environment:
                      Manage it with `python3 worker.py users add|list|remove|rotate`.
   LATTICE_TRUST_PROXY=1  take the client IP for the audit log from X-Forwarded-For
   LATTICE_COSMOS_CMD / LATTICE_HY_CMD        command prefix overrides
-  LATTICE_COSMOS_MODULE / LATTICE_HY_MODULE  engine module names for detection (default CLI:
-                     <sys.executable> -m <module>.cli)
+  LATTICE_COSMOS_MODULE / LATTICE_HY_MODULE  upstream packages used to detect the engines
+                     (defaults: diffusers, or cosmos_framework when LATTICE_COSMOS_BACKEND=framework;
+                     hyworld2, or a checkout at LATTICE_HY_ROOT). The default engine command is the
+                     bundled adapter: <sys.executable> adapters/<engine>/cli.py (see ENGINES.md).
   LATTICE_REGION     ISO 3166 alpha-2 where this worker runs (HY-World territory gate)
   LATTICE_GPU_USD_HR optional $/GPU-hour used to compute Status.metrics.cost_usd
 
@@ -623,8 +625,10 @@ class Worker:
         self.audit_lock = threading.Lock()
         self.jobs: dict[str, Job] = {}
         self.q: "queue.Queue[str]" = queue.Queue()
-        self.cosmos_mod = os.environ.get("LATTICE_COSMOS_MODULE") or "cosmos3"
-        self.hy_mod = os.environ.get("LATTICE_HY_MODULE") or "hyworld"
+        backend = (os.environ.get("LATTICE_COSMOS_BACKEND") or "diffusers").strip().lower()
+        self.cosmos_mod = os.environ.get("LATTICE_COSMOS_MODULE") or (
+            "cosmos_framework" if backend == "framework" else "diffusers")
+        self.hy_mod = os.environ.get("LATTICE_HY_MODULE") or "hyworld2"
         self.gpu = detect_gpu()
         self.gpu_count = gpu_count() if self.gpu else 0
         try:
@@ -647,9 +651,16 @@ class Worker:
         except (ImportError, ValueError):
             return False
 
+    @staticmethod
+    def _hy_checkout() -> bool:
+        # HY-World usually lives in its own Python env; a checkout at LATTICE_HY_ROOT counts as installed.
+        root = os.environ.get("LATTICE_HY_ROOT")
+        return bool(root) and (Path(root) / "hyworld2").is_dir()
+
     def engines(self) -> dict:
         return {"cosmos": {"installed": self._installed(self.cosmos_mod), "license": ENGINE_LICENSE["cosmos"]},
-                "hyworld": {"installed": self._installed(self.hy_mod), "license": ENGINE_LICENSE["hyworld"]}}
+                "hyworld": {"installed": self._installed(self.hy_mod) or self._hy_checkout(),
+                            "license": ENGINE_LICENSE["hyworld"]}}
 
     def global_dry(self) -> bool:
         return self.force_dry or not self.exec
@@ -1045,8 +1056,10 @@ class Worker:
         prompt = j.job.get("inputs", {}).get("prompt", "") or ""
         rd = str(j.run_dir)
         py = sys.executable or "python3"  # a bare "python" is often missing on GPU hosts
-        cprefix = shlex.split(os.environ.get("LATTICE_COSMOS_CMD") or "") or [py, "-m", f"{self.cosmos_mod}.cli"]
-        hprefix = shlex.split(os.environ.get("LATTICE_HY_CMD") or "") or [py, "-m", f"{self.hy_mod}.cli"]
+        # Default to the bundled adapters by path: engines run with the run dir as cwd, so -m would miss them.
+        here = Path(__file__).resolve().parent
+        cprefix = shlex.split(os.environ.get("LATTICE_COSMOS_CMD") or "") or [py, str(here / "adapters" / "cosmos" / "cli.py")]
+        hprefix = shlex.split(os.environ.get("LATTICE_HY_CMD") or "") or [py, str(here / "adapters" / "hyworld" / "cli.py")]
         if eng == "cosmos":
             return [("infer", [*cprefix, mode, "--model", model, "--prompt", prompt, "--out", rd,
                                *self._inputs(j), *self._params(j)])]

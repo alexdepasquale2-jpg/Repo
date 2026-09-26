@@ -48,10 +48,10 @@ Browsers only enable service workers (offline/install) and camera capture on **H
 | `LATTICE_DRY_RUN` | unset | `1` forces a dry run (`--dry-run`) |
 | `LATTICE_EXEC` | unset | `1` allows real pipeline subprocesses. Without it, every job is a dry run. |
 | `LATTICE_TOKEN` | unset | Shared secret. When set, every endpoint except `OPTIONS` and `GET /health` requires `Authorization: Bearer <token>`. `GET /runs/...` also accepts `?token=<token>` so `<video>`/`<img>` previews work |
-| `LATTICE_COSMOS_CMD` / `LATTICE_HY_CMD` | built-in | Command prefix overrides for the engine CLIs |
-| `LATTICE_COSMOS_MODULE` / `LATTICE_HY_MODULE` | `cosmos3` / `hyworld` | Python module names used to detect whether an engine is installed |
+| `LATTICE_COSMOS_CMD` / `LATTICE_HY_CMD` | bundled adapters | Engine command prefix. Default: `<worker python> adapters/cosmos/cli.py` and `adapters/hyworld/cli.py` |
+| `LATTICE_COSMOS_MODULE` / `LATTICE_HY_MODULE` | `diffusers` / `hyworld2` | Upstream packages used to detect whether an engine is installed (`cosmos_framework` when `LATTICE_COSMOS_BACKEND=framework`). HY-World also counts as installed when `LATTICE_HY_ROOT` points at a checkout. |
 
-**Integration points:** `cosmos3` and `hyworld` are placeholder names. Lattice does not assume what the upstream Cosmos 3 and HY-World 2.0 packages, modules or CLIs are called. Set the four variables above to match what you actually installed.
+**Real engines:** see [`ENGINES.md`](ENGINES.md) for installing Cosmos 3 and HY-World 2.0 from their upstream repos (they need separate Python environments) and pointing Lattice at them. Check a machine with `python3 -m adapters.doctor` (add `--json` for scripts): it reports GPUs and VRAM, CUDA, ffmpeg, installed engines, the model map and which Lattice models this box can run. Adapter exit codes: 2 not installed, 3 no GPU, 4 out of GPU memory, 5 bad config. Both adapter CLIs take `--plan` to print the upstream call without running it.
 
 A job runs as a dry run when any of these is true: `LATTICE_DRY_RUN=1` is set, `LATTICE_EXEC` is not `1`, or the engine module can't be imported. A dry run walks the real stage list, logs the command it *would* run, and writes a `plan.json` artifact.
 
@@ -252,4 +252,6 @@ Jobs record `submitted_by`; `GET /jobs?mine=1` shows only yours. Every submit, c
 | `batch.py`, `examples/` | Cosmos dataset sweeps |
 | `tests/` | Worker, exporter and batch tests (stdlib unittest) |
 | `DEPLOY.md`, `NOTICE` | Private deployment runbook, third-party notices |
+| `adapters/`, `ENGINES.md` | Real Cosmos 3 / HY-World 2.0 adapters, readiness check, engine setup guide |
+| `Dockerfile`, `deploy/`, `install.sh`, `pyproject.toml` | Docker image, Compose + Caddy, systemd, installer, pip package |
 | `README.md`, `LICENSE` | Docs, and MIT license with a third-party model notice |

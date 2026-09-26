@@ -371,16 +371,16 @@
       '    --prompt ' + shq(job.inputs.prompt || '') + ' --out ' + out + (outSuffix || '') + ' \\',
       (media && !noMedia ? '    ' + media + ' \\' : null),
       (flags(keys) ? '    ' + flags(keys) : null)].filter(Boolean).join('\n').replace(/ \\$/, '');
-    if (engine === 'cosmos') return cmd('python -m cosmos3.cli ' + job.mode + ' --model ' + job.model, ENGINE_PARAMS.cosmos);
-    if (engine === 'hyworld') return cmd('python -m hyworld.cli ' + job.mode + ' --model ' + job.model, ENGINE_PARAMS.hyworld);
+    if (engine === 'cosmos') return cmd('python3 adapters/cosmos/cli.py ' + job.mode + ' --model ' + job.model, ENGINE_PARAMS.cosmos);
+    if (engine === 'hyworld') return cmd('python3 adapters/hyworld/cli.py ' + job.mode + ' --model ' + job.model, ENGINE_PARAMS.hyworld);
     const cm = job.model.split('+')[0];
     return [
       '# 1) Cosmos rollout',
-      cmd('python -m cosmos3.cli generate --model ' + cm, ENGINE_PARAMS.bridgeCosmos, 'rollout/'),
+      cmd('python3 adapters/cosmos/cli.py generate --model ' + cm, ENGINE_PARAMS.bridgeCosmos, 'rollout/'),
       '# 2) keyframes every ' + (p.keyframe_stride || 8) + ' frames',
       'ffmpeg -y -i ' + out + 'rollout/<rollout>.mp4 -vf ' + shq('select=not(mod(n\\,' + (p.keyframe_stride || 8) + '))') + ' -vsync vfr ' + out + 'keyframes/kf_%04d.png',
       '# 3) HY freeze: pano -> WorldNav -> WorldStereo -> 3DGS/mesh',
-      cmd('python -m hyworld.cli worldmirror --model hy-world-2.0 --input-dir ' + out + 'keyframes', ENGINE_PARAMS.bridgeHy, '', true)
+      cmd('python3 adapters/hyworld/cli.py worldmirror --model hy-world-2.0 --input-dir ' + out + 'keyframes', ENGINE_PARAMS.bridgeHy, '', true)
     ].join('\n');
   }
   function jobForCode(job) { const j = stripMedia(job); delete j.code; return j; }

@@ -34,9 +34,12 @@ classifiers = [
 [project.scripts]
 lattice-worker = "worker:main"
 lattice-batch = "batch:run"
+lattice-doctor = "adapters.doctor:main"
+lattice-cosmos = "adapters.cosmos.cli:cli"
+lattice-hyworld = "adapters.hyworld.cli:cli"
 
 [tool.setuptools]
 # Explicit, glob-free list: no auto-discovery (keeps tests/ and examples/ out of the wheel).
-py-modules = ["worker", "batch", "users"]
-packages = ["exporters"]
+py-modules = ["worker", "batch"]
+packages = ["exporters", "adapters", "adapters.cosmos", "adapters.hyworld"]
 include-package-data = false

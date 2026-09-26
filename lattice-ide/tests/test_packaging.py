@@ -100,10 +100,13 @@ class PyprojectTest(unittest.TestCase):
         self.assertEqual(p["requires-python"], ">=3.10")
         self.assertEqual(p.get("dependencies", []), [], "the worker is stdlib-only")
         self.assertEqual(self.pp["build-system"]["build-backend"], "setuptools.build_meta")
-        self.assertEqual(p["scripts"], {"lattice-worker": "worker:main", "lattice-batch": "batch:run"})
+        self.assertEqual(p["scripts"], {"lattice-worker": "worker:main", "lattice-batch": "batch:run",
+                                        "lattice-doctor": "adapters.doctor:main",
+                                        "lattice-cosmos": "adapters.cosmos.cli:cli",
+                                        "lattice-hyworld": "adapters.hyworld.cli:cli"})
         self.assertIn("worker", self.st["py-modules"])
         self.assertIn("batch", self.st["py-modules"])
-        self.assertEqual(self.st["packages"], ["exporters"])
+        self.assertEqual(self.st["packages"], ["exporters", "adapters", "adapters.cosmos", "adapters.hyworld"])
 
     def test_version_matches_worker(self):
         import worker
@@ -115,15 +118,17 @@ class PyprojectTest(unittest.TestCase):
                 continue
             self.assertTrue((ROOT / f"{mod}.py").is_file(), f"py-module {mod} has no {mod}.py")
         for pkg in self.st["packages"]:
-            self.assertTrue((ROOT / pkg / "__init__.py").is_file(), f"package {pkg} has no __init__.py")
+            self.assertTrue((ROOT / pkg.replace(".", "/") / "__init__.py").is_file(), f"package {pkg} has no __init__.py")
         self.assertNotIn("tests", self.st["packages"])
 
     def test_entry_points_resolve(self):
         scripts = self.pp["project"]["scripts"]
-        self.assertEqual(set(scripts), {"lattice-worker", "lattice-batch"})
+        self.assertEqual(set(scripts), {"lattice-worker", "lattice-batch", "lattice-doctor",
+                                        "lattice-cosmos", "lattice-hyworld"})
         for name, target in scripts.items():
             mod_name, _, attr = target.partition(":")
-            self.assertIn(mod_name, self.st["py-modules"], f"{name}: {mod_name} is not shipped")
+            shipped = mod_name in self.st["py-modules"] or mod_name.rpartition(".")[0] in self.st["packages"]
+            self.assertTrue(shipped, f"{name}: {mod_name} is not shipped")
             mod = importlib.import_module(mod_name)
             self.assertTrue(callable(getattr(mod, attr, None)), f"{name}: {target} is not callable")
 
@@ -139,9 +144,10 @@ class PipInstallTest(unittest.TestCase):
             for f in ["pyproject.toml", "worker.py", "batch.py", "users.py", "LICENSE", "NOTICE", "README.md"]:
                 if (ROOT / f).exists():
                     shutil.copy2(ROOT / f, src / f)
-            (src / "exporters").mkdir()
-            for f in (ROOT / "exporters").glob("*.py"):
-                shutil.copy2(f, src / "exporters" / f.name)
+            for pkg in ("exporters", "adapters", "adapters/cosmos", "adapters/hyworld"):
+                (src / pkg).mkdir(parents=True, exist_ok=True)
+                for f in (ROOT / pkg).glob("*.py"):
+                    shutil.copy2(f, src / pkg / f.name)
             cmd = [sys.executable, "-m", "pip", "install", "--no-deps", "--no-input", "--disable-pip-version-check",
                    "--target", str(out), str(src)]
             try:
@@ -163,6 +169,9 @@ class PipInstallTest(unittest.TestCase):
             self.assertTrue((out / "worker.py").is_file())
             self.assertTrue((out / "batch.py").is_file())
             self.assertTrue((out / "exporters" / "__init__.py").is_file())
+            self.assertTrue((out / "adapters" / "doctor.py").is_file())
+            self.assertTrue((out / "adapters" / "cosmos" / "cli.py").is_file())
+            self.assertTrue((out / "adapters" / "hyworld" / "cli.py").is_file())
             self.assertFalse((out / "tests").exists(), "tests/ must not be packaged")
             self.assertFalse((out / "examples").exists(), "examples/ must not be packaged")
             if (ROOT / "users.py").exists():
@@ -171,8 +180,9 @@ class PipInstallTest(unittest.TestCase):
             text = eps.read_text()
             self.assertIn("lattice-worker = worker:main", text)
             self.assertIn("lattice-batch = batch:run", text)
+            self.assertIn("lattice-doctor = adapters.doctor:main", text)
             penv = dict(os.environ, PYTHONPATH=str(out))
-            for script in ("lattice-worker", "lattice-batch"):
+            for script in ("lattice-worker", "lattice-batch", "lattice-cosmos", "lattice-hyworld"):
                 path = out / "bin" / script
                 self.assertTrue(path.is_file(), f"console script {script} missing")
                 r = subprocess.run([sys.executable, str(path), "--help"], capture_output=True, text=True,
@@ -328,10 +338,11 @@ class InstallShTest(unittest.TestCase):
         # Self-contained source tree so the "writes nothing outside the prefix" check is exact.
         self.src.mkdir()
         for f in ["install.sh", "worker.py", "batch.py", "users.py", "LICENSE", "NOTICE", "README.md", "DEPLOY.md",
-                  *PWA_FILES]:
+                  "ENGINES.md", *PWA_FILES]:
             if (ROOT / f).exists():
                 shutil.copy2(ROOT / f, self.src / f)
         shutil.copytree(ROOT / "exporters", self.src / "exporters", ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(ROOT / "adapters", self.src / "adapters", ignore=shutil.ignore_patterns("__pycache__"))
         shutil.copytree(ROOT / "deploy", self.src / "deploy")
         shutil.copytree(ROOT / "examples", self.src / "examples")
         # PATH shims: privileged tools must never run in dry-run or staged mode.
@@ -400,7 +411,8 @@ class InstallShTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, out[-2000:])
         self.assertNotIn("SHIM-CALLED", out)
         app = self.prefix / "opt/lattice"
-        for f in ["worker.py", "batch.py", "exporters/__init__.py", "LICENSE", "NOTICE",
+        for f in ["worker.py", "batch.py", "exporters/__init__.py", "ENGINES.md", "adapters/doctor.py",
+                  "adapters/cosmos/cli.py", "adapters/hyworld/cli.py", "LICENSE", "NOTICE",
                   *[f"pwa/{p}" for p in PWA_FILES], *[f"deploy/{d}" for d in DEPLOY_FILES]]:
             self.assertTrue((app / f).is_file(), f"{f} not installed")
         env = self.prefix / "etc/lattice/worker.env"

@@ -109,10 +109,10 @@ if [ "$DRY" = 0 ] && [ "$STAGED" = 0 ] && [ "$(id -u)" != 0 ]; then
 	die "run as root (sudo sh install.sh), or use --dry-run / INSTALL_PREFIX=<dir>"
 fi
 
-CODE_FILES="worker.py batch.py LICENSE NOTICE README.md DEPLOY.md"
+CODE_FILES="worker.py batch.py LICENSE NOTICE README.md DEPLOY.md ENGINES.md"
 PWA_FILES="index.html styles.css app.js sw.js manifest.json icon.svg"
 DEPLOY_FILES="lattice-worker.service worker.env.example Caddyfile docker-compose.yml"
-for f in $CODE_FILES $PWA_FILES exporters/__init__.py; do
+for f in $CODE_FILES $PWA_FILES exporters/__init__.py adapters/__init__.py adapters/cosmos/cli.py adapters/hyworld/cli.py; do
 	[ -f "$SRC/$f" ] || die "missing source file $SRC/$f (run from a complete lattice-ide checkout)"
 done
 for f in $DEPLOY_FILES; do
@@ -142,7 +142,7 @@ fi
 # ---------------------------------------------------------------------------
 # 3. Directories
 # ---------------------------------------------------------------------------
-mkdirs 0755 "$APP" "$APP/exporters" "$APP/pwa" "$APP/deploy" "$APP/examples" "$UNITS"
+mkdirs 0755 "$APP" "$APP/exporters" "$APP/adapters" "$APP/adapters/cosmos" "$APP/adapters/hyworld" "$APP/pwa" "$APP/deploy" "$APP/examples" "$UNITS"
 mkdirs 0750 "$ETC" "$STATE" "$STATE/runs"
 if [ "$STAGED" = 0 ]; then
 	act chown root:"$SVC_USER" "$ETC"
@@ -159,6 +159,11 @@ done
 [ -f "$SRC/users.py" ] && put "$SRC/users.py" "$APP/users.py" 0644
 for f in "$SRC"/exporters/*.py; do
 	put "$f" "$APP/exporters/$(basename "$f")" 0644
+done
+for d in adapters adapters/cosmos adapters/hyworld; do
+	for f in "$SRC/$d"/*.py; do
+		put "$f" "$APP/$d/$(basename "$f")" 0644
+	done
 done
 for f in $PWA_FILES; do
 	put "$SRC/$f" "$APP/pwa/$f" 0644

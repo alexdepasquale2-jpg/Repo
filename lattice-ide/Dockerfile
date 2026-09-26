@@ -50,8 +50,9 @@ WORKDIR /app
 # Worker, exporters, batch client, docs/notices, and the PWA static files (served by a
 # reverse proxy such as deploy/Caddyfile; the worker itself does not serve them).
 # users.p[y]: optional multi-user helper; the bracket glob lets the build pass without it.
-COPY worker.py batch.py users.p[y] LICENSE NOTICE README.md DEPLOY.md ./
+COPY worker.py batch.py LICENSE NOTICE README.md DEPLOY.md ENGINES.md ./
 COPY exporters/*.py ./exporters/
+COPY adapters/ ./adapters/
 COPY index.html styles.css app.js sw.js manifest.json icon.svg ./pwa/
 
 USER lattice
