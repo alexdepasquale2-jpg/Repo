@@ -742,6 +742,20 @@
     return $('modalCard');
   }
   function closeModal() { $('modal').classList.add('hidden'); }
+  // In-page replacement for confirm()/prompt(). Resolves true/false, or the typed text (null on cancel).
+  function ask(title, text, opts) {
+    opts = opts || {};
+    return new Promise(res => {
+      const card = modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p>${opts.input != null ? `<input class="search" id="askInput" maxlength="16" value="${esc(opts.input)}">` : ''}
+        <div class="btnrow"><button class="btn pri" data-ok>${esc(opts.ok || 'OK')}</button><button class="btn" data-cancel>Cancel</button></div>`);
+      const inp = card.querySelector('#askInput');
+      if (inp) { inp.focus(); inp.select(); }
+      const done = v => { closeModal(); res(v); };
+      card.querySelector('[data-ok]').onclick = () => done(inp ? inp.value : true);
+      card.querySelector('[data-cancel]').onclick = () => done(inp ? null : false);
+      if (inp) inp.onkeydown = e => { if (e.key === 'Enter') done(inp.value); };
+    });
+  }
 
   function attuneModal(d) {
     return new Promise(res => {
@@ -937,7 +951,7 @@
     if (q('[data-rc]')) q('[data-rc]').onclick = async () => { $('sheet').classList.add('hidden'); await recompileModal(d); $('sheet').classList.remove('hidden'); renderSheet(); };
     if (q('[data-store]')) q('[data-store]').onclick = () => { S.party.splice(S.party.indexOf(d), 1); S.box.push(d); renderSheet(); };
     if (q('[data-take]')) q('[data-take]').onclick = () => { S.box.splice(S.box.indexOf(d), 1); S.party.push(d); renderSheet(); };
-    q('[data-nick]').onclick = () => { const n = prompt('Nickname (leave empty to reset):', d.nick || ''); if (n !== null) { d.nick = n.trim().slice(0, 16) || null; renderSheet(); } };
+    q('[data-nick]').onclick = async () => { const n = await ask('Rename daemon', 'Leave it empty to use the form name.', { input: d.nick || '', ok: 'Rename' }); if (n !== null) { d.nick = n.trim().slice(0, 16) || null; renderSheet(); } };
   }
 
   function itemDesc(it) {
@@ -1106,7 +1120,7 @@
       <h3>About</h3><p class="fine">Essence Protocol v${M.version}. All ${M.count} merge outcomes were generated ahead of time by tools/bake.js from the rules in js/essences.js. Nothing is rolled when you compose a merge; the only randomness is in battle (accuracy, effect chances, instability).</p>`;
     body.querySelector('[data-save]').onclick = () => { save(); toast('Saved.'); };
     body.querySelector('[data-mute]').onclick = () => { muted = !muted; try { localStorage.setItem('ep-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } renderSheet(); };
-    body.querySelector('[data-wipe]').onclick = () => { if (confirm('Delete your save and return to the title screen?')) { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ } location.reload(); } };
+    body.querySelector('[data-wipe]').onclick = async () => { if (await ask('Delete save?', 'Your progress is erased and the game returns to the title screen. This can\'t be undone.', { ok: 'Delete save' })) { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ } location.reload(); } };
   }
 
   // ------------------------------------------------------------------ ending
@@ -1154,7 +1168,7 @@
   titleArt();
   const existing = loadSave();
   if (existing) $('contBtn').classList.remove('hidden');
-  $('newBtn').onclick = () => { if (existing && !confirm('Start a new game? Your current save will be overwritten when you next save.')) return; showStarter(); };
+  $('newBtn').onclick = async () => { if (existing && !(await ask('Start a new game?', 'Your current save is overwritten the next time the game saves.', { ok: 'Start over' }))) return; showStarter(); };
   $('contBtn').onclick = () => { adopt(existing); enterWorld(); if (S.won) toast('Welcome back, Architect-breaker.'); };
   requestAnimationFrame(frame);
 
