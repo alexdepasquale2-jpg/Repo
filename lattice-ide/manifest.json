@@ -1,0 +1,16 @@
+{
+  "name": "Lattice",
+  "short_name": "Lattice",
+  "description": "Mobile control surface for world models: compose Cosmos 3 and HY-World 2.0 jobs on your phone, run them on Jetson, RTX or datacenter GPUs.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ],
+  "categories": ["developer", "productivity"]
+}
