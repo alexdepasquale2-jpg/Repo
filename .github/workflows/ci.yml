@@ -42,6 +42,10 @@ jobs:
         run: python3 -m json.tool lattice-ide/manifest.json > /dev/null
       - name: icon.svg is well-formed XML
         run: python3 -c "import xml.etree.ElementTree as E; E.parse('lattice-ide/icon.svg')"
+      - name: install.sh syntax
+        run: sh -n lattice-ide/install.sh
+      - name: adapters doctor runs (no GPU expected)
+        run: cd lattice-ide && python3 -m adapters.doctor --json > /dev/null || test $? -eq 1
 
   e2e:
     name: browser e2e (Playwright, chromium)
@@ -68,3 +72,21 @@ jobs:
             lattice-ide/tests/e2e/playwright-report
             lattice-ide/tests/e2e/test-results
           retention-days: 7
+
+  docker:
+    name: docker image build + /health
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build image (CPU, no weights)
+        run: docker build -t lattice-worker:ci lattice-ide/
+      - name: Run image and hit /health
+        run: cd lattice-ide && LATTICE_TEST_DOCKER=1 LATTICE_TEST_DOCKER_IMAGE=lattice-worker:ci python3 -m unittest tests.test_packaging.DockerImageTest -v
+      - name: Validate compose file
+        run: cd lattice-ide/deploy && cp worker.env.example worker.env && LATTICE_DOMAIN=ci.example docker compose config -q
+      - name: Validate Caddyfile
+        run: docker run --rm -v "$PWD/lattice-ide/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
