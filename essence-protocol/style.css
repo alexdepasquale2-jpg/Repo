@@ -280,3 +280,18 @@ input.search { width: 100%; background: var(--panel); border: 1px solid var(--li
 .lexc.dim { opacity: .45; }
 .scrollx { overflow-x: auto; }
 .preview .pn, .composer .mainbtn, .tabs button, .sheet-body h3 { font-family: var(--display); }
+
+/* Tooltips */
+#tooltip { position: fixed; z-index: 70; pointer-events: none; background: #0a0f1ef7; border: 1px solid var(--acc); border-radius: 12px; padding: 10px 12px; font-size: 12px; box-shadow: 0 10px 30px #000c; display: flex; flex-direction: column; gap: 5px; }
+#tooltip.compact { width: min(260px, calc(100vw - 16px)); }
+#tooltip.complex { width: min(360px, calc(100vw - 16px)); }
+#tooltip .th { font-family: var(--display); font-weight: 700; font-size: 15px; }
+#tooltip p { margin: 0; color: var(--dim); }
+#tooltip p.bad { color: var(--bad); }
+#tooltip .tr { display: flex; justify-content: space-between; gap: 10px; }
+#tooltip .tr span { color: var(--dim); flex: none; }
+#tooltip .tr b { text-align: right; font-weight: 700; }
+#tooltip .tfx { display: flex; flex-wrap: wrap; gap: 3px; }
+#tooltip .tmode { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; border-top: 1px solid var(--line); padding-top: 4px; }
+[data-tip] { cursor: help; }
+button[data-tip] { cursor: pointer; }

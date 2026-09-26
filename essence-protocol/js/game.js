@@ -29,7 +29,7 @@
   const npcs = map.npcs.map(n => Object.assign({}, n));
 
   function defaults(s) {
-    s.settings = Object.assign({ speed: 'normal' }, s.settings || {});
+    s.settings = Object.assign({ speed: 'normal', tips: 'compact' }, s.settings || {});
     s.tips = s.tips || [];
     s.quests = s.quests || [];
     s.stats = Object.assign({ reacts: 0, wild: 0, forged: 0, binds: 0 }, s.stats || {});
@@ -75,8 +75,8 @@
   const MAINC = m => E.MAIN[m].color;
   const subColor = s => SP.ACCENT[s];
   function essChip(code, extra) {
-    if (E.MAIN[code]) return `<span class="ess" style="color:${MAINC(code)}"><i></i>${E.MAIN[code].name}${extra ? ` <small>${extra}</small>` : ''}</span>`;
-    return `<span class="ess sub" style="color:${subColor(code)}"><i></i>${E.SUB[code].name}${extra ? ` <small>${extra}</small>` : ''}</span>`;
+    if (E.MAIN[code]) return `<span class="ess" data-tip="e:${code}" style="color:${MAINC(code)}"><i></i>${E.MAIN[code].name}${extra ? ` <small>${extra}</small>` : ''}</span>`;
+    return `<span class="ess sub" data-tip="e:${code}" style="color:${subColor(code)}"><i></i>${E.SUB[code].name}${extra ? ` <small>${extra}</small>` : ''}</span>`;
   }
   function genomeHTML(key) {
     const p = E.parseKey(key);
@@ -87,8 +87,8 @@
   // Compact genome: a dot per main, a diamond per sub.
   function genomeDots(key) {
     const p = E.parseKey(key);
-    let h = `<span class="gdots"><i class="gm" style="background:${MAINC(p.a)}"></i>${p.a !== p.b ? `<i class="gm" style="background:${MAINC(p.b)}"></i>` : ''}`;
-    for (const t of p.subs) h += `<i class="gs" style="background:${subColor(t.s)}"></i>`;
+    let h = `<span class="gdots"><i class="gm" data-tip="e:${p.a}" style="background:${MAINC(p.a)}"></i>${p.a !== p.b ? `<i class="gm" data-tip="e:${p.b}" style="background:${MAINC(p.b)}"></i>` : ''}`;
+    for (const t of p.subs) h += `<i class="gs" data-tip="e:${t.s}" style="background:${subColor(t.s)}"></i>`;
     return h + '</span>';
   }
   const dName = d => d.nick || ENG.rec(d.key).dName;
@@ -649,6 +649,7 @@
   const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
   addEventListener('keydown', e => {
     if (e.target && e.target.tagName === 'INPUT') return;
+    if ((e.key === 't' || e.key === 'T') && S) { cycleTips(); return; }
     if (!$('dialog').classList.contains('hidden') && ['Enter', ' ', 'z', 'Z'].includes(e.key)) { advanceDialog(); e.preventDefault(); return; }
     if (mode === 'world') {
       if (KEYMAP[e.key]) { held = KEYMAP[e.key]; e.preventDefault(); }
@@ -773,11 +774,12 @@
       const pct = clamp(u.hp / u.max, 0, 1), sh = clamp(u.shield / u.max, 0, 1);
       const col = pct > 0.5 ? 'var(--good)' : pct > 0.2 ? 'var(--warn)' : 'var(--bad)';
       const chips = [];
-      if (u.status) chips.push(`<span class="st bad">${ENG.STATUS[u.status].name}</span>`);
+      if (u.status) chips.push(`<span class="st bad" data-tip="s:${u.status}">${ENG.STATUS[u.status].name}</span>`);
       if (u.soak) chips.push('<span class="st inf">Soaked</span>');
       if (u.regen) chips.push('<span class="st good">Regen</span>');
       const nm = { atk: 'LOG', def: 'FWL', spd: 'CLK', acc: 'ACC', eva: 'EVA' };
       for (const k in u.stages) if (u.stages[k]) chips.push(`<span class="st ${u.stages[k] > 0 ? 'good' : 'bad'}">${nm[k]}${u.stages[k] > 0 ? '▲' : '▼'}${Math.abs(u.stages[k])}</span>`);
+      el.dataset.tip = 'd:' + i;
       el.innerHTML = `<span class="nm"><b>${esc(u.name)}${u.prism ? ' <em class="prism">✦</em>' : ''}</b><span>Lv ${u.level}</span></span>
         <span class="sub2">${genomeDots(u.key)}<span>${TIER[E.parseKey(u.key).subs.length]}</span></span>
         <span class="bar"><i style="width:${pct * 100}%;background:${col}"></i><b style="left:${pct * 100}%;width:${Math.min(sh, 1 - pct) * 100}%"></b></span>
@@ -1033,7 +1035,7 @@
     const eff = ENG.effectiveness(k, ui[1].key);
     const showEff = !known || r.damaging;
     const effTxt = showEff && eff >= 1.2 ? '<span class="eff up">▲</span>' : showEff && eff <= 0.83 ? '<span class="eff dn">▼</span>' : '';
-    return `<button class="move ${known ? '' : 'unk'}" data-key="${k}" style="--c:${MAINC(p.a)};--c2:${MAINC(p.b)}" ${r.flux > flux ? 'disabled' : ''}>
+    return `<button class="move ${known ? '' : 'unk'}" data-key="${k}" data-tip="m:${k}" style="--c:${MAINC(p.a)};--c2:${MAINC(p.b)}" ${r.flux > flux ? 'disabled' : ''}>
       <span class="mn">${known ? esc(r.name) : '? ? ?'}${effTxt}</span>
       <span class="mm">${genomeDots(k)}<span>${known ? r.cls : 'Unknown'}</span><span class="fl">${r.flux}◆</span></span></button>`;
   }
@@ -1106,7 +1108,7 @@
 
   function panelBag() {
     const items = Object.values(S.bag).filter(it => it.count > 0 && ['patch', 'ward', 'catalyst', 'cell'].includes(it.kind));
-    const html = items.length ? `<div class="mlist">${items.map(it => `<button class="mbtn" data-id="${esc(it.id)}"><span class="t">${esc(it.name)} ×${it.count}</span><span class="m">${itemDesc(it)}</span></button>`).join('')}</div>`
+    const html = items.length ? `<div class="mlist">${items.map(it => `<button class="mbtn" data-id="${esc(it.id)}" data-tip="i:${esc(it.id)}"><span class="t">${esc(it.name)} ×${it.count}</span><span class="m">${itemDesc(it)}</span></button>`).join('')}</div>`
       : '<p class="sub">No battle items. Forge Patches, Modules, Catalysts and Flux Cells from motes at the Nexus Forge.</p>';
     const p = panel('Items', html);
     p.querySelectorAll('[data-id]').forEach(b => { b.onclick = () => {
@@ -1446,7 +1448,7 @@
       </div>
       ${rc.length ? '<div class="btnrow gap"><button class="btn pri" data-rc>Recompile into a new form…</button></div>' : ''}
       <h3>Memory</h3>
-      <div class="mem">${d.memory.map((k, i) => `<button class="mbtn" data-slot="${i}" style="--lc:${k ? MAINC(k[0]) : 'var(--line)'}"><span class="t">${k ? esc(mergeLabel(k)) : '— empty slot —'}</span>${k ? `<span class="m">${genomeDots(k)}${discovered.has(k) ? `<span class="cls">${ENG.rec(k).cls}</span>` : ''}<span>Flux ${ENG.rec(k).flux}</span></span>` : '<span class="m">Tap to compose</span>'}</button>`).join('')}</div>
+      <div class="mem">${d.memory.map((k, i) => `<button class="mbtn" data-slot="${i}" ${k ? `data-tip="m:${k}"` : ''} style="--lc:${k ? MAINC(k[0]) : 'var(--line)'}"><span class="t">${k ? esc(mergeLabel(k)) : '— empty slot —'}</span>${k ? `<span class="m">${genomeDots(k)}${discovered.has(k) ? `<span class="cls">${ENG.rec(k).cls}</span>` : ''}<span>Flux ${ENG.rec(k).flux}</span></span>` : '<span class="m">Tap to compose</span>'}</button>`).join('')}</div>
       <div id="memEdit"></div>
       <h3>Attuned essences · merges up to ${w} sub${w > 1 ? 's' : ''}</h3>
       <span class="genome">${ENG.mainsOf(d.key).map(m => essChip(m)).join('')}${d.attuned.map(s => essChip(s)).join('')}</span>
@@ -1504,7 +1506,7 @@
   function sheetBag(body) {
     const items = Object.values(S.bag).filter(it => it.count > 0);
     const motes = Object.entries(S.motes).filter(([, n]) => n > 0);
-    body.innerHTML = `<h3>Items</h3>${items.length ? `<div class="clist">${items.map(it => `<div class="crow" style="--lc:var(--acc)"><span class="grow"><span class="t">${esc(it.name)} ×${it.count}</span><span class="fine">${itemDesc(it)}</span></span>${['patch', 'script'].includes(it.kind) ? `<button class="btn small" data-use="${esc(it.id)}">Use</button>` : ''}</div>`).join('')}</div>` : '<p class="sub">Empty.</p>'}
+    body.innerHTML = `<h3>Items</h3>${items.length ? `<div class="clist">${items.map(it => `<div class="crow" data-tip="i:${esc(it.id)}" style="--lc:var(--acc)"><span class="grow"><span class="t">${esc(it.name)} ×${it.count}</span><span class="fine">${itemDesc(it)}</span></span>${['patch', 'script'].includes(it.kind) ? `<button class="btn small" data-use="${esc(it.id)}">Use</button>` : ''}</div>`).join('')}</div>` : '<p class="sub">Empty.</p>'}
       <h3>Motes</h3><p class="fine">Defeated daemons leave motes of the essences they were made from. The Nexus Forge merges them into items.</p>
       <div class="motes">${motes.length ? motes.map(([k, n]) => essChip(k, '×' + n)).join('') : '<span class="fine">None yet.</span>'}</div>
       <div id="useBox"></div>`;
@@ -1550,7 +1552,7 @@
   function mergeDetail(k) {
     const r = ENG.rec(k), p = E.parseKey(k);
     return `<div class="preview">
-      <span class="genome"><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}${r.anomaly ? `<span class="rar r4">Anomaly: ${esc(r.anomaly)}</span>` : ''}</span>
+      <span class="genome"><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2" data-tip="r:${esc(t)}">${esc(t)}</span>`).join('')}${r.anomaly ? `<span class="rar r4">Anomaly: ${esc(r.anomaly)}</span>` : ''}</span>
       <div class="pn">${esc(r.name)}</div>${genomeHTML(k)}
       <div class="pm">${r.damaging ? `<span>Power <b>${r.power}${r.hits > 1 ? '×' + r.hits : ''}</b></span>` : ''}<span>Acc <b>${r.acc > 100 ? 'sure' : r.acc}</b></span><span>Flux <b>${r.flux}</b></span><span>Priority <b>${r.prio}</b></span><span>Instability <b>${r.instab}%</b></span></div>
       <div class="fxl">${r.fx.map(f => `<span class="st ${E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf'}">${esc(ENG.describeFx(f))}</span>`).join('')}</div>
@@ -1580,7 +1582,7 @@
       <div class="filters"><button data-f="all" class="${codexFilter === 'all' ? 'on' : ''}">All</button>${pairs.map(pk => `<button data-f="${pk}" class="${codexFilter === pk ? 'on' : ''}"><span style="color:${MAINC(pk[0])}">${E.MAIN[pk[0]].name[0]}</span>›<span style="color:${MAINC(pk[1])}">${E.MAIN[pk[1]].name[0]}</span> ${countPair(pk)}/${pairTotal(pk)}</button>`).join('')}</div>
       <input class="search" id="codexSearch" placeholder="Search names or resonances…" value="${esc(codexSearch)}">
       <div id="cdet"></div>
-      <div class="clist">${list.slice(0, 300).map(k => { const r = ENG.rec(k); return `<button class="crow" data-k="${k}" style="--lc:${MAINC(k[0])}"><span class="t">${esc(r.name)}</span><span class="cls">${r.cls}</span><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span></button>`; }).join('') || '<p class="sub">Nothing here yet. Compose merges in battle, watch what your opponents cast, or experiment at the Forge.</p>'}</div>
+      <div class="clist">${list.slice(0, 300).map(k => { const r = ENG.rec(k); return `<button class="crow" data-k="${k}" data-tip="m:${k}" style="--lc:${MAINC(k[0])}"><span class="t">${esc(r.name)}</span><span class="cls">${r.cls}</span><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span></button>`; }).join('') || '<p class="sub">Nothing here yet. Compose merges in battle, watch what your opponents cast, or experiment at the Forge.</p>'}</div>
       ${list.length > 300 ? `<p class="fine">Showing 300 of ${list.length}. Filter to narrow it down.</p>` : ''}`;
     body.querySelectorAll('[data-f]').forEach(b => { b.onclick = () => { codexFilter = b.dataset.f; renderSheet(); }; });
     const inp = body.querySelector('#codexSearch');
@@ -1676,11 +1678,14 @@
         <button class="btn ${S.settings.speed === 'normal' ? 'pri' : ''}" data-speed="normal">Battle speed: normal</button>
         <button class="btn ${S.settings.speed === 'fast' ? 'pri' : ''}" data-speed="fast">Battle speed: fast</button>
         <button class="btn" data-mute>${muted ? 'Unmute' : 'Mute'} sound</button></div>
+      <div class="btnrow gap"><button class="btn ${S.settings.tips === 'compact' ? 'pri' : ''}" data-tips="compact">Tooltips: compact</button><button class="btn ${S.settings.tips === 'complex' ? 'pri' : ''}" data-tips="complex">Tooltips: complex</button><button class="btn ${S.settings.tips === 'off' ? 'pri' : ''}" data-tips="off">Tooltips: off</button></div>
+      <p class="fine">Hover (or press and hold on touch) any merge, essence, status, item or daemon card for details. Press T or tap ⓘ in the top bar to switch compact and complex.</p>
       <p class="fine">Tap the battle text or press Space to fast-forward a turn. Keys 1–4 cast your memory merges.</p>
       <h3>Save</h3><div class="btnrow"><button class="btn pri" data-save>Save now</button><button class="btn" data-wipe>Delete save…</button></div>
       <p class="fine">Playing for ${mins} min · ${S.steps} steps · ${S.stats.wild} wild daemons defeated · ${S.stats.binds} bound · ${S.stats.forged} items forged.</p>
       <h3>About</h3><p class="fine">Essence Protocol. All ${M.count} merge outcomes were generated ahead of time by tools/bake.js from the rules in js/essences.js. Nothing is rolled when you compose a merge; the only randomness is in battle (accuracy, effect chances, instability).</p>`;
     body.querySelectorAll('[data-speed]').forEach(b => { b.onclick = () => { S.settings.speed = b.dataset.speed; save(); renderSheet(); }; });
+    body.querySelectorAll('[data-tips]').forEach(b => { b.onclick = () => { S.settings.tips = b.dataset.tips; save(); renderSheet(); }; });
     body.querySelector('[data-save]').onclick = () => { save(); toast('Saved.'); };
     body.querySelector('[data-mute]').onclick = () => { muted = !muted; try { localStorage.setItem('ep-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } renderSheet(); };
     body.querySelector('[data-wipe]').onclick = async () => {
@@ -1738,6 +1743,113 @@
     for (const n of npcs) { const o = map.npcs.find(x => x.id === n.id); n.x = o.x; n.y = o.y; n.dir = o.dir; }
     mode = 'world'; setPad(true); updateHud();
   }
+
+  // ------------------------------------------------------------------ tooltips
+  // Any element with data-tip="kind:id" gets a hover (or long-press) card.
+  // kinds: m merge key · e essence code · s status · i bag item · d battle side · r resonance/trinity name
+  const tipEl = document.createElement('div'); tipEl.id = 'tooltip'; tipEl.className = 'hidden'; document.body.appendChild(tipEl);
+  function cycleTips() {
+    S.settings.tips = S.settings.tips === 'compact' ? 'complex' : 'compact';
+    toast(`Tooltips: <b>${S.settings.tips}</b>`); hideTip(); save();
+  }
+  $('tipBtn').onclick = () => { if (S) cycleTips(); };
+  const row = (k, v) => `<div class="tr"><span>${k}</span><b>${v}</b></div>`;
+  function tipMerge(k, full) {
+    const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k), rx = E.REACTION[E.pairId(p.a, p.b)];
+    let h = `<div class="th">${known ? esc(r.name) : 'Undiscovered merge'}</div>${genomeHTML(k)}`;
+    if (!known) return h + `<div class="tfx">${composeHints(p.a, p.b, p.subs.map(t => t.s + t.h))}</div>` + row('Flux', r.flux) + (full ? `<p>${esc(rx.line)}</p><p class="fine">Cast or forge it to reveal its stats.</p>` : '');
+    h += `<div class="tfx"><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}</div>`;
+    if (r.damaging) h += row('Power', r.power + (r.hits > 1 ? ` × ${r.hits} hits` : ''));
+    h += row('Accuracy', r.acc > 100 ? 'never misses' : r.acc + '%') + row('Flux cost', r.flux);
+    if (B && ui && r.damaging) { const eff = ENG.effectiveness(k, ui[1].key); h += row('Vs. current foe', `×${eff}`); }
+    h += `<div class="tfx">${r.fx.map(f => `<span class="st ${E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf'}">${esc(ENG.describeFx(f))}</span>`).join('')}</div>`;
+    if (!full) return h;
+    h += row('Priority', r.prio > 0 ? '+' + r.prio + ' (acts first)' : r.prio < 0 ? r.prio + ' (acts last)' : '0') + row('Instability', r.instab + '% (may backfire or mutate)');
+    h += row('Typing', p.a === p.b ? `${E.MAIN[p.a].name} 100%` : `${E.MAIN[p.a].name} 65% · ${E.MAIN[p.b].name} 35%`);
+    h += row('Residue left', r.cls === 'Field' ? `+3 ${E.MAIN[p.a].name}, field for 5 turns` : `+1 ${E.MAIN[p.a].name}`);
+    h += row('Forges into', esc(forgeItem(k).name));
+    h += `<p>${esc(rx.line + ' ' + r.text)}</p>`;
+    if (r.anomaly) h += `<p class="bad">∆ ${esc(E.ANOMALY[r.anomaly])}</p>`;
+    h += `<p class="fine">${esc(E.CLASSES[r.cls])} As a daemon genome: ${seen.has(k) ? esc(r.dName) : 'unseen form'}.</p>`;
+    return h;
+  }
+  function tipEssence(c, full) {
+    if (E.MAIN[c]) {
+      const m = E.MAIN[c], pv = ENG.PASSIVES[c];
+      const weak = E.MAINS.find(x => E.BEATS[x] === c);
+      let h = `<div class="th" style="color:${m.color}">${m.name}</div>` + row('Strong against', E.MAIN[E.BEATS[c]].name) + row('Weak to', E.MAIN[weak].name) + row('Merging with', `${E.MAIN[E.OPPOSITE[c]].name} is volatile`);
+      if (!full) return h;
+      h += row('Passive (no subs)', `${pv[0]}: ${esc(pv[1])}`);
+      h += `<div class="tr"><span>Reactions</span><b>${E.MAINS.map(o => { const rx = E.REACTION[E.pairId(c, o)]; return `${rx.names[c] || rx.names[o]}`; }).join(', ')}</b></div>`;
+      h += `<div class="tr"><span>Attack ×</span><b>${E.MAINS.map(o => `${E.MAIN[o].name[0]} ${E.chart(c, o)}`).join(' · ')}</b></div>`;
+      h += `<div class="tr"><span>Status immunity</span><b>${{ F: 'Burn', W: 'Freeze', E: 'Static', A: 'Root' }[c]} (as lead)</b></div>`;
+      return h;
+    }
+    const sub = E.SUB[c], pv = ENG.PASSIVES[c];
+    let h = `<div class="th" style="color:${subColor(c)}">${sub.name}</div><p>${esc(sub.desc)}</p>` + row('Binds to', sub.host ? `${E.MAIN[sub.host].name} only` : 'any main') + row('Effect', E.EFFECTS[sub.fx]);
+    if (!full) return h;
+    h += row('Passive as lead sub', `${pv[0]}: ${esc(pv[1])}`);
+    if (!sub.host) h += `<div class="tr"><span>Facets</span><b>${E.MAINS.map(m => `${E.MAIN[m].name}: ${E.FACET[c][m].name} (${E.EFFECTS[E.FACET[c][m].fx]})`).join('<br>')}</b></div>`;
+    h += row('Traits', Object.entries(sub.traits).map(([t, v]) => `${t} +${v}`).join(', '));
+    const found = resonancesFound();
+    const res = E.RESONANCE.concat(E.TRINITY).filter(r => r.subs.includes(c));
+    h += row('Resonances', res.map(r => (found.has(r.name) ? r.name : '???')).join(', '));
+    return h;
+  }
+  const STATUS_TXT = { burn: 'Loses 1/16 HP each turn and deals 15% less damage. Fire leads are immune.', frozen: 'Can\'t act for 1–2 turns. Thawed by Fire-led hits. Water leads are immune.', static: '25% chance to lock up each turn and Clock ×0.75. Earth leads are immune.', rooted: 'Can\'t switch or run; loses 1/16 HP to the foe each turn. Air leads are immune.', corrupt: 'Loses 3 Flux per turn and merges are 15% more unstable.', dormant: 'Can\'t act until hit, up to 3 turns.' };
+  function tipSide(i, full) {
+    if (!B) return '';
+    const d = B.act(i), r = ENG.rec(d.key), pv = ENG.PASSIVES[r.dPassive], v = B.sides[i].v;
+    let h = `<div class="th">${esc(dName(d))} · Lv ${d.level}</div>${genomeHTML(d.key)}` + row('Passive', `${pv[0]}: ${esc(pv[1])}`) + row('HP', `${d.hp}/${v.stats.hp}`);
+    if (i === 0 || full) h += row('Flux', `${v.flux}/${v.stats.flux}`);
+    if (!full) return h;
+    if (i === 0) h += row('Stats', `Logic ${v.stats.atk} · Firewall ${v.stats.def} · Clock ${v.stats.spd} · Coherence ${v.stats.coh}`);
+    else h += row('Your pure merges', E.MAINS.map(m => `${E.MAIN[m].name[0]} ×${ENG.effectiveness(m + m, d.key)}`).join(' · '));
+    h += row('Status', v.status ? `${ENG.STATUS[v.status.id].name}, ${v.status.turns} turns` : 'none') + row('Shield', v.shield || 0) + row('Turns on field', v.turnsIn);
+    if (i === 1 && B.wild) { const lat = bestLattice(); if (lat) h += row('Bind chance', Math.round(chanceWith(lat) * 100) + '%'); }
+    return h;
+  }
+  function tipHTML(spec, full) {
+    const kind = spec[0], id = spec.slice(2);
+    if (kind === 'm' && M.table[id]) return tipMerge(id, full);
+    if (kind === 'e' && (E.MAIN[id] || E.SUB[id])) return tipEssence(id, full);
+    if (kind === 's' && ENG.STATUS[id]) return `<div class="th">${ENG.STATUS[id].name}</div><p>${STATUS_TXT[id]}</p>` + (full ? row('Base duration', ENG.STATUS[id].turns + ' turns') : '');
+    if (kind === 'i' && S.bag[id]) { const it = S.bag[id]; return `<div class="th">${esc(it.name)}</div><p>${itemDesc(it)}</p>` + row('Owned', it.count) + (full && M.table[id.split(':')[1]] ? tipMerge(id.split(':')[1], false) : ''); }
+    if (kind === 'd') return tipSide(+id, full);
+    if (kind === 'r') { const r = E.RESONANCE.concat(E.TRINITY).find(x => x.name === id); if (r) return `<div class="th">${esc(r.name)}</div><span class="genome">${r.subs.map(x => essChip(x)).join('')}</span>` + (full ? row('Adds', Object.entries(r.traits).map(([t, v]) => `${t} +${v}`).join(', ') + (r.fx.length ? ' · ' + r.fx.map(f => `${E.EFFECTS[f[0]]} ${f[1]}%`).join(', ') : '')) : ''); }
+    return '';
+  }
+  let tipTarget = null, pressTimer = null;
+  function showTip(el, x, y) {
+    if (!S || S.settings.tips === 'off') return;
+    const html = tipHTML(el.dataset.tip, S.settings.tips === 'complex');
+    if (!html) return;
+    tipTarget = el;
+    tipEl.innerHTML = html + `<div class="tmode">${S.settings.tips === 'complex' ? 'Complex' : 'Compact'} · T or ⓘ to switch</div>`;
+    tipEl.className = S.settings.tips;
+    const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    tipEl.style.left = clamp(x + 14, 8, innerWidth - w - 8) + 'px';
+    tipEl.style.top = (y + 16 + h > innerHeight - 8 ? Math.max(8, y - h - 12) : y + 16) + 'px';
+  }
+  function hideTip() { tipTarget = null; tipEl.className = 'hidden'; }
+  document.addEventListener('mouseover', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) { if (tipTarget) hideTip(); return; }
+    if (el !== tipTarget) showTip(el, e.clientX, e.clientY);
+  });
+  document.addEventListener('mousemove', e => { if (tipTarget) { const w = tipEl.offsetWidth, h = tipEl.offsetHeight; tipEl.style.left = clamp(e.clientX + 14, 8, innerWidth - w - 8) + 'px'; tipEl.style.top = (e.clientY + 16 + h > innerHeight - 8 ? Math.max(8, e.clientY - h - 12) : e.clientY + 16) + 'px'; } });
+  document.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse') return;
+    hideTip();
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    pressTimer = setTimeout(() => { showTip(el, e.clientX, e.clientY - 60); el.dataset.held = '1'; }, 450);
+  });
+  document.addEventListener('pointerup', () => clearTimeout(pressTimer));
+  document.addEventListener('pointercancel', () => clearTimeout(pressTimer));
+  // a long-press that opened a tooltip shouldn't also fire the button
+  document.addEventListener('click', e => { const el = e.target.closest && e.target.closest('[data-held]'); if (el) { delete el.dataset.held; e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener('scroll', hideTip, true);
 
   // ------------------------------------------------------------------ boot
   resize();
