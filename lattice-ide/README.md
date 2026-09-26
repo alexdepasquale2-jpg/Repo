@@ -211,7 +211,9 @@ With `LATTICE_EXEC=1` and an engine installed, the default engine command is `<t
 
 ## Tests
 
-    cd lattice-ide && python3 -m unittest discover -s tests
+- Unit and integration (worker, exporters, batch, real-exec path): `cd lattice-ide && python3 -m unittest discover -s tests -v`
+- Browser end-to-end (Playwright, Chromium): `cd lattice-ide/tests/e2e && npm ci && npx playwright install chromium && npm test`. It starts the PWA and a dry-run worker on free ports and covers cancel, offline draft → send, export/import (no tokens or media data), photo/video upload, the license and territory gates, Super 64B feasibility and the mixed-content warning. Set `PW_CHROMIUM_PATH` to use a preinstalled Chromium.
+- CI (`.github/workflows/ci.yml`) runs the unit tests on Python 3.10 and 3.12, `node --check`, manifest/icon checks and the browser suite on every push and pull request.
 
 ## Files
 
