@@ -85,6 +85,11 @@ FEASIBLE = {
     "cosmos3-droid-policy": {"jetson", "rtx", "datacenter"},
     HY_MODEL: {"rtx", "datacenter"},
 }
+# Models tied to one mode; any model not listed runs in every cosmos mode.
+MODEL_MODES = {
+    "cosmos3-droid-policy": {"action"},
+    "cosmos3-i2v": {"generate"},
+}
 LICENSE_IDS = {
     "cosmos": "OpenMDW-1.1",
     "hyworld": "Tencent-HY-World-2.0",
@@ -141,6 +146,13 @@ PARAMS = {
     "format": _enum("ply", "spz", "glb", "usd"),
 }
 
+# Params each engine accepts; others are dropped so they never reach an argv.
+ENGINE_PARAMS = {
+    "cosmos": {"frames", "fps", "resolution", "seed", "guidance", "steps"},
+    "hyworld": {"resolution", "seed", "export_target", "format"},
+    "bridge": set(PARAMS),
+}
+
 ARTIFACT_KINDS = {
     ".mp4": "video", ".webm": "video", ".mov": "video",
     ".ply": "splat", ".spz": "splat", ".splat": "splat",
@@ -195,6 +207,9 @@ def validate_job(job) -> dict:
     if engine == "cosmos":
         if model not in COSMOS_MODELS:
             raise JobError("model for cosmos must be one of " + ", ".join(COSMOS_MODELS))
+        if mode not in MODEL_MODES.get(model, MODES["cosmos"]):
+            raise JobError(f"{model} only supports mode: "
+                           + ", ".join(sorted(MODEL_MODES[model])))
         parts = [model]
     elif engine == "hyworld":
         if model != HY_MODEL:
@@ -204,6 +219,8 @@ def validate_job(job) -> dict:
         cm, _, hm = str(model or "").partition("+")
         if cm not in COSMOS_MODELS or hm != HY_MODEL:
             raise JobError(f'model for bridge must be "<cosmos model>+{HY_MODEL}"')
+        if "generate" not in MODEL_MODES.get(cm, MODES["cosmos"]):
+            raise JobError(f"{cm} cannot produce a bridge rollout (needs a generate-capable model)")
         parts = [cm, hm]
     target = job.get("target", "rtx")
     if target not in TARGETS:
@@ -235,7 +252,7 @@ def validate_job(job) -> dict:
         raise JobError("inputs.params must be an object")
     clean = {}
     for k, v in params.items():
-        if k in PARAMS and v is not None and v != "":
+        if k in ENGINE_PARAMS[engine] and v is not None and v != "":
             try:
                 clean[k] = PARAMS[k](v)
             except (ValueError, TypeError) as e:
