@@ -601,10 +601,12 @@ class Worker:
                     self.log(j, "cancelled")
                 else:
                     msg = self.redact(j, str(e)) or e.__class__.__name__
-                    self.update(j, status="failed", error=msg)
                     self.log(j, f"failed: {msg}")
+                    # Record metrics and artifacts before the terminal status, so a
+                    # poller never sees "failed" without them.
                     self._finish_metrics(j)
                     self._collect(j)
+                    self.update(j, status="failed", error=msg)
             finally:
                 self._stage_end(j)
                 j.hf_token = None
