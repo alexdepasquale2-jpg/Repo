@@ -92,6 +92,7 @@
       flux: 16 + Math.floor(b[4] * L / 40) + Math.floor(L / 2),
       coh: Math.floor(2 * b[5] * L / 100) + 5,
     };
+    if (d.prism) for (const k in s) s[k] = Math.floor(s[k] * 1.1);
     const pv = passiveOf(d);
     if (pv === 'St') s.def = Math.floor(s.def * 1.15);
     if (pv === 'A' || pv === 'Ga') s.spd = Math.floor(s.spd * 1.15);
@@ -619,11 +620,11 @@
       if (pv === 'Si') m *= 1 + Math.min(5, v.turnsIn) * 0.05;
       if (passiveOf(t) === 'E' && eff >= 1.2) m *= 0.8;
       let dmg = Math.max(1, Math.floor(base * m));
-      this.dealDamage(j, dmg, pierce, i);
+      this.dealDamage(j, dmg, pierce, i, crit);
       return { dmg, crit };
     }
 
-    dealDamage(j, dmg, pierce, from) {
+    dealDamage(j, dmg, pierce, from, crit) {
       const t = this.act(j), tv = this.sides[j].v;
       let rest = dmg;
       if (tv.shield > 0 && !pierce) {
@@ -632,7 +633,7 @@
         if (ab > 0) this.ev('absorb', { side: j, amount: ab });
       }
       t.hp = Math.max(0, t.hp - rest);
-      this.ev('hit', { side: j, amount: dmg });
+      this.ev('hit', { side: j, amount: dmg, crit: !!crit });
       this.hpEv(j);
       if (tv.mirror && from != null && rest > 0) {
         tv.mirror = false;
@@ -837,15 +838,18 @@
       return any;
     }
 
+    // Participants split the full yield; everyone else still standing gets half (XP share).
     awardXp(enemy) {
       const team = this.sides[0].team;
-      const parts = team.filter(d => this.sides[0].participants.has(d.uid) && d.hp > 0);
-      if (!parts.length) return;
+      const alive = team.filter(d => d.hp > 0);
+      if (!alive.length) return;
+      const parts = alive.filter(d => this.sides[0].participants.has(d.uid));
       const total = xpYield(enemy, !this.wild);
-      const each = Math.max(1, Math.floor(total / parts.length));
-      for (const d of parts) {
+      for (const d of alive) {
+        const joined = parts.includes(d);
+        const each = joined ? Math.max(1, Math.floor(total / Math.max(1, parts.length))) : Math.max(1, Math.floor(total * 0.5));
         const res = gainXp(d, each);
-        this.msg(`${d.nick || rec(d.key).dName} gains ${each} XP.`);
+        if (joined) this.msg(`${d.nick || rec(d.key).dName} gains ${each} XP.`);
         for (const L of res.levels) this.msg(`${d.nick || rec(d.key).dName} grew to level ${L}!`, { anim: 'levelup' });
         if (res.levels.length && d === this.act(0)) {
           const s = this.sides[0];

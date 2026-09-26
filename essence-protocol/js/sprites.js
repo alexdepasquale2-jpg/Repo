@@ -17,9 +17,27 @@
     Ro: '#5fbf4a', Sp: '#ffe23d', Ga: '#f2fffb', Ec: '#c7a6ff', Li: '#ffe9a0', Vo: '#6b2fa8', Si: '#46f3ff', Tm: '#d1a15a',
   };
 
+  // Prismatic variants rotate every hue of the palette.
+  function hueShift(hex, deg) {
+    const n = parseInt(hex.slice(1), 16);
+    let r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+    let h = 0, sat = 0;
+    if (d) {
+      sat = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+      h *= 60;
+    }
+    h = (h + deg) % 360; sat = Math.min(1, sat * 1.25);
+    const c = (1 - Math.abs(2 * l - 1)) * sat, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+    const [a, bb, cc] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+    const to = v => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+    return '#' + to(a) + to(bb) + to(cc);
+  }
+
   function inEllipse(x, y, cx, cy, rx, ry) { const dx = (x - cx) / rx, dy = (y - cy) / ry; return dx * dx + dy * dy <= 1; }
 
-  function draw(key) {
+  function draw(key, prism) {
     const p = E.parseKey(key);
     const tier = p.subs.length;
     const R = rng(fnv(key));
@@ -130,24 +148,30 @@
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const k = out[y][x];
       if (!k) continue;
-      ctx.fillStyle = pal[k] || ACCENT[k] || '#fff';
+      const col = pal[k] || ACCENT[k] || '#fff';
+      ctx.fillStyle = prism && k !== 'o' && k !== 'v' ? hueShift(col, 150) : col;
       if (k === 'Mi' || k === 'As') ctx.globalAlpha = 0.55;
       ctx.fillRect(x, y, 1, 1);
       ctx.globalAlpha = 1;
     }
+    if (prism) {
+      ctx.fillStyle = '#ffffff';
+      for (const [x, y] of [[3, 5], [28, 9], [5, 22], [27, 25], [16, 1]]) { ctx.fillRect(x, y, 1, 1); ctx.globalAlpha = 0.5; ctx.fillRect(x - 1, y, 3, 1); ctx.fillRect(x, y - 1, 1, 3); ctx.globalAlpha = 1; }
+    }
     return c;
   }
 
-  function get(key) {
-    let c = cache.get(key);
-    if (!c) { c = draw(key); cache.set(key, c); }
+  function get(key, prism) {
+    const id = key + (prism ? '*' : '');
+    let c = cache.get(id);
+    if (!c) { c = draw(key, !!prism); cache.set(id, c); }
     return c;
   }
 
   // Draw a daemon into a canvas element at an integer scale.
   function paint(canvas, key, opts) {
     opts = opts || {};
-    const src = get(key);
+    const src = get(key, opts.prism);
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, canvas.width, canvas.height);

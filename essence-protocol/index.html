@@ -11,6 +11,9 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -65,17 +68,24 @@
 <!-- Battle -->
 <section id="battle" class="screen hidden">
   <div class="arena" id="arena">
-    <div class="bcard foe" id="foeCard"></div>
+    <canvas id="bbg"></canvas>
     <canvas class="bsprite foe" id="foeSprite" width="192" height="192"></canvas>
     <canvas class="bsprite ally" id="allySprite" width="192" height="192"></canvas>
-    <div class="bcard ally" id="allyCard"></div>
+    <button class="bcard foe" id="foeCard" aria-label="Foe details"></button>
+    <button class="bcard ally" id="allyCard" aria-label="Your daemon's details"></button>
     <div class="residue" id="residue"></div>
     <canvas id="fx"></canvas>
+    <div id="fieldFlash"></div>
   </div>
-  <div class="blog" id="blog"></div>
-  <div class="bactions" id="bactions"></div>
+  <div class="ticker" id="blog" aria-live="polite"></div>
+  <div class="bctrl" id="bctrl">
+    <button class="bind hidden" id="bindBtn"></button>
+    <div class="moves" id="moves"></div>
+    <div class="utils" id="utils"></div>
+  </div>
   <div class="bpanel hidden" id="bpanel"></div>
 </section>
+<div id="flash"></div>
 
 <!-- Menu sheet -->
 <section id="sheet" class="hidden">

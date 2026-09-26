@@ -81,6 +81,6 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
   }
   const adj = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => seen.has((x + dx) + ',' + (y + dy)));
   for (const n of map.npcs) assert(adj(n.x, n.y), 'unreachable npc ' + n.name);
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) if ('HF'.includes(map.tiles[y][x])) assert(adj(x, y), 'unreachable terminal at ' + x + ',' + y);
+  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) if ('HFR'.includes(map.tiles[y][x])) assert(adj(x, y), 'unreachable terminal at ' + x + ',' + y);
   console.log(`ok: map ${map.w}x${map.h}, ${map.npcs.length} npcs reachable, ${seen.size} walkable tiles`);
 }

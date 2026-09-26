@@ -47,12 +47,19 @@ Because every outcome comes from a few interacting rules rather than a hand-made
 - Statuses (Burn, Frozen, Static, Rooted, Corrupted, Dormant, Petrify, Soak), stat stages, shields, regen, echoes, delayed hits and element immunities (Earth can't get Static, Air can't be Rooted...).
 - 20 passives, one per main and one per sub, taken from the genome's lead sub.
 
+## Beyond the story
+
+- **Archive Requests:** three rotating goals at a time (discover merges of a pair, bind an element, trigger reactions, forge items...). Each pays out right away and is replaced. Every 50 merges discovered is a Codex milestone with its own reward.
+- **XP share:** daemons that sit out a battle still earn half XP, as long as they're standing.
+- **Rogue and Prismatic daemons:** 7% of wild encounters are Rogue builds with an extra sub-essence. About 1 in 64 is Prismatic, with a hue-shifted sprite and +10% stats.
+- **Post-game:** Wardens and the Architect offer rematches with recompiled, higher-level teams. **The Rift**, a terminal in the Core, is an endless descent through random genomes from the whole table. Floors get harder, every fifth floor has a guardian, and you can leave with your rewards after any floor.
+
 ## Play
 
 Open `index.html` over HTTP (for example `python3 -m http.server` in this folder). It is a PWA and works offline once loaded.
 
 - **Move:** D-pad or WASD/arrows. **Interact:** A, Enter or Space. **Menu:** ☰ or Esc.
-- Flickering tiles are **static**, where wild daemons live. Weaken one and cast a Lattice from the Bag to bind it.
+- Flickering tiles are **static**, where wild daemons live. In battle your four memory merges are one tap away (▲ strong / ▼ weak against the foe; keys 1–4 on desktop), and **Bind** shows your capture odds with your best lattice. Tap either card to inspect a daemon. Tap the battle text or press Space to fast-forward.
 - Beat the Wardens of the Cirrus Array (Air), Cinder Foundry (Fire), Tidal Archive (Water) and Bedrock Vault (Earth). Each key opens the next gate, and all four open the Core, where the Architect waits.
 - The **Codex** tracks discovered merges, **Forms** the genomes you've seen, and the **Lexicon** the reactions, resonances and anomalies you've found.
 
