@@ -12,6 +12,20 @@ A 2.5D (isometric) mobile action game. Everything in it comes from the seven ref
 | High-five with a curly-haired painter at an easel | **The Painter**, who trades a high-five for an upgrade. |
 | Cyber arena with orange fire figures and six ability icons | The **Ember** enemies, the **Pyre Colossus** boss, the glowing card-blade, and the six abilities in the bottom bar. |
 
+## Story and progression
+
+The game is a five-chapter campaign. Each chapter opens and closes with a short cutscene, and characters talk to you over the radio during missions. The cast is the Wanderer, Vasko the Painter, Warden Captain Orlov and the Pyre.
+
+1. **The Sleeping Grid:** wake 2 coils. Embers only.
+2. **Copper Veins:** wake 4 coils. Wardens arrive.
+3. **Lockdown:** wake all 6 coils against heavy Warden pressure.
+4. **The Pyre:** relight the grid, then defeat the Pyre Colossus.
+5. **Endless Current:** survival mode where the Pyre returns every two minutes. Your best time is saved.
+
+Clearing a chapter opens the next one. Abilities unlock as you progress: 2 in chapter 1, then 4, 5 and finally all 6.
+
+**Sparks** come from takedowns, coils and chapter rewards, and you keep them even when you lose. Spend them in the **Workshop** on permanent upgrades: max HP, damage, fire rate, move speed, cooldowns, and starting high-five tokens. Progress is saved in the browser's local storage.
+
 ## Play
 
 Open `index.html` over HTTP (e.g. `python3 -m http.server` in this folder), then add it to your home screen. It is a PWA and works offline.

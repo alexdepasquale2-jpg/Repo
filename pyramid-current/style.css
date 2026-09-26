@@ -14,7 +14,7 @@ html, body {
   font-family: ui-rounded, "Trebuchet MS", system-ui, sans-serif;
   touch-action: none; user-select: none; -webkit-user-select: none; overscroll-behavior: none;
 }
-canvas { display: block; position: fixed; inset: 0; }
+#game { display: block; position: fixed; inset: 0; }
 button { font: inherit; color: inherit; cursor: pointer; }
 .hidden { display: none !important; }
 
@@ -162,6 +162,62 @@ h1 span { color: var(--neon); text-shadow: 0 0 18px rgba(57,230,255,.7), 0 3px 0
 .endstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
 .endstats div { background: rgba(0,0,0,.35); border-radius: 10px; padding: 8px 4px; font-size: 11px; opacity: .9; }
 .endstats b { display: block; font-size: 20px; color: #fff; }
+
+/* In-mission radio line */
+#comms {
+  position: fixed; left: 50%; transform: translateX(-50%); top: calc(118px + var(--safe-t)); z-index: 5;
+  width: min(420px, 92vw); padding: 8px 12px; border-radius: 12px; background: rgba(10,8,6,.8);
+  border: 1px solid rgba(232,207,156,.3); font-size: 13px; line-height: 1.35; pointer-events: none;
+}
+#comms b { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+
+/* Locked abilities */
+.ab.locked { filter: grayscale(1) brightness(.55); }
+.ab.locked::after { content: "🔒"; position: absolute; top: 6px; right: 6px; font-size: 12px; }
+
+/* Story dialog */
+#dialog {
+  position: fixed; inset: 0; z-index: 12; display: flex; align-items: flex-end; justify-content: center;
+  background: linear-gradient(180deg, rgba(12,8,4,0) 30%, rgba(12,8,4,.8)); padding: 16px 16px calc(16px + var(--safe-b));
+  cursor: pointer;
+}
+.dlg {
+  width: min(560px, 100%); display: flex; gap: 12px; align-items: stretch; padding: 12px;
+  background: var(--panel); border: 1px solid rgba(232,207,156,.4); border-radius: 16px; box-shadow: 0 16px 50px #000b;
+  animation: rise .25s ease-out;
+}
+@keyframes rise { from { transform: translateY(16px); opacity: 0; } }
+#portrait { width: 96px; height: 96px; border-radius: 12px; flex: none; border: 1px solid rgba(232,207,156,.3); }
+.dlg-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+#dlgName { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+#dlgText { margin: 0; font-size: 15px; line-height: 1.4; color: #fff; flex: 1; text-wrap: pretty; }
+.dlg-foot { display: flex; gap: 10px; align-items: center; font-size: 11px; opacity: .75; }
+.dlg-foot span:nth-child(2) { flex: 1; text-align: right; animation: pulse 1.4s ease-in-out infinite; }
+#dlgSkip { background: none; border: 1px solid rgba(232,207,156,.4); border-radius: 8px; padding: 3px 10px; font-size: 11px; }
+
+/* Campaign + Workshop */
+.panel.wide { width: min(480px, 100%); text-align: left; max-height: 100%; overflow-y: auto; }
+.chap-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.sparks { color: #ffdf8a; font-size: 14px; }
+.sparks b { color: #fff; font-variant-numeric: tabular-nums; }
+.panel h3 { margin: 18px 0 2px; color: #fff; font-size: 17px; }
+#chapterList, #shopList { display: grid; gap: 8px; }
+.chap, .shop {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 12px;
+  border-radius: 12px; border: 1px solid rgba(57,230,255,.35); background: rgba(6,22,36,.7);
+}
+.chap i { font-style: normal; flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; color: #1a120a; background: var(--neon); }
+.chap span, .shop span:first-child { flex: 1; min-width: 0; }
+.chap b, .shop b { display: block; color: #fff; font-size: 15px; }
+.chap small, .shop small { opacity: .8; font-size: 12px; }
+.chap em, .shop em { font-style: normal; font-size: 12px; color: #ffdf8a; white-space: nowrap; }
+.chap.done { border-color: rgba(255,194,61,.5); }
+.chap.done i { background: #ffc23d; }
+.chap.shut { opacity: .45; }
+.shop { border-color: rgba(255,194,61,.35); background: rgba(40,26,8,.6); }
+.shop:disabled { opacity: .55; }
+.pips { color: #ffc23d; letter-spacing: 1px; font-size: 11px; flex: none; }
+button:focus-visible { outline: 2px solid var(--neon); outline-offset: 2px; }
 
 @media (min-width: 700px) {
   .ab { height: 90px; }

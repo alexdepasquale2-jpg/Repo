@@ -5,7 +5,8 @@
 (() => {
   const TW = 64, TH = 32, N = 36, WALL = 90;
   const $ = (id) => document.getElementById(id);
-  const cv = $('game'), ctx = cv.getContext('2d');
+  const cv = $('game');
+  let ctx = cv.getContext('2d');
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
   const lerp = (a, b, t) => a + (b - a) * t;
   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -152,6 +153,115 @@
     }
   }
 
+  // ---------- Campaign ----------
+  // Speakers: W = the Wanderer (hero), P = the Painter, C = Warden Captain, F = the Pyre.
+  const WHO = {
+    W: { name: 'The Wanderer', color: '#39e6ff' },
+    P: { name: 'Vasko, the Painter', color: '#ffc23d' },
+    C: { name: 'Warden Captain Orlov', color: '#8fb1ff' },
+    F: { name: 'The Pyre', color: '#ff7a1a' },
+  };
+  const CHAPTERS = [
+    {
+      name: 'The Sleeping Grid', blurb: 'Wake the two coils beneath the small pyramid.',
+      coils: [0, 1], warden: 0, rate: 0.75, boss: false, reward: 30, abilities: 2,
+      intro: [
+        ['P', 'You came. Good. Keep that hat on. The sand remembers heat.'],
+        ['W', 'Your postcard said you found something under the pyramids.'],
+        ['P', 'Not found. Remembered. They were never tombs. They were power plants.'],
+        ['P', 'Two coils under the small pyramid still hum. Stand on their pads and wake them.'],
+        ['W', 'And the things made of fire walking toward us?'],
+        ['P', 'Embers. The grid’s fever. Keep moving and let your blade do the talking.'],
+      ],
+      outro: [
+        ['P', 'Look at the capstone. Blue. First time in four thousand years.'],
+        ['W', 'Somebody is going to notice.'],
+        ['P', 'Somebody already has. Come back tomorrow, and bring your nerve.'],
+      ],
+    },
+    {
+      name: 'Copper Veins', blurb: 'Wake four coils. The Wardens arrive.',
+      coils: [0, 1, 2, 3], warden: 0.2, rate: 0.9, boss: false, reward: 50, abilities: 4,
+      intro: [
+        ['C', 'Attention, wanderer. This plateau is sealed by order of the Grid Authority.'],
+        ['W', 'Nobody dug anything. The coils woke up on their own.'],
+        ['C', 'Then they will be put back to sleep. Step away from the copper.'],
+        ['P', 'Don’t argue with them. They cuff first and do the paperwork later.'],
+        ['P', 'Wake four coils. If a Warden stands on a live pad, knock him off before it goes dark.'],
+      ],
+      outro: [
+        ['W', 'Why do they care so much about a few old coils?'],
+        ['P', 'Because a lit grid shows what is underneath. And what is underneath is hungry.'],
+      ],
+    },
+    {
+      name: 'Lockdown', blurb: 'Wake all six coils under heavy Warden pressure.',
+      coils: [0, 1, 2, 3, 4, 5], warden: 0.34, rate: 1, boss: false, reward: 80, abilities: 5,
+      intro: [
+        ['C', 'Final warning. The Authority has declared the plateau under lockdown.'],
+        ['P', 'Six coils, six shafts, one Core. Light them all and nobody can switch it off again.'],
+        ['W', 'And when they’re all lit?'],
+        ['P', 'Then we find out what the Authority has been keeping buried.'],
+      ],
+      outro: [
+        ['C', 'You fool. The grid wasn’t asleep. It was holding something down.'],
+        ['P', 'The Core is drinking the current. Something under it is waking up.'],
+      ],
+    },
+    {
+      name: 'The Pyre', blurb: 'Relight the grid and burn out the Pyre Colossus.',
+      coils: [0, 1, 2, 3, 4, 5], warden: 0.14, rate: 1, boss: true, reward: 150, abilities: 6,
+      intro: [
+        ['F', 'FOUR THOUSAND YEARS OF COLD. AND NOW A LITTLE MAN IN A FUR HAT BRINGS ME WARMTH.'],
+        ['W', 'That’s what the Wardens were guarding?'],
+        ['C', 'Guarding everyone else from it. Our cuffs are useless now. Your blade isn’t.'],
+        ['P', 'Light the coils again. The Core fires on the Pyre, and every live coil makes it hit harder.'],
+      ],
+      outro: [
+        ['C', 'The plateau is clear. The Authority owes you an apology. I owe you a drink.'],
+        ['P', 'Hold still. Hat tilted, just so. This one goes in a museum.'],
+        ['W', 'Paint the capstones blue. That’s how they were meant to look.'],
+      ],
+    },
+    {
+      name: 'Endless Current', blurb: 'Survive as long as you can. The Pyre returns every two minutes.',
+      coils: [0, 1, 2, 3, 4, 5], warden: 0.25, rate: 1.1, boss: false, endless: true, reward: 0, abilities: 6,
+      intro: [
+        ['P', 'The Pyre left embers in every crack of the plateau. They will keep coming.'],
+        ['W', 'Then I’ll keep the lights on.'],
+      ],
+      outro: [],
+    },
+  ];
+  const BEATS = {
+    coil: ['P', 'That’s it! Follow the blue line. It runs to the Core.'],
+    warden: ['C', 'Wanderer, you are interfering with Authority infrastructure.'],
+    lowhp: ['P', 'You’re smoking. Get under the tree. It’s older than the pyramids and it still heals.'],
+    token: ['P', 'Come by my easel. I owe you a high five.'],
+    drained: ['C', 'Coil secured. Next.'],
+    bosshalf: ['F', 'THE CURRENT… IT BURNS…'],
+  };
+  // Order abilities unlock in: Logic, Echo, Surge, Sanctum, Atlas, Flow.
+  const UNLOCK_ORDER = [0, 2, 1, 3, 4, 5];
+  const WORKSHOP = [
+    { id: 'hp', name: 'Padded Coat', d: '+15 max HP', max: 5 },
+    { id: 'dmg', name: 'Honed Blade', d: '+10% damage', max: 5 },
+    { id: 'rate', name: 'Steady Hands', d: '+8% fire rate', max: 5 },
+    { id: 'speed', name: 'Desert Boots', d: '+5% move speed', max: 4 },
+    { id: 'cd', name: 'Copper Focus', d: '−5% ability cooldowns', max: 4 },
+    { id: 'token', name: 'Old Friends', d: 'Start with +1 high-five token', max: 2 },
+  ];
+  const upCost = (lvl) => 25 + lvl * 20;
+  const SAVE_KEY = 'pyramid-current-save-v1';
+  let save = { sparks: 0, cleared: 0, best: 0, up: {} };
+  try { const raw = localStorage.getItem(SAVE_KEY); if (raw) save = Object.assign(save, JSON.parse(raw)); } catch (_) {}
+  save.up = save.up || {};
+  const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (_) {} };
+  const lvl = (id) => save.up[id] || 0;
+  let chapter = 0;
+  const CH = () => CHAPTERS[chapter];
+  const abilityLocked = (i) => UNLOCK_ORDER.indexOf(i) >= CH().abilities;
+
   // ---------- Game state ----------
   let S = null, hero = null, coils = [], enemies = [], shots = [], fx = [], parts = [];
   let running = false, cam = { x: 0, y: 0 };
@@ -161,7 +271,7 @@
     S = {
       t: 0, phase: 'coils', kills: 0, killsTok: 0, tokens: 0, spawnT: 4, awakenT: 0, boss: null,
       flowT: 0, linkT: 0, linkTick: 0, sanctum: null, shake: 0, coreBeamT: 1.5, hurtFlash: 0,
-      over: false, paused: false, modal: false, hintT: 6, hfT: 0, nid: 1,
+      over: false, paused: false, modal: false, hintT: 6, hfT: 0, nid: 1, beats: new Set(), comms: null, nextBossT: 120, sparksRun: 0,
     };
     hero = {
       x: 18, y: 20, r: 0.32, hp: 100, maxHp: 100, speed: 3.3, dmg: 12, fireRate: 2.2, fireCd: 0.5,
@@ -174,10 +284,26 @@
     }));
     enemies = []; shots = []; fx = []; parts = [];
     cds.fill(0);
+    // permanent Workshop upgrades
+    hero.maxHp = hero.hp = 100 + 15 * lvl('hp');
+    hero.dmgMul = 1 + 0.1 * lvl('dmg');
+    hero.fireRate *= 1 + 0.08 * lvl('rate');
+    hero.speed *= 1 + 0.05 * lvl('speed');
+    hero.cdMul = 1 - 0.05 * lvl('cd');
+    S.tokens = lvl('token');
+    const req = CH().coils;
+    coils.forEach((c) => { c.locked = !req.includes(c.i); });
     const c = iso(hero.x, hero.y); cam.x = c.x; cam.y = c.y;
   }
 
   const activeCount = () => coils.reduce((n, c) => n + (c.active ? 1 : 0), 0);
+  const reqCount = () => CH().coils.length;
+  function beat(key) {
+    if (!S || S.beats.has(key)) return;
+    S.beats.add(key);
+    const [who, text] = BEATS[key];
+    S.comms = { who, text, t: 4.5 };
+  }
 
   // ---------- Collision ----------
   function pushBox(o, cx, cy, half, r) {
@@ -249,14 +375,15 @@
     burst(e.x, e.y, e.zc, e.type === 'warden' ? '#6f8cff' : '#ff8a2a', e.type === 'boss' ? 80 : 14, e.type === 'boss' ? 5 : 2.2);
     if (e.type === 'boss') {
       S.boss = null; S.shake = 1.2; sfx('boom');
-      setTimeout(() => endGame(true), 1400);
-      S.phase = 'won';
+      if (CH().endless) { S.nextBossT = 120; S.sparksRun += 40; toast('The Pyre falls again · +40 sparks', 2); }
+      else { setTimeout(() => endGame(true), 1400); S.phase = 'won'; }
     } else sfx('hit');
     if (S.killsTok >= 25) { S.killsTok -= 25; giveToken('25 takedowns'); }
   }
   function giveToken(why) {
     S.tokens++;
     toast(`✋ High-five token (${why}) — visit the Painter`);
+    beat('token');
   }
 
   // ---------- Hero ----------
@@ -267,6 +394,7 @@
     addText(hero.x, hero.y, 60, '-' + Math.round(amt), '#ff5a4a', 14);
     sfx('hurt');
     if (hero.hp <= 0) { hero.hp = 0; endGame(false); }
+    else if (hero.hp < hero.maxHp * 0.35) beat('lowhp');
   }
 
   // ---------- Abilities ----------
@@ -319,6 +447,7 @@
   ];
   function useAbility(i) {
     if (!running || S.paused || S.modal || S.over || cds[i] > 0 || hero.stun > 0) return;
+    if (abilityLocked(i)) { toast(`${ABIL[i].name} unlocks in a later chapter`, 1.4); return; }
     const fail = ABIL[i].cast();
     if (fail) { toast(fail, 1.2); return; }
     cds[i] = ABIL[i].cd * hero.cdMul;
@@ -452,7 +581,7 @@
 
     // coils
     for (const c of coils) {
-      if (!c.active) {
+      if (!c.active && !c.locked) {
         if (Math.hypot(hero.x - c.x, hero.y - c.y) < 1.0) {
           c.prog += dt / 2.2;
           if (c.prog >= 1) activateCoil(c);
@@ -462,10 +591,24 @@
     }
 
     // phase flow
-    if (S.phase === 'coils' && activeCount() === 6) {
-      S.phase = 'awaken'; S.awakenT = 3.2;
-      toast('All six coils live — the Core awakens…', 2.6);
-      S.shake = 0.6; sfx('boom');
+    if (S.phase === 'coils' && !CH().endless && activeCount() >= reqCount()) {
+      if (CH().boss) {
+        S.phase = 'awaken'; S.awakenT = 3.2;
+        toast('All six coils live — the Core awakens…', 2.6);
+        S.shake = 0.6; sfx('boom');
+      } else {
+        S.phase = 'won'; S.shake = 0.6; sfx('boom');
+        toast('Chapter complete', 1.6);
+        setTimeout(() => endGame(true), 1200);
+      }
+    } else if (CH().endless && !S.boss && S.phase !== 'won') {
+      S.nextBossT -= dt;
+      if (S.nextBossT <= 0) {
+        S.boss = spawnEnemy('boss', 18, 17);
+        S.boss.hp = S.boss.maxHp = 900 + S.t * 4;
+        burst(18, 17, 20, '#ff6a00', 60, 4, 4);
+        toast('THE PYRE RETURNS', 2); S.shake = 1; sfx('boom');
+      }
     } else if (S.phase === 'awaken') {
       S.awakenT -= dt;
       if (S.awakenT <= 0) {
@@ -479,14 +622,16 @@
     // spawning
     S.spawnT -= edt;
     if (S.spawnT <= 0 && (S.phase === 'coils' || S.phase === 'boss')) {
+      const ch = CH();
       const ac = activeCount();
       if (S.phase === 'coils') {
         if (enemies.length < 36) {
-          const wc = ac ? 0.16 + ac * 0.04 : 0;
-          edgeSpawn(Math.random() < wc ? 'warden' : 'ember');
+          const wc = ch.warden && ac ? ch.warden + ac * 0.03 : 0;
+          const e = edgeSpawn(Math.random() < wc ? 'warden' : 'ember');
+          if (e && e.type === 'warden') beat('warden');
           if (S.t > 60 && Math.random() < 0.3) edgeSpawn('ember');
         }
-        S.spawnT = Math.max(0.6, 2.4 - ac * 0.24 - S.t * 0.004);
+        S.spawnT = Math.max(0.6, 2.4 - ac * 0.24 - S.t * 0.004) / ch.rate;
       } else {
         if (enemies.length < 22) edgeSpawn(Math.random() < 0.25 ? 'warden' : 'ember');
         S.spawnT = 2.2;
@@ -511,7 +656,7 @@
             tc.drain += edt; tc.drained = true; e.draining = tc;
             if (tc.drain >= 3.2) {
               tc.active = false; tc.prog = 0; tc.drain = 0;
-              toast('A Warden shut down a coil!', 1.6); sfx('cuff');
+              toast('A Warden shut down a coil!', 1.6); sfx('cuff'); beat('drained');
               if (S.phase === 'awaken') S.phase = 'coils';
             }
           } else e.draining = null;
@@ -608,6 +753,8 @@
       }
     }
 
+    if (S.comms) { S.comms.t -= dt; if (S.comms.t <= 0) S.comms = null; }
+    if (S.boss && S.boss.hp < S.boss.maxHp / 2) beat('bosshalf');
     // effects
     for (const f of fx) { f.life -= dt; if (f.k === 'text') f.z += dt * 40; }
     fx = fx.filter((f) => f.life > 0);
@@ -623,12 +770,13 @@
     c.active = true; c.prog = 1; c.drain = 0;
     burst(c.x, c.y, 60, '#5ff4ff', 30, 3);
     S.shake = Math.max(S.shake, 0.3); sfx('coil');
-    const n = activeCount();
+    const n = activeCount(), m = reqCount();
     if (!c.ever) {
       c.ever = true;
-      S.tokens++;
-      toast(`Coil ${n}/6 online · +1 high-five token`);
-    } else toast(`Coil restored · ${n}/6`);
+      S.tokens++; S.sparksRun += 5;
+      toast(`Coil ${n}/${m} online · +1 high-five token`);
+      beat('coil');
+    } else toast(`Coil restored · ${n}/${m}`);
     const p = PYRS.find((p) => p.coils.includes(c.i));
     if (p.coils.every((i) => coils[i].active)) setTimeout(() => toast('A pyramid capstone ignites!', 1.6), 1300);
   }
@@ -721,7 +869,7 @@
   }
 
   function drawCoil(c) {
-    const p = iso(c.x, c.y), on = c.active, col = on ? '#5ff4ff' : '#c9974f';
+    const p = iso(c.x, c.y), on = c.active, col = on ? '#5ff4ff' : c.locked ? '#7a5a36' : '#c9974f';
     ctx.save(); ctx.translate(p.x, p.y);
     ellipse(0, 0, 24, 12, '#4a2c12', '#2a1606', 1.5);
     ctx.lineWidth = 2.5; ctx.strokeStyle = col;
@@ -742,7 +890,7 @@
       ctx.fillStyle = gl; ctx.fillRect(-32, -110, 64, 64);
       ctx.globalCompositeOperation = 'source-over';
       if (Math.random() < 0.25) parts.push({ x: c.x + rand(-0.2, 0.2), y: c.y + rand(-0.2, 0.2), z: 20, vx: 0, vy: 0, vz: 70, life: 0.7, max: 0.7, color: '#8ff6ff', size: 2 });
-    } else {
+    } else if (!c.locked) {
       // floating marker so the player knows where to go
       const b = Math.sin(S.t * 3 + c.i) * 4;
       polyFill([{ x: 0, y: -104 + b }, { x: 7, y: -94 + b }, { x: 0, y: -84 + b }, { x: -7, y: -94 + b }], '#39e6ff', '#0b4452', 1.5);
@@ -935,9 +1083,10 @@
     ctx.restore();
   }
 
-  function drawPainter() {
+  function drawPainter(portraitMode) {
     const p = iso(PAINTER.x, PAINTER.y), five = S.hfT > 0;
     // easel + canvas
+    if (!portraitMode) {
     const ep = iso(PAINTER.x + 0.9, PAINTER.y - 0.5);
     shadow(ep.x, ep.y, 12);
     limb(ep.x - 8, ep.y, ep.x, ep.y - 50, 2.5, '#6b4423');
@@ -948,6 +1097,7 @@
     ctx.fillStyle = cg; ctx.fillRect(ep.x - 12, ep.y - 44, 24, 18);
     polyFill([{ x: ep.x - 8, y: ep.y - 28 }, { x: ep.x - 2, y: ep.y - 40 }, { x: ep.x + 4, y: ep.y - 28 }], '#c7954f');
     ellipse(ep.x + 6, ep.y - 36, 4, 5, '#3f6e2a');
+    }
     shadow(p.x, p.y, 13);
     ctx.save(); ctx.translate(p.x, p.y); ctx.scale(-1, 1);
     limb(-3, -17, -3, -3, 6, '#3a2c22');
@@ -967,7 +1117,7 @@
     ellipse(hx, hy, 2.6, 2.6, '#d9ae88');
     limb(-7, -33, -10, -21, 5, '#43342a');
     ctx.restore();
-    if (S.tokens > 0) {
+    if (S.tokens > 0 && !portraitMode) {
       const b = Math.sin(S.t * 4) * 3;
       ellipse(p.x, p.y - 76 + b, 11, 11, '#ffc23d', '#6b4a0a', 2);
       ctx.fillStyle = '#3a2400'; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center'; ctx.fillText('✋', p.x, p.y - 71 + b);
@@ -1060,10 +1210,10 @@
 
   function drawIndicator() {
     let tgt = null;
-    if (S.phase === 'boss' && S.boss) tgt = { x: S.boss.x, y: S.boss.y, c: '#ff7a1a' };
+    if (S.boss) tgt = { x: S.boss.x, y: S.boss.y, c: '#ff7a1a' };
     else if (S.phase === 'coils') {
       let bd = 1e9;
-      for (const c of coils) if (!c.active) { const d = Math.hypot(c.x - hero.x, c.y - hero.y); if (d < bd) { bd = d; tgt = { x: c.x, y: c.y, c: '#39e6ff' }; } }
+      for (const c of coils) if (!c.active && !c.locked) { const d = Math.hypot(c.x - hero.x, c.y - hero.y); if (d < bd) { bd = d; tgt = { x: c.x, y: c.y, c: '#39e6ff' }; } }
     }
     if (S.tokens > 0 && !tgt) tgt = { x: PAINTER.x, y: PAINTER.y, c: '#ffc23d' };
     if (!tgt) return;
@@ -1137,7 +1287,6 @@
   function hud(dt) {
     $('hpFill').style.width = (hero.hp / hero.maxHp * 100) + '%';
     $('hpText').textContent = `${Math.ceil(hero.hp)} / ${hero.maxHp}`;
-    $('coilText').textContent = activeCount() + '/6';
     $('killText').textContent = S.kills;
     $('tokenText').textContent = S.tokens;
     $('tokenChip').classList.toggle('glow', S.tokens > 0);
@@ -1149,8 +1298,14 @@
     });
     actionBtn.classList.toggle('hidden', !(nearPainter() && S.tokens > 0 && !S.modal));
     const ob = $('objective');
-    const ac = activeCount();
-    ob.textContent = S.phase === 'coils' ? `Wake the coils (${ac}/6) — stand on a glowing pad`
+    const ac = activeCount(), m = reqCount();
+    $('coilText').textContent = ac + '/' + m;
+    abBtns.forEach((b, i) => b.classList.toggle('locked', abilityLocked(i)));
+    const cm = $('comms');
+    if (S.comms) { cm.classList.remove('hidden'); cm.querySelector('b').textContent = WHO[S.comms.who].name; cm.querySelector('b').style.color = WHO[S.comms.who].color; cm.querySelector('span').textContent = S.comms.text; }
+    else cm.classList.add('hidden');
+    ob.textContent = CH().endless ? (S.boss ? 'The Pyre has returned — burn it out' : `Survive · ${Math.floor(S.t)}s · ${ac}/6 coils live`)
+      : S.phase === 'coils' ? `Ch. ${chapter + 1}: wake the coils (${ac}/${m}) — stand on a glowing pad`
       : S.phase === 'awaken' ? 'The Core is charging…'
       : S.phase === 'boss' ? `Burn out the Pyre · live coils power the Core beam (${ac}/6)` : 'The grid is yours';
     $('bossbar').classList.toggle('hidden', !S.boss);
@@ -1161,17 +1316,24 @@
 
   // ---------- Flow ----------
   const show = (id, on) => $(id).classList.toggle('hidden', !on);
-  function startGame() {
+  function ensureAudio() {
     if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { actx = null; } }
     if (actx && actx.state === 'suspended') actx.resume();
+  }
+  const ALL_OVERLAYS = ['title', 'end', 'pause', 'upgrade', 'chapters', 'dialog'];
+  const IN_GAME = ['hud', 'abilities', 'objective', 'bossbar', 'actionBtn', 'moveHint', 'comms'];
+  function startChapter(i) {
+    ensureAudio();
+    chapter = i;
     newGame(); running = true;
-    ['title', 'end', 'pause', 'upgrade'].forEach((id) => show(id, false));
+    ALL_OVERLAYS.forEach((id) => show(id, false));
     ['hud', 'abilities', 'objective'].forEach((id) => show(id, true));
-    toast('Wake the six coils', 2);
+    S.modal = true;
+    dialog(CH().intro, () => { S.modal = false; toast(`Chapter ${i + 1} · ${CH().name}`, 2); });
   }
   function toTitle() {
     running = false; S = null;
-    ['end', 'pause', 'upgrade', 'hud', 'abilities', 'objective', 'bossbar', 'actionBtn', 'moveHint'].forEach((id) => show(id, false));
+    ALL_OVERLAYS.concat(IN_GAME).forEach((id) => show(id, false));
     show('title', true);
   }
   function togglePause(force) {
@@ -1182,22 +1344,119 @@
   function endGame(win) {
     if (S.over) return;
     S.over = true;
-    setTimeout(() => {
+    const ch = CH(), firstClear = win && !ch.endless && save.cleared <= chapter;
+    const earned = S.sparksRun + S.kills + (win ? ch.reward : 0);
+    save.sparks += earned;
+    if (firstClear) save.cleared = chapter + 1;
+    if (ch.endless) save.best = Math.max(save.best || 0, Math.floor(S.t));
+    persist();
+    const results = () => {
       running = false;
-      $('endTitle').textContent = win ? 'The grid is alive' : 'The grid went dark';
-      $('endSub').textContent = win
-        ? 'The Pyre is ash, the capstones burn blue, and somewhere the Painter is already sketching you in that hat.'
-        : 'The Wardens drag you off through the snow-grey dusk. The coils will wait for another try.';
-      const m = Math.floor(S.t / 60), s = Math.floor(S.t % 60);
-      $('endStats').innerHTML = `<div><b>${m}:${String(s).padStart(2, '0')}</b>time</div><div><b>${S.kills}</b>takedowns</div><div><b>${activeCount()}/6</b>coils</div>`;
-      ['hud', 'abilities', 'objective', 'bossbar', 'actionBtn'].forEach((id) => show(id, false));
+      $('endTitle').textContent = ch.endless ? 'The current fades' : win ? `${ch.name}: cleared` : 'The grid went dark';
+      $('endSub').textContent = ch.endless ? `You held the plateau for ${Math.floor(S.t)} seconds. Best: ${save.best}s.`
+        : win ? (chapter === 3 ? 'The Pyre is ash and the capstones burn blue. Endless Current is now open.'
+          : firstClear ? `Chapter ${chapter + 2} is now open.` : 'Chapter replayed.')
+        : 'The Wardens drag you off through the dusk. Spend your sparks in the Workshop and try again.';
+      const m = Math.floor(S.t / 60), sec = Math.floor(S.t % 60);
+      $('endStats').innerHTML = `<div><b>${m}:${String(sec).padStart(2, '0')}</b>time</div><div><b>${S.kills}</b>takedowns</div><div><b>+${earned}</b>sparks</div>`;
+      $('againBtn').textContent = win && !ch.endless && chapter < 4 ? 'Next chapter' : 'Try again';
+      IN_GAME.forEach((id) => show(id, false));
       show('end', true);
-    }, win ? 0 : 900);
+    };
+    if (win && ch.outro.length) setTimeout(() => { S.modal = true; dialog(ch.outro, results); }, 200);
+    else setTimeout(results, win ? 0 : 900);
   }
-  $('playBtn').onclick = startGame;
-  $('againBtn').onclick = startGame;
-  $('quitBtn').onclick = toTitle;
-  $('endQuitBtn').onclick = toTitle;
+
+  // ---------- Story dialog ----------
+  const pcv = $('portrait'), pctx = pcv.getContext('2d');
+  function drawPortrait(who) {
+    const d = 2;
+    pcv.width = 96 * d; pcv.height = 96 * d;
+    const saved = ctx; ctx = pctx;
+    pctx.setTransform(d, 0, 0, d, 0, 0);
+    const g = pctx.createRadialGradient(48, 40, 4, 48, 48, 70);
+    g.addColorStop(0, WHO[who].color + '55'); g.addColorStop(1, '#120c06');
+    pctx.fillStyle = g; pctx.fillRect(0, 0, 96, 96);
+    pctx.translate(48, 158); pctx.scale(2.3, 2.3);
+    const t = S ? S.t : 0;
+    if (who === 'W') {
+      const h = hero; hero = Object.assign({}, h, { x: 0, y: 0, face: 1, moving: false, inv: 0, stun: 0, surgeT: 0 });
+      drawHero(); hero = h;
+    } else if (who === 'P') {
+      const p = iso(PAINTER.x, PAINTER.y); pctx.translate(-p.x, -p.y); drawPainter(true);
+    } else if (who === 'C') {
+      drawWarden({ x: 0, y: 0, walk: 0, face: 1, flash: 0, rise: 0, draining: null });
+    } else {
+      pctx.translate(0, -8); pctx.scale(0.7, 0.7);
+      drawEmber({ x: 0, y: 0, id: 3, walk: 0, face: -1, rise: 0, flash: 0 }, 1.2);
+    }
+    ctx = saved;
+    void t;
+  }
+  let dlg = null;
+  function dialog(lines, done) {
+    if (!lines.length) { done(); return; }
+    dlg = { lines, i: 0, done };
+    show('dialog', true);
+    showLine();
+  }
+  function showLine() {
+    const [who, text] = dlg.lines[dlg.i];
+    $('dlgName').textContent = WHO[who].name;
+    $('dlgName').style.color = WHO[who].color;
+    $('dlgText').textContent = text;
+    $('dlgStep').textContent = `${dlg.i + 1} / ${dlg.lines.length}`;
+    drawPortrait(who);
+  }
+  function advance(skip) {
+    if (!dlg) return;
+    dlg.i++;
+    if (skip || dlg.i >= dlg.lines.length) {
+      const done = dlg.done; dlg = null; show('dialog', false); done();
+    } else showLine();
+  }
+  $('dialog').addEventListener('click', (e) => { if (e.target.id !== 'dlgSkip') advance(false); });
+  $('dlgSkip').addEventListener('click', () => advance(true));
+
+  // ---------- Chapter select + Workshop ----------
+  function openChapters() {
+    ensureAudio();
+    ALL_OVERLAYS.forEach((id) => show(id, false));
+    IN_GAME.forEach((id) => show(id, false));
+    running = false; S = null;
+    $('sparkText').textContent = save.sparks;
+    const list = $('chapterList'); list.innerHTML = '';
+    CHAPTERS.forEach((ch, i) => {
+      const open = i <= save.cleared, done = i < save.cleared && !ch.endless;
+      const b = document.createElement('button');
+      b.className = 'chap' + (open ? '' : ' shut') + (done ? ' done' : '');
+      b.disabled = !open;
+      const tag = ch.endless ? (save.best ? `Best ${save.best}s` : 'Survival') : done ? 'Cleared' : open ? `+${ch.reward} sparks` : 'Locked';
+      b.innerHTML = `<i>${ch.endless ? '∞' : i + 1}</i><span><b>${ch.name}</b><small>${open ? ch.blurb : 'Clear the previous chapter to open this one.'}</small></span><em>${tag}</em>`;
+      b.onclick = () => startChapter(i);
+      list.appendChild(b);
+    });
+    const shop = $('shopList'); shop.innerHTML = '';
+    WORKSHOP.forEach((u) => {
+      const l = lvl(u.id), maxed = l >= u.max, cost = upCost(l);
+      const b = document.createElement('button');
+      b.className = 'shop';
+      b.disabled = maxed || save.sparks < cost;
+      b.innerHTML = `<span><b>${u.name}</b><small>${u.d}</small></span><span class="pips">${'●'.repeat(l)}${'○'.repeat(u.max - l)}</span><em>${maxed ? 'Max' : '✦ ' + cost}</em>`;
+      b.onclick = () => { if (save.sparks < cost || maxed) return; save.sparks -= cost; save.up[u.id] = l + 1; persist(); sfx('five'); openChapters(); };
+      shop.appendChild(b);
+    });
+    show('chapters', true);
+  }
+  $('playBtn').onclick = openChapters;
+  $('againBtn').onclick = () => {
+    const ch = CH();
+    const next = !ch.endless && chapter < 4 && save.cleared > chapter && $('againBtn').textContent === 'Next chapter';
+    startChapter(next ? chapter + 1 : chapter);
+  };
+  $('chapBackBtn').onclick = toTitle;
+  $('quitBtn').onclick = openChapters;
+  $('endQuitBtn').onclick = openChapters;
   $('resumeBtn').onclick = () => togglePause(false);
   $('pauseBtn').onclick = () => togglePause();
   $('muteBtn').onclick = () => { muted = !muted; $('muteBtn').textContent = muted ? '🔇' : '🔊'; };
@@ -1217,5 +1476,5 @@
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
   // test hook for automated checks
-  window.__pc = { get S() { return S; }, get hero() { return hero; }, get coils() { return coils; }, get enemies() { return enemies; }, startGame, useAbility };
+  window.__pc = { get S() { return S; }, get hero() { return hero; }, get coils() { return coils; }, get enemies() { return enemies; }, get save() { return save; }, startChapter, openChapters, useAbility, advance };
 })();

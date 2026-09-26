@@ -34,6 +34,7 @@
 <div id="objective" class="hidden"></div>
 <div id="bossbar" class="hidden"><span>THE PYRE COLOSSUS</span><div><i id="bossFill"></i></div></div>
 <div id="toast"></div>
+<div id="comms" class="hidden"><b></b><span></span></div>
 
 <!-- Floating joystick -->
 <div id="joy"><div id="knob"></div></div>
@@ -77,7 +78,7 @@
     <p class="kicker">A 2.5D desert-grid action game</p>
     <h1>Pyramid<br><span>Current</span></h1>
     <p class="story">The pyramids were never tombs. They were power plants. Beneath the sand, six copper coils still wait to feed the Core. Put on the fur hat, wake the grid, and burn out the Pyre before the Wardens lock it all down.</p>
-    <button class="big" id="playBtn">Play</button>
+    <button class="big" id="playBtn">Play campaign</button>
     <ul class="howto">
       <li><b>Move</b> — drag anywhere (or WASD). You fire automatically.</li>
       <li><b>Wake coils</b> — stand on a coil pad until it lights.</li>
@@ -85,6 +86,33 @@
       <li><b>The Tree</b> heals you. <b>The Painter</b> trades high-fives for upgrades.</li>
       <li><b>Abilities</b> — tap the bottom bar (keys 1–6).</li>
     </ul>
+  </div>
+</section>
+
+<!-- Chapter select + Workshop -->
+<section id="chapters" class="overlay hidden">
+  <div class="panel wide">
+    <div class="chap-head">
+      <h2>Campaign</h2>
+      <span class="sparks">✦ <b id="sparkText">0</b> sparks</span>
+    </div>
+    <div id="chapterList"></div>
+    <h3>Workshop</h3>
+    <p class="sub">Sparks come from takedowns, coils and cleared chapters. Upgrades are permanent.</p>
+    <div id="shopList"></div>
+    <button class="ghost" id="chapBackBtn">Back to title</button>
+  </div>
+</section>
+
+<!-- Story dialog -->
+<section id="dialog" class="hidden">
+  <div class="dlg">
+    <canvas id="portrait" width="192" height="192"></canvas>
+    <div class="dlg-body">
+      <b id="dlgName"></b>
+      <p id="dlgText"></p>
+      <div class="dlg-foot"><span id="dlgStep"></span><span>Tap to continue</span><button id="dlgSkip">Skip</button></div>
+    </div>
   </div>
 </section>
 
