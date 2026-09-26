@@ -47,7 +47,7 @@ Browsers only enable service workers (offline/install) and camera capture on **H
 | `LATTICE_RUNS` | `./runs` | Runs directory (`--runs`) |
 | `LATTICE_DRY_RUN` | unset | `1` forces a dry run (`--dry-run`) |
 | `LATTICE_EXEC` | unset | `1` allows real pipeline subprocesses. Without it, every job is a dry run. |
-| `LATTICE_TOKEN` | unset | Shared secret. When set, every endpoint except `OPTIONS` and `GET /health` requires `Authorization: Bearer <token>` |
+| `LATTICE_TOKEN` | unset | Shared secret. When set, every endpoint except `OPTIONS` and `GET /health` requires `Authorization: Bearer <token>`. `GET /runs/...` also accepts `?token=<token>` so `<video>`/`<img>` previews work |
 | `LATTICE_COSMOS_CMD` / `LATTICE_HY_CMD` | built-in | Command prefix overrides for the engine CLIs |
 | `LATTICE_COSMOS_MODULE` / `LATTICE_HY_MODULE` | `cosmos3` / `hyworld` | Python module names used to detect whether an engine is installed |
 
