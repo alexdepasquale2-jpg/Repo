@@ -1,0 +1,14 @@
+{
+  "name": "Pyramid Current",
+  "short_name": "Pyramid Current",
+  "description": "2.5D desert-grid action game: wake the pyramid coils, power the Core, burn out the Pyre.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#1a120a",
+  "theme_color": "#1a120a",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

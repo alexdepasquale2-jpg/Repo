@@ -36,6 +36,8 @@ jobs:
           python-version: "3.12"
       - name: node --check app.js / sw.js
         run: node --check lattice-ide/app.js && node --check lattice-ide/sw.js
+      - name: node --check pyramid-current game
+        run: node --check pyramid-current/game.js && node --check pyramid-current/sw.js && python3 -m json.tool pyramid-current/manifest.json > /dev/null
       - name: manifest.json is valid JSON
         run: python3 -m json.tool lattice-ide/manifest.json > /dev/null
       - name: icon.svg is well-formed XML

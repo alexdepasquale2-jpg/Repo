@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1a120a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pyramid Current</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- Top HUD -->
+<div id="hud" class="hidden">
+  <div class="hud-left">
+    <div class="hp"><div id="hpFill"></div><span id="hpText">100</span></div>
+    <div class="stats">
+      <span class="chip" id="coilChip">⚡ <b id="coilText">0/6</b></span>
+      <span class="chip">✦ <b id="killText">0</b></span>
+      <span class="chip token" id="tokenChip" title="High-five tokens">✋ <b id="tokenText">0</b></span>
+    </div>
+  </div>
+  <div class="hud-right">
+    <button class="icon-btn" id="muteBtn" aria-label="Toggle sound">🔊</button>
+    <button class="icon-btn" id="pauseBtn" aria-label="Pause">❚❚</button>
+  </div>
+</div>
+<div id="objective" class="hidden"></div>
+<div id="bossbar" class="hidden"><span>THE PYRE COLOSSUS</span><div><i id="bossFill"></i></div></div>
+<div id="toast"></div>
+
+<!-- Floating joystick -->
+<div id="joy"><div id="knob"></div></div>
+<div id="moveHint" class="hidden">Drag anywhere to move</div>
+
+<!-- Contextual action -->
+<button id="actionBtn" class="hidden">✋ High-five</button>
+
+<!-- Ability bar -->
+<div id="abilities" class="hidden">
+  <button class="ab" data-i="0" style="--c:#39e6ff">
+    <svg viewBox="0 0 32 32"><path d="M6 6h8v6h6V6h6M6 14h4v6h8v6M22 12v8h4M14 26h-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Logic<br>Cascade</span><i class="cd"></i><em></em>
+  </button>
+  <button class="ab" data-i="1" style="--c:#3dffb5">
+    <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 11c2-3 6-3 7 0 3-2 6 1 4 4 2 2 0 6-3 5-1 3-6 3-7 0-3 1-5-2-3-4-2-2-1-5 2-5zM16 11v10M12 16h8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    <span>Dopamine<br>Surge</span><i class="cd"></i><em></em>
+  </button>
+  <button class="ab" data-i="2" style="--c:#b36bff">
+    <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 21V9l7-2v11" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="21" r="2.6" fill="currentColor"/><circle cx="19" cy="18" r="2.6" fill="currentColor"/></svg>
+    <span>Echo<br>Verse</span><i class="cd"></i><em></em>
+  </button>
+  <button class="ab" data-i="3" style="--c:#ffc23d">
+    <svg viewBox="0 0 32 32"><path d="M16 5v22M10 27h12M6 11h20M6 11l-3 8h6zM26 11l-3 8h6zM16 5l-2 3h4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><path d="M3 19a3 2 0 0 0 6 0zM23 19a3 2 0 0 0 6 0z" fill="currentColor"/></svg>
+    <span>Network<br>Sanctum</span><i class="cd"></i><em></em>
+  </button>
+  <button class="ab" data-i="4" style="--c:#4da6ff">
+    <svg viewBox="0 0 32 32"><path d="M16 4l6 7h-3v4l5 5v7H8v-7l5-5v-4h-3z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="16" cy="20" r="2.5" fill="currentColor"/></svg>
+    <span>Atlas<br>Core Link</span><i class="cd"></i><em></em>
+  </button>
+  <button class="ab" data-i="5" style="--c:#5fffe0">
+    <svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="52 8"/><circle cx="16" cy="16" r="5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 3v6M16 23v6" stroke="currentColor" stroke-width="2"/></svg>
+    <span>Cognitive<br>Flow</span><i class="cd"></i><em></em>
+  </button>
+</div>
+
+<!-- Title -->
+<section id="title" class="overlay">
+  <div class="title-art"></div>
+  <div class="title-card">
+    <p class="kicker">A 2.5D desert-grid action game</p>
+    <h1>Pyramid<br><span>Current</span></h1>
+    <p class="story">The pyramids were never tombs. They were power plants. Beneath the sand, six copper coils still wait to feed the Core. Put on the fur hat, wake the grid, and burn out the Pyre before the Wardens lock it all down.</p>
+    <button class="big" id="playBtn">Play</button>
+    <ul class="howto">
+      <li><b>Move</b> — drag anywhere (or WASD). You fire automatically.</li>
+      <li><b>Wake coils</b> — stand on a coil pad until it lights.</li>
+      <li><b>Wardens</b> shut coils off. Keep them away.</li>
+      <li><b>The Tree</b> heals you. <b>The Painter</b> trades high-fives for upgrades.</li>
+      <li><b>Abilities</b> — tap the bottom bar (keys 1–6).</li>
+    </ul>
+  </div>
+</section>
+
+<!-- Upgrade picker -->
+<section id="upgrade" class="overlay hidden">
+  <div class="panel">
+    <h2>High five!</h2>
+    <p class="sub">The Painter slaps your hand and sketches something new into your kit. Pick one.</p>
+    <div id="cards"></div>
+  </div>
+</section>
+
+<!-- Pause -->
+<section id="pause" class="overlay hidden">
+  <div class="panel">
+    <h2>Paused</h2>
+    <button class="big" id="resumeBtn">Resume</button>
+    <button class="ghost" id="quitBtn">Back to title</button>
+  </div>
+</section>
+
+<!-- End -->
+<section id="end" class="overlay hidden">
+  <div class="panel">
+    <h2 id="endTitle">The grid went dark</h2>
+    <p class="sub" id="endSub"></p>
+    <div class="endstats" id="endStats"></div>
+    <button class="big" id="againBtn">Play again</button>
+    <button class="ghost" id="endQuitBtn">Back to title</button>
+  </div>
+</section>
+
+<script src="game.js"></script>
+</body>
+</html>
