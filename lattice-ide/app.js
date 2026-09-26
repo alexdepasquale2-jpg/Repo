@@ -37,6 +37,22 @@
   ];
   const EXPORT_TARGETS = [{ id: 'unity', name: 'Unity' }, { id: 'unreal', name: 'Unreal' }, { id: 'isaac', name: 'Isaac' }];
   const FORMATS = ['ply', 'spz', 'glb', 'usd'];
+  // Mirror of exporters.SUPPORTED (worker.py EXPORT_SUPPORTED).
+  const EXPORT_SUPPORTED = { unity: ['ply', 'spz', 'glb', 'usd'], unreal: ['ply', 'spz', 'glb', 'usd'], isaac: ['ply', 'glb', 'usd'] };
+  // HY-World 2.0 license does not apply in the EU-27, UK and South Korea (mirrors worker.py HY_EXCLUDED).
+  const EU27 = ['AT', 'BE', 'BG', 'HR', 'CY', 'CZ', 'DK', 'EE', 'FI', 'FR', 'DE', 'GR', 'HU', 'IE', 'IT', 'LV',
+    'LT', 'LU', 'MT', 'NL', 'PL', 'PT', 'RO', 'SK', 'SI', 'ES', 'SE'];
+  const HY_EXCLUDED = EU27.concat(['GB', 'KR']);
+  function normRegion(v) {
+    let r = String(v || '').trim().toUpperCase();
+    if (r === 'UK') r = 'GB';
+    if (r === 'EL') r = 'GR';
+    return /^[A-Z]{2}$/.test(r) ? r : '';
+  }
+  function formatReason(target, fmt) {
+    const sup = EXPORT_SUPPORTED[target];
+    return sup && !sup.includes(fmt) ? fmt + ' not supported for ' + target : null;
+  }
   const HY_STAGES = ['pano', 'WorldNav', 'WorldStereo', '3DGS / mesh'];
   const LICENSE_TERMS = {
     [LIC.cosmos]: [
@@ -115,7 +131,7 @@
   }
   function save(key, val) { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { toast('Storage unavailable'); } }
 
-  const DEFAULT_SETTINGS = { workerUrl: 'http://localhost:8787', workerToken: '', hfToken: '', target: 'rtx', pollMs: 1500 };
+  const DEFAULT_SETTINGS = { workerUrl: 'http://localhost:8787', workerToken: '', hfToken: '', territory: '', target: 'rtx', pollMs: 1500 };
   const state = {
     settings: Object.assign({}, DEFAULT_SETTINGS, load(KEYS.settings, {})),
     jobs: load(KEYS.jobs, []),
@@ -187,6 +203,8 @@
   async function refreshHealth() {
     try { state.health = await API.health(); state.healthErr = null; }
     catch (e) { state.health = null; state.healthErr = e.message; }
+    const sig = String(territoryReason('hyworld'));
+    if (sig !== state.terrSig) { state.terrSig = sig; ['hyworld', 'bridge'].forEach(e => { if ($('#panel-' + e + ' form')) renderForm(e); }); }
     renderHeaderHealth();
     if (state.tab === 'home') renderHealthCard();
     return state.health;
@@ -219,6 +237,14 @@
     return null;
   }
 
+  /* HY-World territory gate: null if OK, otherwise the license reason. */
+  function territoryReason(engine) {
+    if (engine !== 'hyworld' && engine !== 'bridge') return null;
+    const where = [normRegion(state.health && state.health.region), normRegion(state.settings.territory)];
+    const bad = where.find(r => r && HY_EXCLUDED.includes(r));
+    if (!bad && state.health && state.health.hy_territory_ok === false) return 'HY-World 2.0 license does not apply where this worker runs';
+    return bad ? 'HY-World 2.0 license does not apply in ' + bad + ' (EU-27, UK, South Korea excluded — License.txt)' : null;
+  }
   function licenseFor(engine) {
     if (engine === 'cosmos') return [LIC.cosmos];
     if (engine === 'hyworld') return [LIC.hy];
@@ -273,6 +299,8 @@
       outputs: { dir: './runs/' + id + '/', formats: outputFormats(engine, f) },
       license: { id: lic.join('+'), accepted: true, acceptedAt: acceptedAt, notices_required: true, terms: terms }
     };
+    const terr = normRegion(state.settings.territory);
+    if (terr) job.license.territory = terr;
     job.code = genCode(engine, job);
     return job;
   }
@@ -488,6 +516,8 @@
           <dt>hy-world</dt><dd>${esc(e('hyworld'))}</dd>
           <dt>gpu</dt><dd>${h.gpu ? esc(h.gpu.name) + ' · ' + esc(fmtBytes((h.gpu.memory_mb || 0) * 1048576)) : 'none detected'}</dd>
           <dt>queue</dt><dd>${esc(h.queue)}</dd>
+          <dt>region</dt><dd>${h.region ? esc(h.region) : 'unset'}</dd>
+          <dt>hy-world</dt><dd data-testid="health-hy-territory">${h.hy_territory_ok === false ? '<span class="err-text">license does not apply here</span>' : 'territory ok'}</dd>
           <dt>auth</dt><dd>${h.auth ? 'token required' + (state.settings.workerToken ? ' · set' : ' · <span class="warn-text">not set</span>') : 'open'}</dd>
         </dl>
         ${h.dry_run ? '<p class="note warn-text">Dry run: stages are walked and planned commands logged; no weights are loaded.</p>' : ''}`;
@@ -530,7 +560,7 @@
   function mergeStatus(s) {
     if (!s || !s.id) return;
     const rec = {};
-    ['id', 'status', 'progress', 'stage', 'engine', 'mode', 'model', 'created', 'updated', 'dry_run', 'error', 'log', 'artifacts'].forEach(k => { if (k in s) rec[k] = s[k]; });
+    ['id', 'status', 'progress', 'stage', 'engine', 'mode', 'model', 'created', 'updated', 'dry_run', 'error', 'log', 'artifacts', 'metrics'].forEach(k => { if (k in s) rec[k] = s[k]; });
     rec.draft = false;
     upsertJob(rec);
     onJobsChanged(s.id);
@@ -610,6 +640,7 @@
       $('#jobLogWrap', box).innerHTML = logHtml;
       const known = $('#jobArts', box).dataset.sig; const sig = JSON.stringify((j.artifacts || []).map(a => a.url));
       if (known !== sig) renderArtifacts($('#jobArts', box), j);
+      $('#jobMetrics', box).innerHTML = metricsHtml(j);
       $('#jobCancel', box).disabled = j.draft || TERMINAL.includes(j.status);
       const lg = $('#jobLog', box); lg.scrollTop = lg.scrollHeight;
       return;
@@ -617,10 +648,11 @@
     box.innerHTML = `
       <div id="jobHead">${head}</div>
       <div class="row">
-        <button class="btn danger grow" type="button" id="jobCancel" ${j.draft || TERMINAL.includes(j.status) ? 'disabled' : ''}>Cancel job</button>
+        <button class="btn danger grow" type="button" id="jobCancel" data-testid="job-cancel" ${j.draft || TERMINAL.includes(j.status) ? 'disabled' : ''}>Cancel job</button>
         <button class="btn grow" type="button" id="jobCopy">Copy job JSON</button>
-        ${j.draft ? '<button class="btn primary grow eng-cosmos" type="button" id="jobResend">Send to worker</button><button class="btn grow" type="button" id="jobDl">Download job.json</button>' : ''}
+        ${j.draft ? '<button class="btn primary grow eng-cosmos" type="button" id="jobResend" data-testid="draft-send">Send to worker</button><button class="btn grow" type="button" id="jobDl">Download job.json</button>' : ''}
       </div>
+      <div id="jobMetrics">${metricsHtml(j)}</div>
       <div id="jobArts"></div>
       <div id="jobLogWrap">${logHtml}</div>`;
     renderArtifacts($('#jobArts', box), j);
@@ -634,6 +666,33 @@
     const dl = $('#jobDl', box);
     if (dl) dl.addEventListener('click', () => download('job.json', jobFromRecord(findJob(id))));
   }
+  function fmtDur(s) {
+    s = Number(s); if (!isFinite(s)) return '—';
+    if (s < 60) return s.toFixed(s < 10 ? 1 : 0) + ' s';
+    const m = Math.floor(s / 60); return m < 60 ? m + 'm ' + Math.round(s % 60) + 's' : Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+  }
+  function metricsHtml(j) {
+    const m = j.metrics;
+    if (!m || typeof m !== 'object') return '';
+    const stages = Array.isArray(m.stages) ? m.stages : [];
+    let cost;
+    if (j.dry_run) cost = 'not billed (dry run)';
+    else if (m.cost_usd != null && isFinite(Number(m.cost_usd))) cost = '$' + Number(m.cost_usd).toFixed(Number(m.cost_usd) < 1 ? 4 : 2) + (m.gpu_usd_hr != null ? ' @ $' + esc(m.gpu_usd_hr) + '/GPU-h' : '');
+    else cost = 'no rate set (LATTICE_GPU_USD_HR)';
+    const gh = Number(m.gpu_hours);
+    return `<div class="field" data-testid="job-metrics"><span class="label">metrics</span>
+      <dl class="kv">
+        <dt>wall time</dt><dd>${esc(fmtDur(m.wall_s))}</dd>
+        <dt>gpu-hours</dt><dd>${isFinite(gh) ? esc(gh === 0 ? '0' : gh.toFixed(gh < 0.01 ? 5 : 3)) : '—'}</dd>
+        <dt>cost</dt><dd>${esc(cost)}</dd>
+      </dl>
+      ${stages.length ? `<div class="tbl-wrap"><table class="stages"><thead><tr><th scope="col">stage</th><th scope="col">wall</th><th scope="col">gpu</th><th scope="col">vram</th><th scope="col">exit</th></tr></thead><tbody>${stages.map(st => `<tr>
+        <td>${esc(st.stage)}</td><td>${esc(st.wall_s == null ? '—' : fmtDur(st.wall_s))}</td>
+        <td>${esc(st.gpu_name ? st.gpu_name + (st.gpu_count > 1 ? ' ×' + st.gpu_count : '') : '—')}</td>
+        <td>${esc(st.peak_vram_mb == null ? '—' : fmtBytes(st.peak_vram_mb * 1048576))}</td>
+        <td class="${st.exit_code ? 'err-text' : ''}">${esc(st.exit_code == null ? '—' : st.exit_code)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    </div>`;
+  }
   function renderArtifacts(el, j) {
     const arts = Array.isArray(j.artifacts) ? j.artifacts : [];
     el.dataset.sig = JSON.stringify(arts.map(a => a.url));
@@ -641,6 +700,14 @@
     el.innerHTML = '<div class="field"><span class="label">artifacts</span></div>' + arts.map((a, i) => {
       const url = artifactViewUrl(a); const ext = String(a.name || '').split('.').pop().toLowerCase();
       let body = '';
+      if (a.kind === 'bundle') {
+        const tgt = String(a.name || '').replace(/-bundle\.zip$/i, '');
+        return `<div class="artifact bundle" data-testid="bundle-card">
+        <div class="card-head"><span class="a-name">${esc(a.name)}</span><span class="pill">bundle · ${esc(fmtBytes(a.bytes))}</span></div>
+        <p class="note">Engine-ready zip${EXPORT_SUPPORTED[tgt] ? ' for ' + esc(tgt) : ''}: scene file(s), import script / README with the manual steps, manifest.json, and the NOTICE / License text that must travel with HY-World outputs.${j.dry_run ? ' <span class="warn-text">Dry run: contains a placeholder scene, not a real one.</span>' : ''}</p>
+        <div class="row"><a class="btn small primary" href="${esc(url)}" download="${esc(a.name)}" data-testid="bundle-download">Download bundle</a></div>
+      </div>`;
+      }
       if (a.kind === 'video') body = `<video controls playsinline preload="metadata" src="${esc(url)}"></video>`;
       else if (a.kind === 'image') body = `<img src="${esc(url)}" alt="${esc(a.name)}" loading="lazy">`;
       else if (a.kind === 'json' || a.kind === 'text') body = `<button class="btn small" type="button" data-fetch="${i}">Show contents</button><pre class="code plain" hidden></pre>`;
@@ -679,6 +746,8 @@
   async function resendDraft(id) {
     const r = findJob(id); if (!r) return;
     if (!licensesAccepted(r.engine)) { openLicenseSheet(r.engine); return; }
+    const terr = territoryReason(r.engine);
+    if (terr) { toast(terr); return; }
     try {
       const res = await API.submit(jobFromRecord(r));
       upsertJob({ id: r.id, status: res.status || 'queued', draft: false, progress: 0 });
@@ -689,8 +758,12 @@
   /* ================================================================
    * 8. Forms (Cosmos / HY-World / Bridge)
    * ================================================================ */
-  function segHtml(name, items, cur, label) {
-    return `<div class="seg" role="radiogroup" aria-label="${esc(label)}">${items.map(i => `<button type="button" role="radio" aria-checked="${i.id === cur}" data-${name}="${esc(i.id)}">${esc(i.name)}</button>`).join('')}</div>`;
+  function segHtml(name, items, cur, label, reasonFn) {
+    return `<div class="seg" role="radiogroup" aria-label="${esc(label)}">${items.map(i => { const why = reasonFn ? reasonFn(i.id) : null; return `<button type="button" role="radio" aria-checked="${i.id === cur}" data-${name}="${esc(i.id)}"${why ? ' disabled aria-disabled="true" title="' + esc(why) + '"' : ''}>${esc(i.name)}</button>`; }).join('')}</div>`;
+  }
+  function formatSegHtml(p) {
+    return `<div class="field"><span class="label">format</span>${segHtml('format', FORMATS.map(x => ({ id: x, name: x })), p.format, 'Format', (x) => formatReason(p.export_target, x))}
+      ${EXPORT_SUPPORTED[p.export_target] && EXPORT_SUPPORTED[p.export_target].length < FORMATS.length ? '<p class="note">' + esc(p.export_target) + ' supports ' + esc(EXPORT_SUPPORTED[p.export_target].join(', ')) + '.</p>' : ''}</div>`;
   }
   function optHtml(attr, o, checked, reason) {
     return `<button type="button" class="opt" role="radio" aria-checked="${checked}" ${reason ? 'aria-disabled="true"' : ''} data-${attr}="${esc(o.id)}" title="${esc(reason || '')}">
@@ -711,15 +784,16 @@
     return `<div class="field"><label for="f-${name}">${esc(label)}</label><select id="f-${name}" ${isParam === false ? 'data-field' : 'data-param'}="${name}">${opts.map(o => `<option value="${esc(o.id || o)}" ${String(o.id || o) === String(v) ? 'selected' : ''}>${esc(o.name || o)}</option>`).join('')}</select></div>`;
   }
   function ingestHtml(engine) {
+    const tid = (k) => 'data-testid="media-' + k + '"';
     return `<div class="field"><span class="label">media ingest</span>
       <div class="ingest">
         <button class="btn" type="button" data-pick="cam">Camera</button>
         <button class="btn" type="button" data-pick="vid">Video</button>
         <button class="btn" type="button" data-pick="lib">Library</button>
       </div>
-      <input type="file" accept="image/*" capture="environment" data-in="cam" hidden aria-label="Take photo">
-      <input type="file" accept="video/*" capture="environment" data-in="vid" hidden aria-label="Record video">
-      <input type="file" accept="image/*,video/*" multiple data-in="lib" hidden aria-label="Choose from library">
+      <input type="file" accept="image/*" capture="environment" data-in="cam" ${tid('camera')} hidden aria-label="Take photo">
+      <input type="file" accept="video/*" capture="environment" data-in="vid" ${tid('video')} hidden aria-label="Record video">
+      <input type="file" accept="image/*,video/*" multiple data-in="lib" ${tid('library')} hidden aria-label="Choose from library">
       <div class="thumbs" id="${engine}-thumbs"></div>
       <p class="note">Files ≤ 24 MB are uploaded inline; larger ones are sent as metadata only.</p></div>`;
   }
@@ -738,9 +812,11 @@
   function submitHtml(engine) {
     const lic = licenseFor(engine);
     const ok = licensesAccepted(engine);
+    const terr = territoryReason(engine);
     return `<div class="card">
       <p class="note">${ok ? 'License accepted: ' + esc(lic.join(' + ')) + '.' : '<span class="warn-text">License not accepted yet: ' + esc(lic.filter(k => !state.license[k]).join(' + ')) + '. Submitting opens the license gate.</span>'}</p>
-      <button class="btn primary block" type="submit" data-submit>Submit to worker</button>
+      <button class="btn primary block" type="submit" data-submit data-testid="${engine}-submit" ${terr ? 'disabled aria-describedby="' + engine + '-terr"' : ''}>Submit to worker</button>
+      ${terr ? '<p class="note err-text" id="' + engine + '-terr" data-testid="territory-reason">' + esc(terr) + '. Change your country in More → Settings, or use a worker outside these territories.</p>' : ''}
       <p class="note" data-submit-msg role="status"></p></div>`;
   }
 
@@ -797,7 +873,7 @@
           <div class="field"><label for="f-prompt-h">prompt / scene description</label><textarea id="f-prompt-h" data-field="prompt" rows="3" placeholder="Sunlit machine shop, concrete floor, workbench along the wall">${esc(f.prompt)}</textarea></div>
           ${modeFields}
           ${f.mode === 'pano' ? '' : `<div class="field"><span class="label">export target</span>${segHtml('export', EXPORT_TARGETS, p.export_target, 'Export target')}</div>
-          <div class="field"><span class="label">format</span>${segHtml('format', FORMATS.map(x => ({ id: x, name: x })), p.format, 'Format')}</div>`}
+          ${formatSegHtml(p)}`}
           ${ingestHtml('hyworld')}
         </div>
         ${codeHtml('hyworld')}
@@ -819,7 +895,7 @@
           <div class="field"><label for="f-prompt-b">prompt</label><textarea id="f-prompt-b" data-field="prompt" rows="3" placeholder="Camera walks through a cluttered loading dock at dusk">${esc(f.prompt)}</textarea></div>
           <div class="grid2">${num('frames', 'rollout frames', p.frames, 'min="8" max="2048"')}${num('keyframe_stride', 'keyframe stride', p.keyframe_stride, 'min="1" max="256"')}</div>
           <div class="field"><span class="label">HY export target</span>${segHtml('export', EXPORT_TARGETS, p.export_target, 'Export target')}</div>
-          <div class="field"><span class="label">format</span>${segHtml('format', FORMATS.map(x => ({ id: x, name: x })), p.format, 'Format')}</div>
+          ${formatSegHtml(p)}
           ${ingestHtml('bridge')}
         </div>
         ${codeHtml('bridge')}
@@ -878,8 +954,15 @@
         const why = feasibility(engine, f, b.dataset.target);
         if (why) { toast(why); return; }
         f.target = b.dataset.target; renderForm(engine);
-      } else if (b.dataset.export) { f.params.export_target = b.dataset.export; renderForm(engine); }
-      else if (b.dataset.format) { f.params.format = b.dataset.format; renderForm(engine); }
+      } else if (b.dataset.export) {
+        f.params.export_target = b.dataset.export;
+        if (formatReason(f.params.export_target, f.params.format)) { toast(formatReason(f.params.export_target, f.params.format) + ' → switched to ply'); f.params.format = 'ply'; }
+        renderForm(engine);
+      } else if (b.dataset.format) {
+        const why = formatReason(f.params.export_target, b.dataset.format);
+        if (why) { toast(why); return; }
+        f.params.format = b.dataset.format; renderForm(engine);
+      }
       else if (b.dataset.lang) { f.lang = b.dataset.lang; renderForm(engine); }
       else if ('copycode' in b.dataset) { copyText($('#' + engine + '-code').textContent, f.lang === 'python' ? 'Python' : 'CLI'); }
       else if (b.dataset.pick) { $('[data-in="' + b.dataset.pick + '"]', form).click(); }
@@ -929,6 +1012,8 @@
     const msg = $('[data-submit-msg]', form); const btn = $('[data-submit]', form);
     const why = feasibility(engine, f);
     if (why) { msg.textContent = why; msg.className = 'note err-text'; return; }
+    const terr = territoryReason(engine);
+    if (terr) { msg.textContent = terr; msg.className = 'note err-text'; return; }
     if (!licensesAccepted(engine)) { openLicenseSheet(engine); return; }
     if (engine === 'bridge' && !f.prompt.trim()) { msg.textContent = 'Bridge needs a prompt for the Cosmos rollout.'; msg.className = 'note err-text'; return; }
     btn.disabled = true; msg.className = 'note'; msg.textContent = 'Preparing job…';
@@ -957,7 +1042,7 @@
       if (e.status === 400) { msg.textContent = 'Worker rejected job: ' + e.message; msg.className = 'note err-text'; }
       else if (e.offline || !e.status) { offerDraft(record, job, e.message); msg.textContent = 'Worker offline.'; msg.className = 'note warn-text'; }
       else { msg.textContent = 'Submit failed: ' + e.message; msg.className = 'note err-text'; }
-    } finally { btn.disabled = false; }
+    } finally { btn.disabled = !!territoryReason(engine); }
   }
   function offerDraft(record, job, reason) {
     openSheet('Worker offline', `
@@ -1060,8 +1145,8 @@
       <header><h1>More</h1></header>
       <details class="card sub" open id="moreJobsBox"><summary>Jobs (${state.jobs.length})</summary>
         <div class="row">
-          <button class="btn small" type="button" id="jobsExport">Export lattice-jobs.json</button>
-          <button class="btn small" type="button" id="jobsImport">Import</button>
+          <button class="btn small" type="button" id="jobsExport" data-testid="jobs-export">Export lattice-jobs.json</button>
+          <button class="btn small" type="button" id="jobsImport" data-testid="jobs-import">Import</button>
           <button class="btn small danger" type="button" id="jobsClear">Clear</button>
           <input type="file" accept="application/json,.json" id="jobsImportIn" hidden aria-label="Import jobs file">
         </div>
@@ -1077,6 +1162,8 @@
           <div class="field"><label for="s-wt">worker token (LATTICE_TOKEN)</label><input type="password" id="s-wt" value="${esc(s.workerToken)}" autocomplete="off"></div>
           <div class="field"><label for="s-hf">Hugging Face token</label><input type="password" id="s-hf" value="${esc(s.hfToken)}" autocomplete="off" aria-describedby="s-hf-note">
             <p class="note" id="s-hf-note">Sent only as X-HF-Token header, never stored in jobs/exports/code.</p></div>
+          <div class="field"><label for="s-territory">Your country (ISO code)</label><input type="text" id="s-territory" value="${esc(s.territory || '')}" maxlength="2" autocomplete="country" autocapitalize="characters" spellcheck="false" placeholder="e.g. US" aria-describedby="s-terr-note">
+            <p class="note" id="s-terr-note">Optional. Sent as job.license.territory; HY-World 2.0's license does not apply in the EU-27, UK or South Korea.</p></div>
           <div class="grid2">
             <div class="field"><label for="s-poll">poll interval (ms)</label><input type="number" id="s-poll" min="500" max="60000" step="100" value="${esc(s.pollMs)}"></div>
             ${sel('s-target', 'default target', s.target, TARGETS, false).replace('data-field="s-target"', '')}
@@ -1114,6 +1201,8 @@
       state.settings.workerUrl = url;
       state.settings.workerToken = $('#s-wt').value.trim();
       state.settings.hfToken = $('#s-hf').value.trim();
+      state.settings.territory = normRegion($('#s-territory').value);
+      $('#s-territory').value = state.settings.territory;
       state.settings.pollMs = Math.min(60000, Math.max(500, Number($('#s-poll').value) || 1500));
       state.settings.target = $('#f-s-target').value;
       saveSettings();
@@ -1121,7 +1210,7 @@
     $('#s-url').addEventListener('input', (e) => { $('#s-mixed').hidden = !(location.protocol === 'https:' && /^http:/i.test(e.target.value.trim())); });
     $('#settingsForm').addEventListener('submit', (e) => {
       e.preventDefault(); readSettings(); toast('Settings saved'); refreshHealth();
-      ['cosmos', 'hyworld', 'bridge'].forEach(updateCode);
+      ['cosmos', 'hyworld', 'bridge'].forEach(renderForm);
     });
     $('#sTest').addEventListener('click', async () => {
       readSettings(); const m = $('#sMsg'); m.className = 'note'; m.textContent = 'Testing ' + baseUrl() + '…';
@@ -1134,7 +1223,7 @@
         }
         syncRemoteJobs();
       } else { m.className = 'note err-text'; m.textContent = 'Failed: ' + (state.healthErr || 'unknown'); }
-      ['cosmos', 'hyworld', 'bridge'].forEach(updateCode);
+      ['cosmos', 'hyworld', 'bridge'].forEach(renderForm);
     });
   }
 

@@ -325,3 +325,15 @@ details.sub > summary::-webkit-details-marker { display: none; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Wave 3: metrics, disabled seg options, bundle card */
+.seg button:disabled { opacity: .4; cursor: not-allowed; text-decoration: line-through; }
+.tbl-wrap { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: var(--radius-s); }
+table.stages { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+table.stages th, table.stages td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.stages th { color: var(--text-3); font-weight: 500; background: var(--bg-2); }
+table.stages tr:last-child td { border-bottom: 0; }
+.artifact.bundle { border-color: var(--hy); background: var(--hy-dim); }
+.artifact.bundle .note { margin: 0; }
+#jobMetrics:not(:empty), #jobArts { margin-top: 14px; }
+#jobMetrics .kv { margin-bottom: 10px; }
