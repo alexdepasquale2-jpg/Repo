@@ -1,0 +1,42 @@
+# Lattice worker packaging (stdlib only: no runtime dependencies).
+#
+# Ships the GPU-side worker, the export bundlers and the batch client. It does NOT
+# ship the PWA static files and it never ships or downloads model weights: engines
+# (Cosmos 3, HY-World 2.0) are installed and licensed separately by the operator.
+#
+#   pip install .            -> lattice-worker, lattice-batch on PATH
+#   lattice-worker --help
+#
+# `users` is listed for the optional multi-user helper module. If users.py is not
+# present, setuptools only warns ("file users.py (for module users) not found").
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lattice-worker"
+version = "1.0.0"
+description = "Lattice worker: control-surface backend that queues and runs world-model jobs (Cosmos 3, HY-World 2.0) on your own GPUs"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["cosmos", "hy-world", "world-model", "gpu", "worker"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: No Input/Output (Daemon)",
+]
+
+[project.scripts]
+lattice-worker = "worker:main"
+lattice-batch = "batch:run"
+
+[tool.setuptools]
+# Explicit, glob-free list: no auto-discovery (keeps tests/ and examples/ out of the wheel).
+py-modules = ["worker", "batch", "users"]
+packages = ["exporters"]
+include-package-data = false
