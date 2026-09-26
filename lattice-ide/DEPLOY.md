@@ -43,13 +43,32 @@ Before the first HY-World or Cosmos job, the customer (not us on their behalf) m
 The PWA also records acceptance per job (`license.accepted`, `acceptedAt`). Keep those job
 records (`runs/<id>/job.json`) as the audit trail.
 
+Each job's license acceptance (license id, `acceptedAt`, territory, user, IP) is appended to
+`runs/_audit/audit.jsonl`. Keep it with `job.json` as the audit trail, include it in backups, and
+export it with `GET /audit.csv` (admin).
+
 ## 3. Host setup
 
 - GPU VM in the customer account (see the cost brief for sizing; Super 64B = datacenter only,
   HY-World = RTX-class or datacenter).
 - Python 3.10+, NVIDIA driver + `nvidia-smi`, optional `ffmpeg`. The worker itself is stdlib only.
-- Install the engines the customer licensed, then copy the `lattice-ide/` directory to
-  `/opt/lattice` and create a service user: `useradd -r -m -d /var/lib/lattice lattice`.
+- Install the engines the customer licensed. Then either:
+  - **systemd host:** `sudo sh install.sh --dry-run` to review, then `sudo sh install.sh`. It installs to
+    `/opt/lattice`, creates the `lattice` user, `/etc/lattice/worker.env` (root-owned, 0600, random token) and
+    the hardened `lattice-worker.service`. It never starts the service or downloads engines or weights.
+  - **Docker Compose:** `cd deploy && cp worker.env.example worker.env`, edit it, then
+    `LATTICE_DOMAIN=<host> docker compose up -d --build`. Caddy serves the app at `https://<host>/` and the
+    worker at `https://<host>/api`; set the app's worker URL to `https://<host>/api`.
+- `deploy/Caddyfile` is the reference HTTPS setup for both paths.
+
+### Teams: per-user tokens
+
+For more than one person, set `LATTICE_USERS=/etc/lattice/users.json` instead of `LATTICE_TOKEN`
+(mode 0600, owned by `lattice`). Manage users with
+`sudo -u lattice LATTICE_USERS=/etc/lattice/users.json LATTICE_RUNS=/var/lib/lattice/runs python3 /opt/lattice/worker.py users add <name> --role operator`.
+Passing the runs dir makes user changes appear in the audit log. Behind Caddy or nginx, set
+`LATTICE_TRUST_PROXY=1` so audit IPs come from `X-Forwarded-For`; only do this when port 8787 is not
+reachable directly.
 
 ### Environment file `/etc/lattice/worker.env` (mode 0600, owner lattice)
 
@@ -139,3 +158,6 @@ times max(1, gpu_count). This estimate ignores idle time and storage and is not 
 - Backups/retention: `LATTICE_RUNS` holds inputs and outputs. Agree retention with the customer.
   Delete HY-World outputs that would otherwise be viewed from excluded territories.
 - Rotate `LATTICE_TOKEN` by editing the env file and restarting. Clients re-enter it in Settings.
+- With `LATTICE_USERS`, rotate one person with `users rotate <name>` and offboard with `users remove <name>`;
+  both take effect without a restart.
+- `GET /report?since=<date>` (admin) gives per-user and per-engine cost estimates from metrics; it is not a bill.

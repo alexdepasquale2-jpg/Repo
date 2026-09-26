@@ -139,7 +139,8 @@
     health: null, healthErr: null,
     tab: 'home',
     sheetJob: null,
-    pollers: {}
+    pollers: {},
+    roleSig: 'null'
   };
   if (!Array.isArray(state.jobs)) state.jobs = [];
 
@@ -189,7 +190,10 @@
     return data;
   }
   const API = {
-    health: () => api('/health', { headers: {}, timeout: 5000 }),
+    // Health carries the worker token (when set) so a multi-user worker can say who we are.
+    health: () => api('/health', { headers: authHeaders(), timeout: 5000 }),
+    audit: (n) => api('/audit?limit=' + (n || 200)),
+    report: (since) => api('/report' + (since ? '?since=' + encodeURIComponent(since) : '')),
     list: (n) => api('/jobs?limit=' + (n || 8)),
     get: (id) => api('/jobs/' + encodeURIComponent(id)),
     cancel: (id) => api('/jobs/' + encodeURIComponent(id) + '/cancel', { method: 'POST' }),
@@ -204,10 +208,42 @@
     try { state.health = await API.health(); state.healthErr = null; }
     catch (e) { state.health = null; state.healthErr = e.message; }
     const sig = String(territoryReason('hyworld'));
-    if (sig !== state.terrSig) { state.terrSig = sig; ['hyworld', 'bridge'].forEach(e => { if ($('#panel-' + e + ' form')) renderForm(e); }); }
+    const rsig = String(roleReason());
+    const redo = [];
+    if (sig !== state.terrSig) { state.terrSig = sig; redo.push('hyworld', 'bridge'); }
+    if (rsig !== state.roleSig) { state.roleSig = rsig; redo.push('cosmos', 'hyworld', 'bridge'); }
+    Array.from(new Set(redo)).forEach(e => { if ($('#panel-' + e + ' form')) renderForm(e); });
     renderHeaderHealth();
     if (state.tab === 'home') renderHealthCard();
+    if (state.tab === 'more') renderAdmin();
+    if (state.sheetJob) renderJobDetail(state.sheetJob, true);
     return state.health;
+  }
+
+  /* Multi-user workers (LATTICE_USERS): /health says who we are ("you": {name, role}). */
+  function you() { return state.health && state.health.auth_mode === 'users' ? state.health.you || null : null; }
+  /* null if this client may submit jobs, otherwise the reason (viewer role / not signed in). */
+  function roleReason() {
+    const h = state.health;
+    if (!h || h.auth_mode !== 'users') return null;
+    if (!h.you) return 'Not signed in: this worker uses per-user tokens. Set your worker token in More → Settings';
+    if (h.you.role === 'viewer') return 'Your role is viewer (read-only). Ask a workspace admin for operator access to submit jobs';
+    return null;
+  }
+  function cancelReason(j) {
+    const h = state.health;
+    if (!h || h.auth_mode !== 'users' || !j) return null;
+    if (!h.you) return 'Not signed in';
+    if (h.you.role === 'viewer') return 'Viewers cannot cancel jobs';
+    if (h.you.role === 'operator' && j.submitted_by !== h.you.name) return 'Operators can only cancel their own jobs';
+    return null;
+  }
+  /* Audit & costs is for admins; a single-token or open worker grants its caller full access. */
+  function isAdmin() {
+    const h = state.health;
+    if (!h || !h.auth_mode) return false;
+    if (h.auth_mode === 'users') return !!(h.you && h.you.role === 'admin');
+    return h.auth_mode === 'open' || !!state.settings.workerToken;
   }
 
   /* ================================================================
@@ -518,7 +554,10 @@
           <dt>queue</dt><dd>${esc(h.queue)}</dd>
           <dt>region</dt><dd>${h.region ? esc(h.region) : 'unset'}</dd>
           <dt>hy-world</dt><dd data-testid="health-hy-territory">${h.hy_territory_ok === false ? '<span class="err-text">license does not apply here</span>' : 'territory ok'}</dd>
-          <dt>auth</dt><dd>${h.auth ? 'token required' + (state.settings.workerToken ? ' · set' : ' · <span class="warn-text">not set</span>') : 'open'}</dd>
+          <dt>auth</dt><dd>${h.auth_mode === 'users' ? 'per-user tokens' : h.auth ? 'token required' + (state.settings.workerToken ? ' · set' : ' · <span class="warn-text">not set</span>') : 'open'}</dd>
+          ${h.auth_mode === 'users' ? '<dt>you</dt><dd class="whoami" data-testid="whoami">' + (h.you
+            ? 'Signed in as <b>' + esc(h.you.name) + '</b> (' + esc(h.you.role) + ')'
+            : '<span class="warn-text">Not signed in — set your worker token in More → Settings</span>') + '</dd>' : ''}
         </dl>
         ${h.dry_run ? '<p class="note warn-text">Dry run: stages are walked and planned commands logged; no weights are loaded.</p>' : ''}`;
     }
@@ -560,7 +599,7 @@
   function mergeStatus(s) {
     if (!s || !s.id) return;
     const rec = {};
-    ['id', 'status', 'progress', 'stage', 'engine', 'mode', 'model', 'created', 'updated', 'dry_run', 'error', 'log', 'artifacts', 'metrics'].forEach(k => { if (k in s) rec[k] = s[k]; });
+    ['id', 'status', 'progress', 'stage', 'engine', 'mode', 'model', 'created', 'updated', 'dry_run', 'error', 'log', 'artifacts', 'metrics', 'submitted_by'].forEach(k => { if (k in s) rec[k] = s[k]; });
     rec.draft = false;
     upsertJob(rec);
     onJobsChanged(s.id);
@@ -629,6 +668,7 @@
           <dt>stage</dt><dd>${esc(j.stage || '—')} (${pct}%)</dd>
           <dt>model</dt><dd>${esc(j.model)}</dd>
           <dt>target</dt><dd>${esc(j.target || '—')}</dd>
+          ${j.submitted_by ? '<dt>by</dt><dd>' + esc(j.submitted_by) + '</dd>' : ''}
           <dt>created</dt><dd>${esc(j.created ? new Date(j.created).toLocaleString() : '—')}</dd>
           ${j.dry_run ? '<dt>mode</dt><dd class="warn-text">dry run</dd>' : ''}
           ${j.error ? '<dt>error</dt><dd class="err-text">' + esc(j.error) + '</dd>' : ''}
@@ -641,14 +681,15 @@
       const known = $('#jobArts', box).dataset.sig; const sig = JSON.stringify((j.artifacts || []).map(a => a.url));
       if (known !== sig) renderArtifacts($('#jobArts', box), j);
       $('#jobMetrics', box).innerHTML = metricsHtml(j);
-      $('#jobCancel', box).disabled = j.draft || TERMINAL.includes(j.status);
+      const cb = $('#jobCancel', box); const cr = cancelReason(j);
+      cb.disabled = j.draft || TERMINAL.includes(j.status) || !!cr; cb.title = cr || '';
       const lg = $('#jobLog', box); lg.scrollTop = lg.scrollHeight;
       return;
     }
     box.innerHTML = `
       <div id="jobHead">${head}</div>
       <div class="row">
-        <button class="btn danger grow" type="button" id="jobCancel" data-testid="job-cancel" ${j.draft || TERMINAL.includes(j.status) ? 'disabled' : ''}>Cancel job</button>
+        <button class="btn danger grow" type="button" id="jobCancel" data-testid="job-cancel" title="${esc(cancelReason(j) || '')}" ${j.draft || TERMINAL.includes(j.status) || cancelReason(j) ? 'disabled' : ''}>Cancel job</button>
         <button class="btn grow" type="button" id="jobCopy">Copy job JSON</button>
         ${j.draft ? '<button class="btn primary grow eng-cosmos" type="button" id="jobResend" data-testid="draft-send">Send to worker</button><button class="btn grow" type="button" id="jobDl">Download job.json</button>' : ''}
       </div>
@@ -748,6 +789,8 @@
     if (!licensesAccepted(r.engine)) { openLicenseSheet(r.engine); return; }
     const terr = territoryReason(r.engine);
     if (terr) { toast(terr); return; }
+    const rr = roleReason();
+    if (rr) { toast(rr); return; }
     try {
       const res = await API.submit(jobFromRecord(r));
       upsertJob({ id: r.id, status: res.status || 'queued', draft: false, progress: 0 });
@@ -813,10 +856,13 @@
     const lic = licenseFor(engine);
     const ok = licensesAccepted(engine);
     const terr = territoryReason(engine);
+    const role = roleReason();
+    const why = [terr ? engine + '-terr' : '', role ? engine + '-role' : ''].filter(Boolean).join(' ');
     return `<div class="card">
       <p class="note">${ok ? 'License accepted: ' + esc(lic.join(' + ')) + '.' : '<span class="warn-text">License not accepted yet: ' + esc(lic.filter(k => !state.license[k]).join(' + ')) + '. Submitting opens the license gate.</span>'}</p>
-      <button class="btn primary block" type="submit" data-submit data-testid="${engine}-submit" ${terr ? 'disabled aria-describedby="' + engine + '-terr"' : ''}>Submit to worker</button>
+      <button class="btn primary block" type="submit" data-submit data-testid="${engine}-submit" ${why ? 'disabled aria-describedby="' + why + '"' : ''}>Submit to worker</button>
       ${terr ? '<p class="note err-text" id="' + engine + '-terr" data-testid="territory-reason">' + esc(terr) + '. Change your country in More → Settings, or use a worker outside these territories.</p>' : ''}
+      ${role ? '<p class="note warn-text" id="' + engine + '-role" data-testid="role-reason">' + esc(role) + '.</p>' : ''}
       <p class="note" data-submit-msg role="status"></p></div>`;
   }
 
@@ -1014,6 +1060,8 @@
     if (why) { msg.textContent = why; msg.className = 'note err-text'; return; }
     const terr = territoryReason(engine);
     if (terr) { msg.textContent = terr; msg.className = 'note err-text'; return; }
+    const rr = roleReason();
+    if (rr) { msg.textContent = rr; msg.className = 'note err-text'; return; }
     if (!licensesAccepted(engine)) { openLicenseSheet(engine); return; }
     if (engine === 'bridge' && !f.prompt.trim()) { msg.textContent = 'Bridge needs a prompt for the Cosmos rollout.'; msg.className = 'note err-text'; return; }
     btn.disabled = true; msg.className = 'note'; msg.textContent = 'Preparing job…';
@@ -1039,10 +1087,10 @@
       toast('Job queued');
       refreshHealth();
     } catch (e) {
-      if (e.status === 400) { msg.textContent = 'Worker rejected job: ' + e.message; msg.className = 'note err-text'; }
+      if (e.status === 400 || e.status === 403) { msg.textContent = 'Worker rejected job: ' + e.message; msg.className = 'note err-text'; }
       else if (e.offline || !e.status) { offerDraft(record, job, e.message); msg.textContent = 'Worker offline.'; msg.className = 'note warn-text'; }
       else { msg.textContent = 'Submit failed: ' + e.message; msg.className = 'note err-text'; }
-    } finally { btn.disabled = !!territoryReason(engine); }
+    } finally { btn.disabled = !!territoryReason(engine) || !!roleReason(); }
   }
   function offerDraft(record, job, reason) {
     openSheet('Worker offline', `
@@ -1138,6 +1186,95 @@
       ].join('\n')
     };
   }
+  /* Audit & costs (admins): GET /audit, GET /report, GET /audit.csv. CSV is fetched with the
+   * Authorization header and saved as a blob: the worker never accepts ?token= outside /runs. */
+  function renderAdmin() {
+    const box = $('#moreAdmin'); if (!box) return;
+    const on = isAdmin();
+    if (box.dataset.on === String(on)) return;
+    box.dataset.on = String(on);
+    if (!on) { box.innerHTML = ''; return; }
+    const who = you();
+    box.innerHTML = `
+      <details class="card sub" id="moreAudit"><summary>Audit &amp; costs</summary>
+        <div class="panel">
+          <p class="note">${who ? 'Admin view for <b>' + esc(who.name) + '</b>. ' : 'This worker has no user list, so its token holder sees everything. '}Job submits and cancels, license acceptances, user changes and failed sign-ins from <span class="mono">runs/_audit/audit.jsonl</span>, plus GPU cost per user and engine from job metrics. Tokens are never logged.</p>
+          <div class="grid2">
+            <div class="field"><label for="a-since">costs since</label><input type="date" id="a-since"></div>
+            <div class="field"><label for="a-limit">audit rows</label><select id="a-limit"><option>50</option><option selected>200</option><option>1000</option></select></div>
+          </div>
+          <div class="row">
+            <button class="btn small primary eng-cosmos" type="button" id="auditLoad">Load</button>
+            <button class="btn small" type="button" id="auditCsv" data-testid="audit-csv">Download CSV</button>
+            <button class="btn small" type="button" id="auditCopy">Copy CSV</button>
+          </div>
+          <p class="note" id="auditMsg" role="status"></p>
+          <div id="reportBox"></div>
+          <div id="auditBox"></div>
+        </div>
+      </details>`;
+    $('#moreAudit').addEventListener('toggle', (e) => { if (e.target.open && !e.target.dataset.loaded) { e.target.dataset.loaded = '1'; loadAdmin(); } });
+    $('#auditLoad').addEventListener('click', loadAdmin);
+    $('#auditCsv').addEventListener('click', async () => {
+      const csv = await fetchAuditCsv(); if (csv == null) return;
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = 'lattice-audit.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    });
+    $('#auditCopy').addEventListener('click', async () => { const csv = await fetchAuditCsv(); if (csv != null) copyText(csv, 'Audit CSV'); });
+  }
+  async function fetchAuditCsv() {
+    const ctrl = new AbortController(); const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const r = await fetch(baseUrl() + '/audit.csv', { headers: authHeaders(), cache: 'no-store', signal: ctrl.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return await r.text();
+    } catch (e) { toast('CSV failed: ' + (e.name === 'AbortError' ? 'timed out' : e.message)); return null; }
+    finally { clearTimeout(timer); }
+  }
+  function fmtCost(v) { return v == null || !isFinite(Number(v)) ? '—' : '$' + Number(v).toFixed(Number(v) < 1 ? 4 : 2); }
+  function fmtGpuH(v) { const n = Number(v); return !isFinite(n) ? '—' : n === 0 ? '0' : n.toFixed(n < 0.01 ? 5 : 3); }
+  function reportHtml(r) {
+    const row = (label, t) => `<tr><td>${label}</td><td class="num">${esc(t.jobs)}</td><td class="num">${esc(fmtGpuH(t.gpu_hours))}</td><td class="num">${esc(fmtCost(t.cost_usd))}</td><td class="num${t.failures ? ' err-text' : ''}">${esc(t.failures)}</td></tr>`;
+    const users = Array.isArray(r.users) ? r.users : []; const engines = Array.isArray(r.engines) ? r.engines : [];
+    return `<div class="field"><span class="label">team costs${r.since ? ' since ' + esc(new Date(r.since).toLocaleDateString()) : ' (all time)'}</span>
+      <div class="tbl-wrap"><table class="data" data-testid="report-table">
+        <thead><tr><th scope="col">who / engine</th><th scope="col" class="num">jobs</th><th scope="col" class="num">gpu-h</th><th scope="col" class="num">cost</th><th scope="col" class="num">failed</th></tr></thead>
+        <tbody><tr><th scope="colgroup" colspan="5">by user</th></tr>${users.length ? users.map(u => row(u.user == null ? '<span class="note">(no user)</span>' : esc(u.user), u)).join('') : '<tr><td colspan="5" class="note">No jobs in this period.</td></tr>'}</tbody>
+        <tbody><tr><th scope="colgroup" colspan="5">by engine</th></tr>${engines.map(e => row(esc(e.engine), e)).join('')}</tbody>
+        ${r.totals ? '<tfoot>' + row('total', r.totals) + '</tfoot>' : ''}
+      </table></div>
+      <p class="note">${r.gpu_usd_hr == null ? 'No LATTICE_GPU_USD_HR set on the worker, so cost shows —. ' : ''}Estimated from job metrics; dry runs count 0. Not a bill.</p></div>`;
+  }
+  function auditHtml(entries) {
+    const detail = (e) => [
+      e.job_id ? 'job ' + e.job_id : '', e.license_id ? 'license ' + e.license_id : '', e.accepted_at ? 'accepted ' + e.accepted_at : '',
+      e.territory ? 'territory ' + e.territory : '', e.subject ? 'user ' + e.subject : '', e.change ? e.change : '', e.role ? 'role ' + e.role : ''
+    ].filter(Boolean).join(' · ');
+    const rows = entries.slice().reverse().map(e => `<tr class="${e.action === 'auth.fail' ? 'auth-fail' : ''}">
+      <td title="${esc(e.ts || '')}">${esc(e.ts ? new Date(e.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—')}</td><td>${esc(e.action)}</td><td>${esc(e.user == null ? '—' : e.user)}</td>
+      <td class="detail">${esc(detail(e) || '—')}</td><td>${esc(e.ip == null ? '—' : e.ip)}</td></tr>`).join('');
+    return `<div class="field"><span class="label">audit log · newest first (${esc(entries.length)})</span>
+      <div class="tbl-wrap"><table class="data" data-testid="audit-table">
+        <thead><tr><th scope="col">time</th><th scope="col">action</th><th scope="col">user</th><th scope="col">detail</th><th scope="col">ip</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" class="note">No audit entries yet.</td></tr>'}</tbody>
+      </table></div></div>`;
+  }
+  async function loadAdmin() {
+    const msg = $('#auditMsg'); if (!msg) return;
+    msg.className = 'note'; msg.textContent = 'Loading…';
+    const since = ($('#a-since') || {}).value || '';
+    const limit = Number(($('#a-limit') || {}).value) || 200;
+    const [rep, aud] = await Promise.allSettled([API.report(since), API.audit(limit)]);
+    const rb = $('#reportBox'); const ab = $('#auditBox'); if (!rb || !ab) return;
+    const errs = [];
+    if (rep.status === 'fulfilled' && rep.value) rb.innerHTML = reportHtml(rep.value);
+    else { rb.innerHTML = ''; errs.push('report: ' + (rep.reason ? rep.reason.message : 'no data')); }
+    if (aud.status === 'fulfilled' && aud.value) ab.innerHTML = auditHtml(Array.isArray(aud.value.entries) ? aud.value.entries : []);
+    else { ab.innerHTML = ''; errs.push('audit: ' + (aud.reason ? aud.reason.message : 'no data')); }
+    msg.className = errs.length ? 'note err-text' : 'note';
+    msg.textContent = errs.length ? 'Failed — ' + errs.join('; ') : 'Updated ' + new Date().toLocaleTimeString();
+  }
   function renderMore() {
     const s = state.settings; const sn = snippets();
     const p = $('#panel-more');
@@ -1156,10 +1293,12 @@
       <details class="card sub" id="moreSnippets"><summary>Snippets</summary>
         ${Object.keys(sn).map(k => `<div class="card code-card"><div class="code-head"><span class="label mono">${esc({ health: 'curl · health', post: 'curl · POST job', poll: 'curl · poll', python: 'python client' }[k])}</span><button class="btn small" type="button" data-snip="${k}">Copy</button></div><pre class="code" tabindex="0">${esc(sn[k])}</pre></div>`).join('')}
       </details>
+      <div id="moreAdmin"></div>
       <details class="card sub" id="moreSettings"><summary>Settings</summary>
         <form id="settingsForm" class="panel" novalidate>
           <div class="field"><label for="s-url">worker URL</label><input type="url" id="s-url" value="${esc(s.workerUrl)}" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url"><p class="note err-text" id="s-mixed" ${mixedContent() ? '' : 'hidden'}>${esc(MIXED_MSG)}</p></div>
-          <div class="field"><label for="s-wt">worker token (LATTICE_TOKEN)</label><input type="password" id="s-wt" value="${esc(s.workerToken)}" autocomplete="off"></div>
+          <div class="field"><label for="s-wt">worker token (LATTICE_TOKEN)</label><input type="password" id="s-wt" value="${esc(s.workerToken)}" autocomplete="off" aria-describedby="s-wt-note">
+            <p class="note" id="s-wt-note">On a multi-user worker (LATTICE_USERS) paste your personal token from <span class="mono">worker.py users add</span>; your role comes with it.</p></div>
           <div class="field"><label for="s-hf">Hugging Face token</label><input type="password" id="s-hf" value="${esc(s.hfToken)}" autocomplete="off" aria-describedby="s-hf-note">
             <p class="note" id="s-hf-note">Sent only as X-HF-Token header, never stored in jobs/exports/code.</p></div>
           <div class="field"><label for="s-territory">Your country (ISO code)</label><input type="text" id="s-territory" value="${esc(s.territory || '')}" maxlength="2" autocomplete="country" autocapitalize="characters" spellcheck="false" placeholder="e.g. US" aria-describedby="s-terr-note">
@@ -1174,6 +1313,7 @@
       </details>
       <p class="note">Lattice is a control surface: no weights ship in this app and nothing runs on-device. UI &amp; worker: MIT.</p>`;
     renderJobList($('#moreJobs'), state.jobs);
+    renderAdmin();
     const lb = $('#licBox'); const drawLic = () => { lb.innerHTML = licenseCardsHtml(); bindLicense(lb, drawLic); }; drawLic();
     $('#jobsExport').addEventListener('click', () => {
       download('lattice-jobs.json', { schema: 'lattice.jobs-export/1', exported: new Date().toISOString(), jobs: state.jobs.map(recordForExport) });
@@ -1217,7 +1357,7 @@
       const h = await refreshHealth();
       if (h) {
         m.className = 'note';
-        m.innerHTML = '<span style="color:var(--ok)">Connected</span> · ' + esc(h.service) + ' ' + esc(h.version) + (h.dry_run ? ' · dry-run' : ' · exec') + (h.auth && !state.settings.workerToken ? ' · <span class="warn-text">worker requires a token</span>' : '');
+        m.innerHTML = '<span style="color:var(--ok)">Connected</span> · ' + esc(h.service) + ' ' + esc(h.version) + (h.dry_run ? ' · dry-run' : ' · exec') + (h.auth && !state.settings.workerToken ? ' · <span class="warn-text">worker requires a token</span>' : '') + (h.you ? ' · signed in as ' + esc(h.you.name) + ' (' + esc(h.you.role) + ')' : '');
         if (h.auth && state.settings.workerToken) {
           try { await API.list(1); m.innerHTML += ' · token OK'; } catch (e) { m.innerHTML += ' · <span class="err-text">token rejected: ' + esc(e.message) + '</span>'; }
         }

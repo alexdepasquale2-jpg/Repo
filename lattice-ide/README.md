@@ -209,6 +209,31 @@ With `LATTICE_EXEC=1` and an engine installed, the default engine command is `<t
     LATTICE_COSMOS_CMD="python3 tests/fake_engine.py cosmos" \
     LATTICE_HY_CMD="python3 tests/fake_engine.py hy" python3 worker.py
 
+## Multi-user workspace
+
+Set `LATTICE_USERS=/etc/lattice/users.json` to give each person their own token and role (this replaces `LATTICE_TOKEN`). Tokens are stored only as SHA-256; a new token is printed once.
+
+    python3 worker.py users add alex --role operator   # viewer | operator | admin
+    python3 worker.py users list
+    python3 worker.py users rotate alex                 # old token stops working immediately
+    python3 worker.py users remove alex
+
+| Role | Can |
+|---|---|
+| viewer | GET /health, /jobs, /jobs/<id>, /runs/* |
+| operator | viewer + POST /jobs, cancel own jobs |
+| admin | everything + cancel any job, GET /audit, /audit.csv, /report |
+
+Jobs record `submitted_by`; `GET /jobs?mine=1` shows only yours. Every submit, cancel, license acceptance (license id, `acceptedAt`, territory), user change and failed sign-in goes to `runs/_audit/audit.jsonl` (never tokens). `GET /report?since=2026-09-01` totals jobs, GPU-hours, cost and failures per user and per engine. In the app, Home shows "Signed in as <name> (<role>)", viewers can't submit, and admins get More → Audit & costs with tables and a CSV download. Without `LATTICE_USERS` nothing changes. Set `LATTICE_TRUST_PROXY=1` behind a reverse proxy so audit IPs are correct.
+
+## Packaging and deployment
+
+- **pip:** `pip install ./lattice-ide` gives you `lattice-worker` and `lattice-batch` (stdlib only, no weights).
+- **Docker:** `docker build -t lattice-worker:1.0.0 lattice-ide/`, then `docker run -p 127.0.0.1:8787:8787 -v lattice-runs:/data -e LATTICE_TOKEN=... -e LATTICE_REGION=US lattice-worker:1.0.0`. The image runs as a non-root user with a `/health` check. It is CPU-only, so jobs dry-run until you build a derived image with the engines you licensed. `--build-arg WITH_FFMPEG=0` skips ffmpeg.
+- **Compose + HTTPS:** `cd lattice-ide/deploy && cp worker.env.example worker.env` (set the token and region), then `LATTICE_DOMAIN=lattice.example.com docker compose up -d --build`. The app is at `https://<domain>/`; set its worker URL to `https://<domain>/api`.
+- **systemd host:** `sudo sh lattice-ide/install.sh` (`--dry-run` first). See `DEPLOY.md`.
+- No image, package or installer contains model weights. Customers accept OpenMDW 1.1 and the HY-World 2.0 License.txt with their own accounts.
+
 ## Tests
 
 - Unit and integration (worker, exporters, batch, real-exec path): `cd lattice-ide && python3 -m unittest discover -s tests -v`

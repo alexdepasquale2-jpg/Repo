@@ -17,13 +17,17 @@ It never executes the client-supplied `code` field. Real execution builds its ow
 argv from whitelisted fields only (engine / mode / model / prompt / params / inputs).
 
 Endpoints (see CONTRACT): GET /health, POST /jobs, GET /jobs, GET /jobs/<id>,
-POST /jobs/<id>/cancel, GET /runs/<id>/<path>.
+POST /jobs/<id>/cancel, GET /runs/<id>/<path>, GET /audit, GET /audit.csv, GET /report.
 
 Environment:
   LATTICE_HOST (0.0.0.0)  LATTICE_PORT (8787)  LATTICE_RUNS (./runs)
   LATTICE_DRY_RUN=1  force dry run
   LATTICE_EXEC=1     allow real subprocess execution (otherwise dry run)
   LATTICE_TOKEN      optional bearer token for everything but OPTIONS and GET /health
+  LATTICE_USERS      optional path to a users file (per-user tokens stored as sha256, roles
+                     viewer / operator / admin); replaces LATTICE_TOKEN when set.
+                     Manage it with `python3 worker.py users add|list|remove|rotate`.
+  LATTICE_TRUST_PROXY=1  take the client IP for the audit log from X-Forwarded-For
   LATTICE_COSMOS_CMD / LATTICE_HY_CMD        command prefix overrides
   LATTICE_COSMOS_MODULE / LATTICE_HY_MODULE  engine module names for detection (default CLI:
                      <sys.executable> -m <module>.cli)
@@ -40,8 +44,13 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import collections
+import csv
 import datetime as _dt
+import getpass
+import hashlib
 import hmac
+import io
 import importlib.util
 import json
 import mimetypes
@@ -54,6 +63,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -343,6 +353,243 @@ def validate_job(job) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Multi-user workspace: users file, roles, audit log
+# ---------------------------------------------------------------------------
+ROLES = ("viewer", "operator", "admin")
+ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
+USER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$")
+HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+AUDIT_DIR = "_audit"
+AUDIT_FILE = "audit.jsonl"
+AUDIT_FIELDS = ["ts", "user", "action", "job_id", "license_id", "accepted_at", "territory",
+                "subject", "change", "role", "ip"]
+# Identity used when LATTICE_USERS is unset: whoever passes the single-token (or open) check has full access.
+FULL_ACCESS = {"name": None, "role": "admin"}
+
+
+def token_sha256(tok: str) -> str:
+    return hashlib.sha256(tok.encode("utf-8")).hexdigest()
+
+
+def new_user_token() -> str:
+    return "lt_" + secrets.token_urlsafe(32)
+
+
+def _raw_users(path: Path) -> list:
+    """Raw user entries of a users file (raises OSError / ValueError)."""
+    doc = json.loads(Path(path).read_text("utf-8"))
+    users = doc.get("users") if isinstance(doc, dict) else None
+    if not isinstance(users, list):
+        raise ValueError('users file must look like {"users": [...]}')
+    return users
+
+
+def read_users_file(path: Path) -> list:
+    """Validated entries of a users file; malformed or duplicate entries are skipped."""
+    out, seen = [], set()
+    for u in _raw_users(path):
+        if not isinstance(u, dict):
+            continue
+        name, role, h = u.get("name"), u.get("role"), str(u.get("token_sha256") or "").lower()
+        if not isinstance(name, str) or not USER_RE.match(name) or role not in ROLES \
+                or not HEX64_RE.match(h) or name in seen:
+            continue
+        seen.add(name)
+        out.append({"name": name, "role": role, "token_sha256": h})
+    return out
+
+
+def write_users_file(path: Path, users: list):
+    """Atomically replace the users file (mode 0600, written via a temp file + os.replace)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".lattice-users-", suffix=".tmp", dir=str(path.parent))
+    try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump({"users": users}, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        os.chmod(path, 0o600)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+class UserStore:
+    """Users file loaded lazily and reloaded when it changes, so `users rotate` needs no restart.
+
+    Tokens are never held here: only their sha256. A missing or unreadable file means no users
+    (every authenticated request fails closed)."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.lock = threading.Lock()
+        self.sig = False  # never matches a real signature, so the first call loads
+        self.users: list = []
+        self.warned = None
+
+    def _warn(self, msg: str):
+        if msg != self.warned:
+            self.warned = msg
+            print("warning: " + msg, file=sys.stderr, flush=True)
+
+    def entries(self) -> list:
+        try:
+            st = self.path.stat()
+            sig = (st.st_ino, st.st_mtime_ns, st.st_size)
+        except OSError:
+            st, sig = None, None
+        with self.lock:
+            if sig == self.sig:
+                return self.users
+            self.sig = sig
+            if st is None:
+                self._warn(f"LATTICE_USERS file {self.path} not found; no user can sign in")
+                self.users = []
+            else:
+                try:
+                    self.users = read_users_file(self.path)
+                    self.warned = None
+                    if os.name == "posix" and st.st_mode & 0o077:
+                        self._warn(f"LATTICE_USERS file {self.path} is readable by group/others; chmod 600 it")
+                except (OSError, ValueError, UnicodeDecodeError) as e:
+                    self._warn(f"cannot read LATTICE_USERS file {self.path} ({e.__class__.__name__}); "
+                               "no user can sign in")
+                    self.users = []
+            return self.users
+
+    def lookup(self, token: str | None) -> dict | None:
+        """Constant-time match of a presented token against every stored hash."""
+        if not token:
+            return None
+        h = token_sha256(token).encode()
+        found = None
+        for u in self.entries():
+            if hmac.compare_digest(h, u["token_sha256"].encode()) and found is None:
+                found = u
+        return {"name": found["name"], "role": found["role"]} if found else None
+
+
+def append_audit(runs: Path, rec: dict):
+    """Append one JSON line to runs/_audit/audit.jsonl (dir 0700, file 0600). Never pass tokens here."""
+    d = Path(runs) / AUDIT_DIR
+    d.mkdir(mode=0o700, exist_ok=True)
+    fd = os.open(str(d / AUDIT_FILE), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+
+
+def audit_record(user, action: str, ip=None, **extra) -> dict:
+    rec = {"ts": now_iso(), "user": user, "action": action}
+    rec.update({k: v for k, v in extra.items() if v is not None})
+    rec["ip"] = ip
+    return rec
+
+
+def parse_iso(v: str) -> _dt.datetime:
+    """Parse an ISO 8601 date or datetime ('Z' allowed); naive values are taken as UTC."""
+    s = str(v).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        s += "T00:00:00"
+    if s.endswith(("Z", "z")):
+        s = s[:-1] + "+00:00"
+    d = _dt.datetime.fromisoformat(s)
+    return d if d.tzinfo else d.replace(tzinfo=_dt.timezone.utc)
+
+
+def csv_cell(v) -> str:
+    s = "" if v is None else str(v)
+    return "'" + s if s[:1] in ("=", "+", "-", "@", "\t", "\r") else s  # spreadsheet formula injection
+
+
+def users_cli(argv) -> int:
+    """`python3 worker.py users add|list|remove|rotate` -- manage the LATTICE_USERS file."""
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--file", default=os.environ.get("LATTICE_USERS") or None,
+                        help="users file (default: $LATTICE_USERS)")
+    common.add_argument("--runs", default=os.environ.get("LATTICE_RUNS", "./runs"),
+                        help="runs dir whose _audit/audit.jsonl records the change (default: $LATTICE_RUNS or ./runs)")
+    ap = argparse.ArgumentParser(prog="worker.py users", description="Manage Lattice worker users (tokens are "
+                                 "stored only as sha256; a new token is printed once).")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("add", parents=[common], help="add a user and print its token once")
+    p.add_argument("name")
+    p.add_argument("--role", choices=ROLES, default="viewer")
+    sub.add_parser("list", parents=[common], help="list users and roles (no hashes)")
+    sub.add_parser("remove", parents=[common], help="remove a user").add_argument("name")
+    sub.add_parser("rotate", parents=[common], help="issue a new token; the old one stops working").add_argument("name")
+    a = ap.parse_args(argv)
+    if not a.file:
+        print("error: set LATTICE_USERS or pass --file", file=sys.stderr)
+        return 2
+    path = Path(a.file)
+    try:
+        users = _raw_users(path) if path.exists() else []
+    except (OSError, ValueError, UnicodeDecodeError) as e:
+        print(f"error: cannot read {path}: {e}", file=sys.stderr)
+        return 1
+    idx = {u.get("name"): i for i, u in enumerate(users) if isinstance(u, dict)}
+    if a.cmd == "list":
+        if not users:
+            print("(no users)")
+        for u in users:
+            if isinstance(u, dict):
+                print(f"{u.get('name')}\t{u.get('role')}\tcreated {u.get('created') or '-'}"
+                      + (f"\trotated {u['rotated']}" if u.get("rotated") else ""))
+        return 0
+    name = a.name
+    if a.cmd == "add":
+        if not USER_RE.match(name):
+            print("error: name must be 1-64 chars of letters, digits, . _ @ - (starting with a letter or digit)",
+                  file=sys.stderr)
+            return 2
+        if name in idx:
+            print(f"error: user {name} already exists (use rotate for a new token)", file=sys.stderr)
+            return 1
+        token = new_user_token()
+        users.append({"name": name, "role": a.role, "token_sha256": token_sha256(token), "created": now_iso()})
+        role = a.role
+    else:
+        if name not in idx:
+            print(f"error: no user named {name}", file=sys.stderr)
+            return 1
+        role = users[idx[name]].get("role")
+        token = None
+        if a.cmd == "remove":
+            users.pop(idx[name])
+        else:
+            token = new_user_token()
+            users[idx[name]] = dict(users[idx[name]], token_sha256=token_sha256(token), rotated=now_iso())
+    write_users_file(path, users)
+    runs = Path(a.runs)
+    if runs.is_dir():
+        try:
+            who = getpass.getuser()
+        except (OSError, KeyError, ImportError):
+            who = "unknown"
+        try:
+            append_audit(runs, audit_record("cli:" + who, "users.change", None, subject=name, change=a.cmd, role=role))
+        except OSError as e:
+            print(f"warning: could not write audit log: {e}", file=sys.stderr)
+    else:
+        print(f"note: runs dir {runs} not found; change not recorded in the audit log (pass --runs)", file=sys.stderr)
+    if a.cmd == "remove":
+        print(f"user {name} removed")
+    else:
+        print(f"user {name} {'added' if a.cmd == 'add' else 'rotated'} (role {role})")
+        print("token (shown once; store it now, it cannot be recovered):")
+        print(token)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Worker state
 # ---------------------------------------------------------------------------
 class Job:
@@ -367,7 +614,13 @@ class Worker:
         self.force_dry = force_dry
         self.exec = env_on("LATTICE_EXEC")
         self.token = os.environ.get("LATTICE_TOKEN", "") or ""
+        up = (os.environ.get("LATTICE_USERS") or "").strip()
+        self.users: UserStore | None = UserStore(up) if up else None
+        if self.users and self.token:
+            print("warning: LATTICE_USERS is set, so LATTICE_TOKEN is ignored", file=sys.stderr)
+        self.trust_proxy = env_on("LATTICE_TRUST_PROXY")
         self.lock = threading.RLock()
+        self.audit_lock = threading.Lock()
         self.jobs: dict[str, Job] = {}
         self.q: "queue.Queue[str]" = queue.Queue()
         self.cosmos_mod = os.environ.get("LATTICE_COSMOS_MODULE") or "cosmos3"
@@ -408,13 +661,78 @@ class Worker:
         need = ["cosmos", "hyworld"] if engine == "bridge" else [engine]
         return not all(e[n]["installed"] for n in need)
 
+    def auth_mode(self) -> str:
+        return "users" if self.users is not None else "token" if self.token else "open"
+
     def health(self) -> dict:
         return {"ok": True, "service": "lattice-worker", "version": VERSION, "schema": SCHEMA,
                 "dry_run": self.global_dry(), "exec": self.exec and not self.force_dry,
-                "auth": bool(self.token), "engines": self.engines(), "gpu": self.gpu,
+                "auth": self.auth_mode() != "open", "auth_mode": self.auth_mode(),
+                "engines": self.engines(), "gpu": self.gpu,
                 "queue": self.q.qsize(), "runs_dir": str(self.runs),
                 "region": self.region, "hy_territory_ok": self.region not in HY_EXCLUDED,
                 "gpu_usd_hr": self.usd_hr}
+
+    # -- audit / report ----------------------------------------------------
+    def audit(self, user, action: str, ip=None, **extra):
+        """Append an audit line. Callers pass names, ids and codes only -- never tokens."""
+        try:
+            with self.audit_lock:
+                append_audit(self.runs, audit_record(user, action, ip, **extra))
+        except OSError as e:
+            print(f"warning: audit log write failed: {e.__class__.__name__}", file=sys.stderr)
+
+    def read_audit(self, limit: int | None = None) -> list:
+        path = self.runs / AUDIT_DIR / AUDIT_FILE
+        out = collections.deque(maxlen=limit) if limit else []
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(rec, dict):
+                        out.append(rec)
+        except OSError:
+            pass
+        return list(out)
+
+    def report(self, since: _dt.datetime | None) -> dict:
+        """Per-user and per-engine totals (jobs, gpu_hours, cost_usd, failures) from job metrics."""
+        with self.lock:
+            sts = [json.loads(json.dumps(j.status)) for j in self.jobs.values()]
+        users, engines = {}, {}
+
+        def blank():
+            return {"jobs": 0, "gpu_hours": 0.0, "cost_usd": None, "failures": 0}
+
+        def add(t, st):
+            m = st.get("metrics") if isinstance(st.get("metrics"), dict) else {}
+            t["jobs"] += 1
+            t["failures"] += 1 if st.get("status") == "failed" else 0
+            t["gpu_hours"] = round(t["gpu_hours"] + float(m.get("gpu_hours") or 0), 6)
+            if m.get("cost_usd") is not None:
+                t["cost_usd"] = round((t["cost_usd"] or 0.0) + float(m["cost_usd"]), 6)
+
+        total = blank()
+        for st in sts:
+            if since is not None:
+                try:
+                    if parse_iso(st.get("created") or "") < since:
+                        continue
+                except ValueError:
+                    continue
+            add(users.setdefault(st.get("submitted_by"), blank()), st)
+            add(engines.setdefault(st.get("engine") or "?", blank()), st)
+            add(total, st)
+        return {"schema": "lattice.report/1", "generated": now_iso(),
+                "since": since.isoformat().replace("+00:00", "Z") if since else None,
+                "gpu_usd_hr": self.usd_hr,
+                "users": [dict(user=k, **v) for k, v in sorted(users.items(), key=lambda kv: (kv[0] is None, kv[0] or ""))],
+                "engines": [dict(engine=k, **v) for k, v in sorted(engines.items())],
+                "totals": total,
+                "note": "gpu_hours and cost_usd come from each job's metrics; dry runs count 0. Not a bill."}
 
     def territory_check(self, job: dict):
         if job.get("engine") not in HY_ENGINES:
@@ -475,12 +793,12 @@ class Worker:
             self._save(j)
 
     # -- API ops -----------------------------------------------------------
-    def submit(self, job: dict, hf_token: str | None) -> dict:
+    def submit(self, job: dict, hf_token: str | None, user: str | None = None, ip: str | None = None) -> dict:
         params = validate_job(job)
         self.territory_check(job)
         jid = job.get("id")
-        if not isinstance(jid, str) or not ID_RE.match(jid):
-            jid = None
+        if not isinstance(jid, str) or not ID_RE.match(jid) or jid.startswith("_"):
+            jid = None  # "_"-prefixed names are reserved (runs/_audit)
         with self.lock:
             if jid is None or jid in self.jobs or (self.runs / jid).exists():
                 jid = "lj_" + time.strftime("%Y%m%d%H%M%S", time.gmtime()) + "_" + secrets.token_hex(3)
@@ -532,20 +850,31 @@ class Worker:
         status = {"id": jid, "status": "queued", "progress": 0.0, "stage": "queued",
                   "engine": engine, "mode": stored["mode"], "model": stored["model"],
                   "created": ts, "updated": ts, "dry_run": dry, "error": None,
-                  "log": [], "artifacts": [], "metrics": None}
+                  "log": [], "artifacts": [], "metrics": None, "submitted_by": user}
         j = Job(status, run_dir, stored, params, hf_token or None)
         with self.lock:
             self.jobs[jid] = j
             self._save(j)
+        lic = stored.get("license") or {}
+        try:
+            terr = norm_region(lic.get("territory"))
+        except ValueError:
+            terr = None
+        acc = lic.get("acceptedAt") if isinstance(lic.get("acceptedAt"), str) else None
+        self.audit(user, "job.submit", ip, job_id=jid)
+        self.audit(user, "license.accept", ip, job_id=jid, license_id=str(lic.get("id")),
+                   accepted_at=acc[:64] if acc else None, territory=terr)
         self.log(j, f"queued {engine}/{stored['mode']} model={stored['model']} target={stored.get('target', 'rtx')}"
                     f" dry_run={dry} hf_token={'provided' if hf_token else 'none'}")
         self.q.put(jid)
         return {"id": jid, "status": "queued"}
 
-    def list(self, limit: int) -> list:
+    def list(self, limit: int, mine: bool = False, user: str | None = None) -> list:
         with self.lock:
             items = sorted(self.jobs.values(), key=lambda j: (j.status.get("created", ""), j.status["id"]),
                            reverse=True)
+            if mine:
+                items = [j for j in items if j.status.get("submitted_by") == user]
             return [json.loads(json.dumps(j.status)) for j in items[:limit]]
 
     def get(self, jid: str) -> dict | None:
@@ -1014,17 +1343,44 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _authed(self, query_token: str | None = None) -> bool:
-        tok = self.worker.token
-        if not tok:
-            return True
+    def _ip(self) -> str | None:
+        if self.worker.trust_proxy:
+            fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            if fwd and len(fwd) <= 64 and re.fullmatch(r"[0-9A-Fa-f:.]+", fwd):
+                return fwd
+        try:
+            return str(self.client_address[0])
+        except (AttributeError, IndexError, TypeError):
+            return None
+
+    def _identify(self, query_token: str | None = None) -> dict | None:
+        """The caller's identity {"name", "role"}, or None when authentication fails. Sends nothing."""
+        w = self.worker
         got = self.headers.get("Authorization", "")
-        if got.startswith("Bearer ") and hmac.compare_digest(got[7:].strip().encode(), tok.encode()):
-            return True
-        # ?token= is accepted only for GET /runs (media elements cannot send headers).
+        bearer = got[7:].strip() if got.startswith("Bearer ") else None
+        if w.users is not None:
+            # ?token= is accepted only for GET /runs (media elements cannot send headers); hash-compared.
+            return w.users.lookup(bearer) or (w.users.lookup(query_token) if query_token else None)
+        tok = w.token
+        if not tok:
+            return FULL_ACCESS
+        if bearer is not None and hmac.compare_digest(bearer.encode(), tok.encode()):
+            return FULL_ACCESS
         if query_token is not None and hmac.compare_digest(query_token.encode(), tok.encode()):
+            return FULL_ACCESS
+        return None
+
+    def _authed(self, query_token: str | None = None) -> dict | None:
+        who = self._identify(query_token)
+        if who is None:
+            self.worker.audit(None, "auth.fail", self._ip())
+            self._json(401, {"error": "unauthorized"})
+        return who
+
+    def _allowed(self, who: dict, role: str, what: str) -> bool:
+        if ROLE_RANK.get(who.get("role"), -1) >= ROLE_RANK[role]:
             return True
-        self._json(401, {"error": "unauthorized"})
+        self._json(403, {"error": f"forbidden: the {who.get('role')} role cannot {what}"})
         return False
 
     def do_OPTIONS(self):
@@ -1037,19 +1393,45 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlsplit(self.path)
         path = u.path.rstrip("/") or "/"
         if path == "/health":
-            return self._json(200, self.worker.health())
+            h = self.worker.health()
+            if self.worker.users is not None:
+                who = self._identify()
+                if who:
+                    h["you"] = {"name": who["name"], "role": who["role"]}
+            return self._json(200, h)
         qtok = None
         if u.path.startswith("/runs/"):
             qtok = urllib.parse.parse_qs(u.query).get("token", [None])[0]
-        if not self._authed(qtok):
+        who = self._authed(qtok)
+        if not who:
             return
+        qs = urllib.parse.parse_qs(u.query)
         if path == "/jobs":
-            qs = urllib.parse.parse_qs(u.query)
             try:
                 limit = int(qs.get("limit", ["8"])[0])
             except ValueError:
                 limit = 8
-            return self._json(200, {"jobs": self.worker.list(max(1, min(200, limit)))})
+            mine = qs.get("mine", ["0"])[0].lower() in ("1", "true", "yes")
+            return self._json(200, {"jobs": self.worker.list(max(1, min(200, limit)), mine, who["name"])})
+        if path in ("/audit", "/audit.csv", "/report"):
+            if not self._allowed(who, "admin", "read the audit log or cost report"):
+                return
+            if path == "/report":
+                since = qs.get("since", [""])[0].strip()
+                try:
+                    since_dt = parse_iso(since) if since else None
+                except ValueError:
+                    return self._json(400, {"error": "since must be an ISO 8601 date or datetime"})
+                return self._json(200, self.worker.report(since_dt))
+            try:
+                limit = int(qs.get("limit", ["200" if path == "/audit" else "0"])[0])
+            except ValueError:
+                limit = 200
+            limit = max(0, min(100000, limit))
+            entries = self.worker.read_audit(limit or None)
+            if path == "/audit":
+                return self._json(200, {"entries": entries, "count": len(entries)})
+            return self._csv(entries)
         m = re.fullmatch(r"/jobs/([A-Za-z0-9_-]{1,64})", path)
         if m:
             st = self.worker.get(m.group(1))
@@ -1060,12 +1442,33 @@ class Handler(BaseHTTPRequestHandler):
 
     do_HEAD = do_GET
 
+    def _csv(self, entries: list):
+        buf = io.StringIO()
+        wr = csv.writer(buf, lineterminator="\r\n")
+        wr.writerow(AUDIT_FIELDS)
+        for e in entries:
+            wr.writerow([csv_cell(e.get(k)) for k in AUDIT_FIELDS])
+        body = buf.getvalue().encode("utf-8")
+        self.send_response(200)
+        self._cors()
+        self.send_header("Content-Type", "text/csv; charset=utf-8")
+        self.send_header("Content-Disposition", 'attachment; filename="lattice-audit.csv"')
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def do_POST(self):
         path = urllib.parse.urlsplit(self.path).path.rstrip("/")
-        if not self._authed():
+        who = self._authed()
+        if not who:
             self._drain()
             return
         if path == "/jobs":
+            if ROLE_RANK.get(who.get("role"), -1) < ROLE_RANK["operator"]:
+                self._drain()
+                return self._allowed(who, "operator", "submit jobs")
             try:
                 n = int(self.headers.get("Content-Length", "0"))
             except ValueError:
@@ -1080,7 +1483,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(400, {"error": "body must be valid JSON"})
             hf = (self.headers.get("X-HF-Token") or "").strip() or None
             try:
-                res = self.worker.submit(job, hf)
+                res = self.worker.submit(job, hf, user=who["name"], ip=self._ip())
             except JobError as e:
                 return self._json(400, {"error": str(e)})
             finally:
@@ -1089,7 +1492,16 @@ class Handler(BaseHTTPRequestHandler):
         self._drain()
         m = re.fullmatch(r"/jobs/([A-Za-z0-9_-]{1,64})/cancel", path)
         if m:
+            if not self._allowed(who, "operator", "cancel jobs"):
+                return
+            cur = self.worker.get(m.group(1))
+            if not cur:
+                return self._json(404, {"error": "not found"})
+            if who["role"] != "admin" and cur.get("submitted_by") != who["name"]:
+                return self._json(403, {"error": "forbidden: operators can only cancel their own jobs"})
             st = self.worker.cancel(m.group(1))
+            if st:
+                self.worker.audit(who["name"], "job.cancel", self._ip(), job_id=st["id"])
             return self._json(200, st) if st else self._json(404, {"error": "not found"})
         return self._json(404, {"error": "not found"})
 
@@ -1105,7 +1517,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_run(self, rel: str):
         parts = rel.split("/", 1)
-        if len(parts) != 2 or not ID_RE.match(parts[0]) or not parts[1]:
+        # "_"-prefixed dirs (runs/_audit) are private to the worker, never served.
+        if len(parts) != 2 or not ID_RE.match(parts[0]) or parts[0].startswith("_") or not parts[1]:
             return self._json(404, {"error": "not found"})
         root = (self.worker.runs / parts[0]).resolve()
         target = (root / parts[1]).resolve()
@@ -1164,7 +1577,11 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Lattice worker (control-surface backend)")
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["users"]:
+        return users_cli(argv[1:])
+    ap = argparse.ArgumentParser(description="Lattice worker (control-surface backend)",
+                                 epilog="User management: python3 worker.py users {add,list,remove,rotate} --help")
     ap.add_argument("--host", default=os.environ.get("LATTICE_HOST", "0.0.0.0"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("LATTICE_PORT", "8787")))
     ap.add_argument("--runs", default=os.environ.get("LATTICE_RUNS", "./runs"))
@@ -1182,7 +1599,11 @@ def main(argv=None):
     print(f"  engines: cosmos={'installed' if h['engines']['cosmos']['installed'] else 'missing'} "
           f"hyworld={'installed' if h['engines']['hyworld']['installed'] else 'missing'}", flush=True)
     print(f"  runs dir: {worker.runs}", flush=True)
-    print(f"  auth: {'on (Bearer token required)' if worker.token else 'off'}", flush=True)
+    if worker.users is not None:
+        print(f"  auth: users file {worker.users.path} ({len(worker.users.entries())} users; roles viewer/operator/admin)",
+              flush=True)
+    else:
+        print(f"  auth: {'on (Bearer token required)' if worker.token else 'off'}", flush=True)
     print(f"  gpu: {h['gpu']['name'] if h['gpu'] else 'none detected'}", flush=True)
     print(f"  region: {worker.region or 'unset'}  hy_territory_ok={h['hy_territory_ok']}", flush=True)
     try:
@@ -1194,4 +1615,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
