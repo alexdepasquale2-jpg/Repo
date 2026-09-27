@@ -187,6 +187,7 @@
   let busy = false;
   const listeners = [];
   const failed = new Set();
+  let strikes = 0; // merges in a row that used up their retries
 
   function ls(get, k, v) { try { if (get) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } return null; }
   function loadLocal() {
@@ -194,7 +195,7 @@
     try { cache = JSON.parse(ls(true, CACHE_KEY) || '{}') || {}; } catch (e) { cache = {}; }
   }
   function saveCache() { ls(false, CACHE_KEY, JSON.stringify(cache)); }
-  function setConf(c) { conf = Object.assign(conf, c); ls(false, CONF_KEY, JSON.stringify(conf)); status = { state: 'unknown', detail: '' }; failed.clear(); emit(); }
+  function setConf(c) { conf = Object.assign(conf, c); ls(false, CONF_KEY, JSON.stringify(conf)); status = { state: 'unknown', detail: '' }; failed.clear(); strikes = 0; emit(); }
   function emit(ev) { for (const f of listeners) try { f(ev || { type: 'status', status }); } catch (e) { /* listener error */ } }
   function on(f) { listeners.push(f); }
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -210,7 +211,9 @@
       try { body = await res.json(); } catch (e) { body = null; }
       return { status: res.status, body };
     } catch (e) {
-      return { status: 0, body: { detail: e.name === 'AbortError' ? 'timed out' : 'connection refused' }, network: true };
+      // a client-side timeout means the bridge is slow, not down: treat it like a retryable 504
+      if (e.name === 'AbortError') return { status: 504, body: { detail: 'timed out', retryable: true } };
+      return { status: 0, body: { detail: 'connection refused' }, network: true };
     } finally { clearTimeout(timer); }
   }
 
@@ -229,18 +232,21 @@
     for (let attempt = 0; attempt <= BACKOFF.length; attempt++) {
       const r = await call('/merge', { method: 'POST', body: JSON.stringify(job.req) });
       if (r.status === 200 && r.body && r.body.item) {
-        status = { state: 'online', detail: '' };
+        status = { state: 'online', detail: '' }; strikes = 0;
         return { ok: true, item: r.body.item, cached: !!r.body.cached, bridgeKey: r.body.key };
       }
       const b = r.body || {};
       if (r.network || b.bridge_down) { status = { state: 'offline', detail: 'FriedrichBridge is not running. Start it with start_bridge.bat.' }; return { ok: false, stop: true }; }
       if (r.status === 401) { status = { state: 'error', detail: 'The bridge rejected the API key (401). Check FRIEDRICH_BRIDGE_KEY.' }; console.error('[bridge] 401', b); return { ok: false, stop: true }; }
-      if (r.status === 404) { status = { state: 'error', detail: 'The configured Ollama model is not installed (404).' }; console.error('[bridge] 404', b); return { ok: false, stop: true }; }
+      if (r.status === 404) { status = { state: 'error', detail: 'The configured Ollama model is not installed (404): ' + String(b.detail || '') }; console.error('[bridge] 404', b); return { ok: false, stop: true }; }
+      if (r.status === 403) { status = { state: 'error', detail: 'The game proxy refused the request (403): ' + String(b.detail || '') }; console.error('[bridge] 403', b); return { ok: false, stop: true }; }
       if (r.status === 422 && Array.isArray(b.detail)) { console.error('[bridge] malformed request (game bug)', job.req, b.detail); return { ok: false }; }
       if (r.status === 422) return { ok: false, modelFailed: true };
       if ([502, 503, 504].includes(r.status) && b.retryable !== false && attempt < BACKOFF.length) { await sleep(BACKOFF[attempt]); continue; }
-      status = { state: 'error', detail: `The AI backend is unavailable (${r.status}). Try again later.` };
-      return { ok: false };
+      // retries used up: this merge is "try again later" (not retried this session). Only a second
+      // merge in a row failing this way marks the backend unavailable and drops the queue.
+      if (++strikes >= 2) { status = { state: 'error', detail: `The AI backend is unavailable (${r.status}). Try again later.` }; return { ok: false, later: true, stop: true }; }
+      return { ok: false, later: true };
     }
     return { ok: false };
   }
@@ -253,12 +259,13 @@
       const res = await doMerge(job);
       if (res.ok) {
         const it = res.item;
-        const entry = { name: String(it.name || '').slice(0, 48), description: String(it.description || '').slice(0, 400), rarity: it.rarity || '', tags: Array.isArray(it.tags) ? it.tags.slice(0, 12) : [], stats: it.stats || {}, id: it.id, at: Date.now() };
+        // unknown fields (e.g. added later through merge_schema) are kept in the cache
+        const entry = { ...it, name: String(it.name || '').slice(0, 48), description: String(it.description || '').slice(0, 400), rarity: it.rarity || '', tags: Array.isArray(it.tags) ? it.tags.slice(0, 12) : [], stats: it.stats || {}, id: it.id, at: Date.now() };
         if (entry.name) { cache[job.cacheKey] = entry; saveCache(); }
         job.resolve(entry.name ? entry : null);
         emit({ type: 'flavor', kind: job.kind, key: job.key, entry, fresh: !res.cached });
       } else {
-        if (res.modelFailed) failed.add(job.cacheKey);
+        if (res.modelFailed || res.later) failed.add(job.cacheKey);
         job.resolve(null);
       }
       inflight.delete(job.cacheKey);
