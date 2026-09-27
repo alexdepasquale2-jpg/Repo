@@ -211,6 +211,7 @@
     return w;
   }
   async function download(name, text) {
+    if (window.EPAndroid) { window.EPAndroid.share(name, text); return true; } // the Android app: the share sheet
     try {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
@@ -224,9 +225,10 @@
   async function showCopy(title, text, note) {
     let copied = false;
     try { await navigator.clipboard.writeText(text); copied = true; } catch (e) { /* not allowed here */ }
-    const card = G.modal(`<h2>${esc(title)}</h2><p>${copied ? 'Copied to the clipboard.' : 'Select it all and copy it.'} ${esc(note || '')}</p><textarea class="bw-in" style="width:100%;min-height:160px;font-family:monospace;font-size:12px" readonly>${esc(text)}</textarea><div class="btnrow"><button class="btn pri" data-ok>Done</button></div>`);
+    const card = G.modal(`<h2>${esc(title)}</h2><p>${copied ? 'Copied to the clipboard.' : 'Select it all and copy it.'} ${esc(note || '')}</p><textarea class="bw-in" style="width:100%;min-height:160px;font-family:monospace;font-size:12px" readonly>${esc(text)}</textarea><div class="btnrow"><button class="btn pri" data-ok>Done</button>${window.EPAndroid ? '<button class="btn" data-share>Share…</button>' : ''}</div>`);
     const ta = card.querySelector('textarea'); ta.focus(); ta.select();
     card.querySelector('[data-ok]').onclick = () => G.closeModal();
+    if (window.EPAndroid) card.querySelector('[data-share]').onclick = () => window.EPAndroid.share(title, text);
   }
 
   // ---------------------------------------------------------------- the Worlds screen

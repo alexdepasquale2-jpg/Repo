@@ -123,7 +123,9 @@ Built for phones first: the title shows instantly while the database streams in,
 
 ## Play
 
-Open `index.html` over HTTP: `python tools/serve.py` (add `--lan` to open it from a phone on the same Wi-Fi), or any static server. It is a PWA and works offline once loaded.
+**Apps:** the release `essence-protocol-latest` on GitHub has the game as an Android app (`EssenceProtocol.apk`), a Windows program (`EssenceProtocol-windows-x64.exe`), and Linux and macOS programs; each one is the whole game, builder and editor in one file, offline. The Linux one doubles as a home server (`--lan`). How to install each: `platforms/RELEASE.md`; how they're built: `platforms/README.md`.
+
+Or open `index.html` over HTTP: `python tools/serve.py` (add `--lan` to open it from a phone on the same Wi-Fi), or any static server. It is a PWA and works offline once loaded.
 
 - **Move:** D-pad or WASD/arrows. **Interact:** A, Enter or Space. **Menu:** ☰ or Esc.
 - Flickering tiles are **static**, where wild daemons live. In battle your four memory merges are one tap away (▲ strong / ▼ weak against the foe; keys 1–4 on desktop), and **Bind** shows your capture odds with your best lattice. Tap either card to inspect a daemon. Tap the battle text or press Space to fast-forward.
@@ -178,5 +180,6 @@ Every name, number and line in the game is plain JSON in `data/`: essences, comb
 | `tools/content.js` | Read and change the content from the command line |
 | `editor/` | The content editor |
 | `tools/build-host.py` | Builds the claude.ai copies of the game and the editor |
+| `platforms/` | The Android app and the Windows, Linux and macOS programs (see `platforms/README.md`) |
 
 No build step and no dependencies. After changing `data/` by hand, or a rule in `js/baker.js` or `js/designs.js`, run `node tools/bake.js` and then `node tools/verify.js`.

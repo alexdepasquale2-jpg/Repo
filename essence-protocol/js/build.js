@@ -1262,5 +1262,13 @@
   }
 
   addEventListener('resize', () => { if (active()) chrome(); });
-  window.BUILD = { open, fromPlay, frame, exit, get state() { return B; }, undo, redo, commit, select, goMap, place, setTool, runCheck };
+  // Android's back button: close the open panel, cancel a pick, or leave the builder.
+  function back() {
+    const m = document.querySelector('.b-menu'); if (m) { m.remove(); return true; }
+    if (B.picking) { B.picking = null; hint(null); return true; }
+    if (B.drawer) { closeDrawer(); return true; }
+    if (B.sheet) { B.sel = null; closeSheet(); return true; }
+    exit(); return true;
+  }
+  window.BUILD = { open, fromPlay, frame, exit, back, get state() { return B; }, undo, redo, commit, select, goMap, place, setTool, runCheck };
 })();

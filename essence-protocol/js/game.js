@@ -2538,6 +2538,23 @@
 
   window.EP = { get state() { return S; }, get battle() { return B; }, get mode() { return mode; }, get discovered() { return discovered; }, get map() { return M; }, get world() { return C; }, forgeItem, toast,
     teleport(x, y, dir, map) { enterMap(map || M.id, x, y, dir); } };
+  // Android's back button (platforms/android): close what is open; false lets the app step aside.
+  window.epBack = function () {
+    const bm = document.querySelector('.b-modal'); if (bm) { bm.remove(); return true; }
+    if (!$('modal').classList.contains('hidden')) {
+      const card = $('modalCard'), cancel = card.querySelector('[data-cancel]'), choices = card.querySelectorAll('[data-c]');
+      if (cancel) cancel.click(); else if (choices.length > 1) choices[choices.length - 1].click();
+      return true;
+    }
+    if (!$('tooltip').classList.contains('hidden')) { hideTip(); return true; }
+    if (mode === 'build' && window.BUILD) return window.BUILD.back();
+    if (mode === 'worlds' && window.WORLDS) { window.WORLDS.close(); return true; }
+    if (mode === 'sheet') { closeSheet(); return true; }
+    if (mode === 'starter') { toTitle(); return true; }
+    if (mode === 'world') { openSheet('party'); return true; }
+    if (mode === 'battle' || mode === 'busy') return true;
+    return false;
+  };
   // What the world builder and the worlds screen use to drive the game.
   window.EP_GAME = {
     get C() { return C; }, get M() { return M; }, get S() { return S; }, get mode() { return mode; }, set mode(m) { mode = m; },

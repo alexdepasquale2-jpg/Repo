@@ -3,3 +3,7 @@ __pycache__/
 runs/
 essence-protocol/bridge.local.json
 essence-protocol/host/
+essence-protocol/dist/
+essence-protocol/platforms/desktop/game/
+essence-protocol/platforms/desktop/*.syso
+essence-protocol/platforms/android/build/
