@@ -212,6 +212,11 @@
   }
   async function download(name, text) {
     if (window.EPAndroid) { window.EPAndroid.share(name, text); return true; } // the Android app: the share sheet
+    if (window.claude && window.claude.use) { // a claude.ai page: the viewer confirms the save (downloads capability)
+      try { const dl = await window.claude.use('downloads'); if (dl) { await dl.save({ filename: name, data: text }); return true; } }
+      catch (e) { if (e && e.code === 'declined') return true; }
+      return false; // the caller shows the text to copy instead
+    }
     try {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));

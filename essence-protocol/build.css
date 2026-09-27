@@ -64,7 +64,7 @@
 .b-hint { position: absolute; left: 50%; top: calc(60px + var(--safe-t)); transform: translateX(-50%); background: #0b0e18ee; border: 1px solid #ffd23d88; color: var(--warn); border-radius: 12px; padding: 8px 12px; font-size: 13px; display: flex; gap: 10px; align-items: center; max-width: calc(100% - 24px); }
 .b-bottom { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(#0b0e18d8, #0b0e18f5); border-top: 1px solid var(--line); padding: 6px 8px calc(6px + var(--safe-b)); display: grid; gap: 6px; }
 .b-pal { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; align-items: stretch; }
-.b-pal .b-grp { display: flex; gap: 4px; padding-right: 8px; margin-right: 2px; border-right: 1px solid var(--line); }
+.b-pal .b-grp { display: flex; flex: none; gap: 4px; padding-right: 8px; margin-right: 2px; border-right: 1px solid var(--line); }
 .b-pal .b-grp:last-child { border-right: 0; }
 .b-sw { flex: none; width: 48px; height: 48px; border-radius: 10px; border: 2px solid transparent; background: #0b0e18; padding: 0; position: relative; overflow: hidden; }
 .b-sw canvas { width: 100%; height: 100%; image-rendering: pixelated; display: block; }
