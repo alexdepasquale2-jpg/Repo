@@ -1,102 +1,41 @@
-# CLAUDE.md: Essence Protocol + FriedrichBridge
+# CLAUDE.md: Essence Protocol
 
 ## What this is
-Essence Protocol is a web game (no build step). Everything in it is a **merge** of essences: a lead main (Fire/Water/Earth/Air), a second main, and up to 3 sub-essences bound to either one. That gives 5,896 merge identities. Each identity is both a battle technique and a daemon form (genome), and the Forge turns merges into items.
+Essence Protocol is a mobile-first web game (vanilla JS PWA, no build step, no dependencies). Everything in it is a **merge** of essences: a lead main (Fire/Water/Earth/Air), a second main, and up to 3 sub-essences bound to either one. That gives 5,896 merge identities. Each identity is both a battle technique and a daemon form (genome), and the Forge turns merges into items.
 
-Merges have two layers:
+## No AI integrations
+FriedrichBridge (a local server that asked Ollama/FriedrichAI to design spells, forms, items, lineages and traits) is **retired**, along with its client (`js/bridge.js`), its proxy in `tools/serve.py` and `bridge.example.json`. The game sends nothing anywhere while you play (the only outside request is the optional display font). Do not add model calls back; everything is pre-baked or designed by pure functions. `tools/verify.js` fails if any shipped file references `/bridge`.
 
-| Layer | Source |
+Old saves are migrated on load (`migrate()` in `js/game.js`): traits and lineages that were waiting for the bridge are designed, forged items take their pre-baked design, and the bridge's `localStorage` keys (`ep-bridge-cache-v1`, `ep-bridge-outbox-v1`, `ep-bridge-conf`) are deleted.
+
+## The merge database (`db/`)
+`tools/bake.js` pre-bakes every merge identity **one merge at a time** into one record, one line, in `db/<pair>.json` (16 shards, one per ordered pair of mains, e.g. `db/FW.json` = Fire-led, Water-following). `db/index.json` holds the schema, the record layout (`fields`), rarity counts and shard hashes.
+
+| Part of a record | Fields |
 |---|---|
-| **Spells and abilities** (every technique): name, description, class, power, hits, accuracy, Flux cost, cooldown, instability, priority, effects | **FriedrichBridge**, a local HTTP server that asks a local model (Ollama or FriedrichAI) and saves every result in its SQLite DB. The bridge item is turned into mechanics by `BRIDGE.abilityFrom` in `js/bridge.js` |
-| **Daemon forms**: name and description | FriedrichBridge |
-| **Element typing** (the 65/35 lead/follow split), daemon base stats, passives, class signature mechanics | Baked (`js/merges.baked.js` from `tools/bake.js`), because they come from the essences themselves |
-| **Offline fallback** for everything above | The baked record for the same merge |
+| Technique | `name cls power acc flux prio hits instab fx rarity tags text anomaly` |
+| Daemon form | `dName dStats dPassive dDesc` |
+| Forged item | `item` = `[kind, name, lore, tier, pct]` (quality roll from the %RARITY% modulator) |
+| Splice word | `line` (the word the genome lends to lineage names) |
+| Trait affinity | `aff` = `[[trait code, weight], ...]` (the traits this genome leans toward) |
 
-Rules for Claude working in this project:
-- Never invent spells or recipes in game code. Ask the bridge (`js/bridge.js`). The baked records in `merges.baked.js` are only the offline fallback and the source of element typing.
-- To change how bridge items become abilities, edit `abilityFrom` in `js/bridge.js`. It is pure and deterministic (same item, same ability). `tools/verify.js` fuzzes it against all 5,896 merges and runs real-time battles on the results.
-- If the baked fallback changes, edit `essences.js`/`bake.js`, run `node tools/bake.js`, then `node tools/verify.js`.
-- The bridge caches every recipe. The same pair always returns the same item, and A+B equals B+A (see the id scheme below for how lead/follow order survives that).
-- Engine: **web** (vanilla JS PWA in `essence-protocol/`).
+Designs that can't be enumerated are pure functions in `js/designs.js` of the records they're made of:
+- `lineage(pair, rec)`: a splice of two genomes (17M pairs). Dominant main leads, parents' subs carry on, the parents' strongest base stats become the pedigree.
+- `trait(genome, seed, info, rec)`: one individual daemon (a 32-bit seed). Codes come from the genome's `aff`, shuffled by the seed, with ancestors' codes carried on.
+- Seeds and the %RARITY% modulator (`modFor`) keep the bridge-era formulas, so rolls in existing saves are unchanged.
 
-## How a game merge maps onto a bridge merge
-Each merge identity (key like `FW-Em1Li2`) is sent as a two-item `POST /merge`:
-- `a` is the lead main plus the subs bound to it: `{"id": "ep.t.lead.F.Em", "name": "Fire (Ember)", "element": "fire", "role": "lead", "essences": [...]}`
-- `b` is the second main plus its subs: `{"id": "ep.t.follow.W.Li", "name": "Water (Light)", ...}`
-- The **role is part of the id** because lead/follow order matters here (Fire-led Scald is not Water-led Steam), while the bridge treats A+B as B+A.
-- Techniques use the prefix `ep.t.` and daemon forms use `ep.f.`, so each identity has two independent recipes.
-- `context` carries the baked class, reaction, power and effects so the name fits what the merge does.
-- All ids match `^[A-Za-z0-9_.:\-]{1,128}$` and never contain `+`. `tools/verify.js` checks every technique, form and item request plus thousands of sampled lineages and traits, and checks that no two collide as an unordered pair.
+Rules:
+- Never invent spells, names or recipes in game code. Change `essences.js` / `bake.js` / `designs.js`, run `node tools/bake.js`, then `node tools/verify.js`.
+- Everything is deterministic: the same merge, pair or seed always gives the same design.
+- In the browser `js/db.js` loads the shards in the background while the title screen is up; `ENGINE.rec()` is synchronous after that. In Node, requiring `js/db.js` reads `db/` from disk.
 
-### Live baking: every merge and splice goes through the bridge database
-| Kind (cache key) | Ids (a + b) | Asked when |
-|---|---|---|
-| `tech:<key>` | `ep.t.lead…` + `ep.t.follow…` | a merge is discovered |
-| `form:<key>` | `ep.f.lead…` + `ep.f.follow…` | a form is seen, bound, recompiled into or booted |
-| `item.<type>:<key>` | `ep.i.<type>.lead…` + `ep.i.<type>.follow…` | an item is forged (patch, ward, lattice, catalyst, script, cell) |
-| `breed:<genomeA>~<genomeB>` | `ep.b.<genomeA>` + `ep.b.<genomeB>` (`.twin` on b if equal) | two daemons are spliced (sorted pair, so A×B = B×A) |
-| `trait:<genome>@<seed>` | `ep.d.<genome>` + `ep.s.<seed>` | a daemon joins the player, and again after each recompile |
-
-- Every context carries `SEED` and a `%RARITY%` modulator (`modFor` in `js/bridge.js`): a deterministic roll from the seed plus the merge's makeup. **The roll decides the tier** (common to legendary), not the model's `rarity` field. The tier sets the scope: technique effect count and power, item quality, lineage inheritance and pedigree, and the number of trait effects.
-- Pure mappings (keep them deterministic; `verify.js` fuzzes all three): `abilityFrom(item, baked, mod)`, `offspringFrom(item, pair, mod)` (the offspring's genome and attunements come only from the parents' essences) and `traitFrom(item, mod, ancestryCodes)` (codes from `TRAITS`: utilities, battle passives, menu actives).
-- Traits and pedigrees are plain data on the daemon (`d.trait.stats`, `d.pedigree`). `engine.js` applies them in `calcStats`, and party utilities reach battles as `Battle({ bonus: { xp, bind } })`.
-- **Outbox**: every request made during play (`record` defaults to true) is kept in `localStorage` (`ep-bridge-outbox-v1`) until the database has it. The game registers a resolver with `BRIDGE.init({ rec })` so waiting requests can be rebuilt. When `health()` comes back online the outbox replays, and while the bridge is down it is checked every 60 s. Priorities: 2 = play event, 1 = backlog, 0 = bulk (bulk requests are not recorded).
-
-The request's `context` asks the model to design a combat technique. Its `tags` should include one type from `strike, barrage, siphon, hex, ward, mend, field` and any effect words the engine knows (burn, freeze, chill, static, root, corrupt, lullaby, blind, soak, petrify, pierce, crit, echo, delay, drain, heal, shield, guard, overclock, haste, veil, regen, wash, cleanse, priority).
-
-What the game does with the response (`abilityFrom`):
-- **Class** comes from the type tag, or else from keywords in the name, description and tags, or else the lattice's class.
-- **Rarity** (`common` to `legendary`) sets base power, Flux cost, instability, accuracy and effect strength. Higher rarity is stronger and riskier.
-- **`stats`** (any keys): attack-like keys drive damage; defense-like keys drive shield, heal and drain; special-like keys drive effect chances; speed-like keys give priority and extra Barrage hits.
-- **Effect words** anywhere in the name, description or tags become effects. Each class also keeps its core effect (Siphon drains, Mend heals, Ward shields, Hex applies a status).
-- `name` and `description` become the spell's name and text everywhere (hotbar, codex, tooltips, battle log, forge items).
-- Unknown fields are kept in the local cache.
-- Results are cached in the browser (`localStorage`, key `ep-bridge-cache-v1`) and applied at boot.
-- A 200 with `cached: false` shows a "FriedrichBridge named…" discovery toast.
-
-## Connection
-- **Run the game through the proxy**: `python essence-protocol/tools/serve.py` serves the game on `http://127.0.0.1:8090` and forwards `/bridge/*` to the bridge.
-  - The browser only talks to its own origin (no CORS), and the proxy adds the key server side, so the key never reaches the browser.
-  - The proxy refuses `/merge/reset`.
-- Bridge base URL: `http://127.0.0.1:8765`. The port is `port` in `C:\Users\Albert\FriedrichBridge\config.json`. The game must **not** use 8765 itself, nor 8080 (FriedrichAI's engine listens on 127.0.0.1:8080), so serve it on 8090.
-- Auth: the proxy reads the key from the `FRIEDRICH_BRIDGE_KEY` env var, or from `essence-protocol/bridge.local.json` (gitignored; copy `bridge.example.json`). **Never commit the key.**
-- Start the bridge with `C:\Users\Albert\FriedrichBridge\start_bridge.bat`. Ollama must be running (`ollama serve` or the tray app).
-- Liveness: `GET /health` (the game calls it on load and from System > FriedrichBridge > Test connection).
-- A direct endpoint (no proxy) can be set in System > FriedrichBridge > Endpoint. It needs the key in the browser and CORS enabled on the bridge, so it is not recommended.
-- The hosted artifact link cannot reach localhost. There the game always uses the baked names.
-
-## Handling every outcome (implemented in `js/bridge.js`)
-| Result | Meaning | Game does |
-|---|---|---|
-| 200 `cached: true` | Known recipe | Apply the name silently |
-| 200 `cached: false` | New recipe | Apply it and show a discovery toast |
-| 422 with `retryable: false` | Model gave bad output twice | Keep the baked name and don't retry this merge again this session |
-| 422 with `detail` as a list | Our request was malformed | `console.error` (a game bug) and no retry |
-| 502 / 503 / 504 with `retryable: true` | AI backend error, down, or timed out | Retry with backoff 2s, 5s, 10s (max 3), then mark it "try again later" |
-| 404 | Configured Ollama model not installed | Status `error` with a clear message, and stop calling |
-| 401 | Wrong or missing key | Status `error`, and stop calling |
-| Connection refused / proxy 503 `bridge_down` | Bridge not running | Status `offline` ("run start_bridge.bat"), keep baked names, and drop the queue |
-
-Timing:
-- Calls are async and never block the game loop or combat.
-- Only one merge is in flight at a time (a single queue), and duplicate requests for the same key share one promise.
-- The client and proxy timeouts are 180 s (the bridge's `merge_timeout` is 150 s, including queue time). A local qwen3:8b needs 15-40 s per design once loaded; the bridge sends `keep_alive` and `think: false` so it stays loaded and skips thinking.
-- On load the game asks for everything the player has met (party forms and traits first, then kernels, lineages, techniques, forms, forged items) at backlog priority; anything unanswered waits in the outbox. "Design the whole lattice…" queues all 5,896 techniques at bulk priority.
-
-## Other endpoints
-- `GET /merge/recipes?limit=50`: available as `BRIDGE.recipes(limit)` for a recipe-book view.
-- `GET /merge/items/{id}`: not needed yet (the game keys its cache by merge identity).
-- `POST /merge/reset` with `{"confirm": true}` is dev only. The game proxy refuses it, so call the bridge directly if you really mean it.
-
-## Quick test (key from the environment, never pasted into files)
-```bash
-curl -X POST http://127.0.0.1:8765/merge -H "X-API-Key: $FRIEDRICH_BRIDGE_KEY" -H "Content-Type: application/json" \
-  -d "{\"a\":{\"id\":\"ep.t.lead.F.Em\",\"name\":\"Fire (Ember)\"},\"b\":{\"id\":\"ep.t.follow.W\",\"name\":\"Water\"}}"
-```
-
-## Changing what flavor looks like
-Edit `merge_schema` and `merge_prompt` in `C:\Users\Albert\FriedrichBridge\config.json` and restart the bridge. Existing cached items keep their old shape. In the game, System > FriedrichBridge > "Forget local names" clears the browser cache; `/merge/reset` (dev only) regenerates on the bridge side. Unknown new fields on `item` are kept in the local cache.
+## Mobile
+- The overworld renders at 1 canvas px per CSS px (pixel art scaled with `image-rendering: pixelated`), light glows are cached sprites and the vignette is a CSS layer. Keep per-frame work allocation-free.
+- The D-pad is one pointer surface (sliding between directions works). The game saves and pauses on `visibilitychange`/`pagehide`, unlocks audio on the first touch, and vibrates on hits (setting in System).
+- Landscape phones get a side-by-side battle layout. Inputs are 16px and selectable (no iOS zoom). PNG icons live in `icons/`.
+- Bump `CACHE` in `sw.js` on every release; it precaches the code, icons and all of `db/`.
 
 ## Checks
-- `node essence-protocol/tools/bake.js --check`: the baked table is fresh
-- `node essence-protocol/tools/verify.js`: table sanity, live-bake id mapping for every kind, modulator, fuzzed ability/lineage/trait mappings, map connectivity, 490 simulated battles, and the bridge client (outbox, replay, priority) against a fake bridge. Both checks ignore CRLF line endings.
+- `node essence-protocol/tools/bake.js --check`: the database is fresh (names the stale merges if not)
+- `node essence-protocol/tools/verify.js`: record sanity, completeness, 450 simulated battles, 6000 lineages and 6000 traits, map connectivity, and no bridge references. Both ignore CRLF line endings.
+- `python essence-protocol/tools/serve.py [--lan]`: local server on 8090 (with `--lan`, a phone on the same Wi-Fi can connect).

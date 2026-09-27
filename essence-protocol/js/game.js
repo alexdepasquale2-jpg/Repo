@@ -1,10 +1,10 @@
 /* Essence Protocol: game shell (overworld, battle UI, composer, menus, forge,
-   splicing, requests, rift). Rules live in engine.js and outcomes in
-   merges.baked.js, live-baked over by FriedrichBridge through bridge.js;
-   this file presents them and wires designs into the game's systems. */
+   splicing, requests, rift). Rules live in engine.js, every merge's outcome
+   and designs in the pre-baked merge database (db.js), and per-daemon and
+   per-splice designs in designs.js; this file presents them. */
 (function () {
   'use strict';
-  const E = window.ESSENCE, ENG = window.ENGINE, C = window.CONTENT, SP = window.SPRITES, M = window.MERGES, BR = window.BRIDGE;
+  const E = window.ESSENCE, ENG = window.ENGINE, C = window.CONTENT, SP = window.SPRITES, DB = window.MERGE_DB, DZ = window.DESIGNS;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -13,7 +13,7 @@
   const SAVE_KEY = 'essence-protocol-save-v1';
   const RARITY = ['Base', 'Compound', 'Resonant', 'Trinity', 'Anomaly'];
   const TIER = ['Seed', 'Build', 'Release', 'Prime'];
-  const ALL_KEYS = Object.keys(M.table);
+  const ALL_KEYS = E.enumerateAll(); // the database holds exactly these, in this order
   const BY_TIER = [0, 1, 2, 3].map(t => ALL_KEYS.filter(k => E.parseKey(k).subs.length === t));
   const pairTotal = pk => (pk[0] === pk[1] ? 64 : 470);
 
@@ -30,7 +30,8 @@
   const npcs = map.npcs.map(n => Object.assign({}, n));
 
   function defaults(s) {
-    s.settings = Object.assign({ speed: 'normal', tips: 'compact', auto: false, bridge: true }, s.settings || {});
+    s.settings = Object.assign({ speed: 'normal', tips: 'compact', auto: false, haptics: true }, s.settings || {});
+    delete s.settings.bridge; // FriedrichBridge (live AI designs) is retired
     s.tips = s.tips || [];
     s.quests = s.quests || [];
     s.stats = Object.assign({ reacts: 0, wild: 0, forged: 0, binds: 0, spliced: 0 }, s.stats || {});
@@ -73,8 +74,8 @@
   function adopt(s) {
     S = defaults(s);
     discovered = new Set(s.discovered); seen = new Set(s.seen); boundForms = new Set(s.bound);
-    for (const list of [S.party, S.box]) for (const d of list) d.memory = d.memory.map(k => (k && M.table[k] ? k : null));
-    if (!S.settings.bridge) restoreBaked(); else applyAllCached();
+    for (const list of [S.party, S.box]) for (const d of list) d.memory = d.memory.map(k => (k && DB.has(k) ? k : null));
+    migrate();
     player.x = player.px = s.pos.x; player.y = player.py = s.pos.y; player.dir = s.pos.dir || 'down';
     follower.x = follower.px = player.x; follower.y = follower.py = player.y;
     ensureQuests();
@@ -130,103 +131,48 @@
   }
   const countPair = pk => { let n = 0; for (const k of discovered) if (k[0] === pk[0] && k[1] === pk[1]) n++; return n; };
 
-  // ------------------------------------------------------------------ live baking (FriedrichBridge)
-  // Every merge, form, forged item, splice lineage and daemon trait the player meets is asked of
-  // the bridge, which saves it in its database. A design replaces the baked text and mechanics;
-  // element typing stays with the essences. Offline, the baked lattice is used and the bridge's
-  // outbox keeps the requests until it is back.
-  const MECH = ['cls', 'power', 'hits', 'acc', 'flux', 'instab', 'prio', 'fx', 'damaging', 'self'];
-  const itemKind = kind => (kind.startsWith('item.') ? kind.slice(5) : null);
+  // ------------------------------------------------------------------ designs
+  // Techniques, forms and forged items are pre-baked per merge in the database. Traits (per
+  // daemon) and lineages (per splice) are designed by designs.js from the records they're made of.
   const ownedDaemons = () => (S ? S.party.concat(S.box) : []);
-  // `quiet` applies a design without celebrating it (used when loading).
-  function applyFlavor(kind, key, entry, quiet) {
-    if (!entry) return;
-    if (kind === 'breed') return registerLineage(key, entry, quiet);
-    if (kind === 'trait') return applyTraitDesign(key, entry, quiet);
-    const r = ENG.rec(key); if (!r) return;
-    if (!r.baked) { r.baked = { name: r.name, text: r.text, dName: r.dName }; for (const f of MECH) r.baked[f] = r[f]; }
-    if (kind === 'tech') {
-      r.name = entry.name; r.text = entry.description || r.baked.text; r.bridge = entry;
-      // The design replaces the ability itself; the %RARITY% modulator sets its tier and scope.
-      const base = Object.assign({}, r, r.baked);
-      r.mod = BR.modFor('tech', key, base);
-      const ab = BR.abilityFrom(entry, base, r.mod);
-      Object.assign(r, { cls: ab.cls, power: ab.power, hits: ab.hits, acc: ab.acc, flux: ab.flux, instab: ab.instab, prio: ab.prio, fx: ab.fx });
-      r.damaging = r.power > 0; r.self = r.cls === 'Mend' || r.cls === 'Ward';
-      r.bridgeTier = ab.tier;
-    } else if (kind === 'form') { r.dName = entry.name; r.dDesc = entry.description; r.dBridge = entry; }
-    else if (itemKind(kind)) {
-      const t = itemKind(kind);
-      (r.items || (r.items = {}))[t] = { name: entry.name, desc: entry.description, mod: BR.modFor(kind, key, r) };
-      const b = S && S.bag[t + ':' + key];
-      // the forged item takes the design; if the technique was redesigned into another class since, keep its mechanics
-      if (b) { const it = forgeItem(key); if (it.kind === t) Object.assign(b, it, { count: b.count }); else Object.assign(b, { name: entry.name, lore: entry.description, tier: r.items[t].mod.tier }); }
-    }
-  }
-  function restoreBaked() {
-    for (const k of ALL_KEYS) { const r = ENG.rec(k); if (r.baked) { r.name = r.baked.name; r.text = r.baked.text; r.dName = r.baked.dName; for (const f of MECH) r[f] = r.baked[f]; delete r.bridge; delete r.dBridge; delete r.dDesc; delete r.bridgeTier; delete r.mod; delete r.items; } }
-  }
-  function applyAllCached() {
-    for (const [ck, entry] of Object.entries(BR.allCached())) {
-      const i = ck.indexOf(':'), kind = ck.slice(0, i), key = ck.slice(i + 1);
-      if (bridgeKeyOk(key, kind) && (S || !['breed', 'trait'].includes(kind))) applyFlavor(kind, key, entry, true);
-    }
-  }
-  const bridgeOn = () => !!(BR && S && S.settings.bridge);
-  function bridgeKeyOk(key, kind) {
-    if (kind === 'breed') { const ks = key.split('~'); return ks.length === 2 && ks.every(k => !!M.table[k]); }
-    if (kind === 'trait') { const [k, s] = key.split('@'); return !!M.table[k] && /^[0-9a-f]{8}$/.test(s || ''); }
-    return !!M.table[key] && BR.isKind(kind);
-  }
-  const traitRec = (d, k) => ({ name: ENG.rec(k || d.key).dName, gen: d.gen || 0, prism: !!d.prism, parentTier: d.parentTier || 0, ancestry: d.ancestry || [] });
-  // The bridge client asks this for the record behind a waiting request: null = not now, false = drop it.
-  function bridgeRec(key, kind) {
-    if (!bridgeKeyOk(key, kind)) return false;
-    if (!bridgeOn()) return null;
-    if (kind === 'breed') return { names: key.split('~').map(k => ENG.rec(k).dName) };
-    if (kind === 'trait') { const [k, seed] = key.split('@'); const d = ownedDaemons().find(x => x.seed === seed); return d && d.key === k ? traitRec(d, k) : false; }
-    return ENG.rec(key);
-  }
-  // pri: 2 = just happened (default), 1 = backlog, 0 = bulk. Resolves with the design or null.
-  function flavorOf(key, kind, pri) {
-    const rec = bridgeRec(key, kind);
-    if (!rec) return Promise.resolve(null);
-    const hit = BR.cached(key, kind);
-    if (hit) { applyFlavor(kind, key, hit); return Promise.resolve(hit); }
-    return BR.flavor(key, kind, rec, { pri: pri == null ? 2 : pri });
-  }
-  // Everything the player has met goes to the database, party first.
-  function recordKnown() {
-    if (!bridgeOn()) return;
-    for (const d of ownedDaemons()) { flavorOf(d.key, 'form', 1); requestTrait(d, 1); }
-    for (const kn of S.kernels) flavorOf(kn.pair, 'breed', 2);
-    for (const d of ownedDaemons()) if (d.line && d.line.pair) flavorOf(d.line.pair, 'breed', 1);
-    for (const d of S.party) for (const k of d.memory) if (k) flavorOf(k, 'tech', 1);
-    for (const k of discovered) flavorOf(k, 'tech', 1);
-    for (const k of seen) flavorOf(k, 'form', 1);
-    for (const id of Object.keys(S.bag)) { const i = id.indexOf(':'), t = id.slice(0, i), k = id.slice(i + 1); if (M.table[k] && BR.ITEM_TYPES[t]) flavorOf(k, 'item.' + t, 1); }
-  }
-
-  // ---- daemon traits: one design per individual (genome + seed), evolving with recompiles and splices
-  const traitKeyOf = d => BR.traitKey(d.key, d.seed);
-  // a trait asked for in play (not backlog) gets a full reveal when it arrives
-  function requestTrait(d, pri) { if (!d.seed) d.seed = newSeed(); if (pri == null || pri === 2) d.revealTrait = true; return flavorOf(traitKeyOf(d), 'trait', pri); }
-  function applyTraitDesign(tkey, entry, quiet) {
-    const [k, seed] = tkey.split('@');
-    const d = ownedDaemons().find(x => x.seed === seed);
-    if (!d || d.key !== k || (d.trait && d.trait.key === tkey)) return;
-    const prev = d.trait;
-    const t = BR.traitFrom(entry, BR.modFor('trait', tkey, traitRec(d, k)), (d.ancestry || []).flatMap(a => a.codes || []));
-    d.trait = Object.assign({ key: tkey }, t);
+  const traitInfo = d => ({ gen: d.gen || 0, prism: !!d.prism, parentTier: d.parentTier || 0, ancestry: d.ancestry || [] });
+  const traitKeyOf = d => DZ.traitKey(d.key, d.seed);
+  // Gives a daemon the trait its genome and seed design. Returns the previous trait if it changed.
+  function designTrait(d) {
+    if (!d.seed) d.seed = newSeed();
+    if (d.trait && d.trait.key === traitKeyOf(d)) return null;
+    const prev = d.trait || null;
+    d.trait = DZ.trait(d.key, d.seed, traitInfo(d), ENG.rec);
     const mx = ENG.calcStats(d).hp; if (d.hp > mx) d.hp = mx;
-    const live = !!d.revealTrait; delete d.revealTrait;
-    if (!quiet) celebrateTrait(d, prev, live);
+    return prev || false;
   }
-  // Recompiling evolves the trait: the new genome asks for a design with the old trait as its ancestor.
+  // Recompiling evolves the trait: the new genome is designed with the old trait as its ancestor.
   function evolveTrait(d) {
     if (d.trait) d.ancestry = [{ name: d.trait.name, codes: d.trait.fx.map(f => f.code) }].concat(d.ancestry || []).slice(0, 3);
-    requestTrait(d, 2);
+    const prev = designTrait(d);
+    if (prev !== null) celebrateTrait(d, prev || null, true);
   }
+  // Saves from the FriedrichBridge era: traits and lineages that were still waiting for the bridge
+  // are designed now, forged items take their pre-baked design, and the bridge's browser data goes.
+  function migrate() {
+    for (const d of ownedDaemons()) {
+      delete d.revealTrait;
+      designTrait(d);
+      if (d.line && d.line.pair && !d.line.name && d.line.pair.split('~').every(k => DB.has(k))) {
+        const l = DZ.lineage(d.line.pair, ENG.rec);
+        Object.assign(d.line, { name: l.name, desc: l.desc, tier: l.tier, odds: l.odds });
+        d.pedigree = d.pedigree || l.pedigree;
+      }
+    }
+    for (const it of Object.values(S.bag)) {
+      const k = it.id.slice(it.id.indexOf(':') + 1);
+      if (!DB.has(k)) continue;
+      const fresh = forgeItem(k);
+      if (fresh.kind === it.kind) Object.assign(it, fresh, { count: it.count });
+    }
+    for (const k of ['ep-bridge-cache-v1', 'ep-bridge-outbox-v1', 'ep-bridge-conf']) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+  }
+
   // Party-wide trait utilities (daemons in storage don't count), capped per trait.
   const TRAIT_CAP = { forage: 80, tutor: 50, binder: 40, smith: 60, nurture: 70, mender: 12, fortune: 200, archive: 80, lure: 60, shroud: 60 };
   function partyTrait(code) {
@@ -235,7 +181,7 @@
     for (const d of S.party) if (d.trait) for (const f of d.trait.fx) if (f.code === code) v += f.mag;
     return Math.min(TRAIT_CAP[code] || 100, v);
   }
-  const traitStrength = t => t.fx.reduce((s, f) => s + (f.code === 'warp' ? 120 / f.mag : f.code === 'transmute' ? 2 / f.mag : f.mag / BR.TRAITS[f.code][2][4]), 0);
+  const traitStrength = t => t.fx.reduce((s, f) => s + (f.code === 'warp' ? 120 / f.mag : f.code === 'transmute' ? 2 / f.mag : f.mag / DZ.TRAITS[f.code][2][4]), 0);
   const traitChip = t => `<span class="rar r${t.tier}" data-tip="t:${esc(t.key)}">${TIER_WORD[t.tier]}${t.odds > 1 ? ' · 1 in ' + t.odds : ''}</span>`;
 
   // ---- discovery toasts for designs that are statistically unique or special
@@ -262,41 +208,44 @@
   const techScore = r => ((r.damaging ? r.power * r.hits * Math.min(r.acc, 100) / 100 : 0) + r.fx.reduce((s, f) => s + (['heal', 'shield', 'drain'].includes(f.code) ? f.mag : f.chance * 0.3), 0)) / Math.max(3, r.flux);
   function celebrate(id, o) { if (!S || S.specials.includes(id)) return false; S.specials.push(id); if (o.reveal && canReveal()) RV.play(o.reveal); else discoveryToast(o); return true; }
   const markCelebrated = id => { if (S && !S.specials.includes(id)) S.specials.push(id); return true; };
-  // A technique is special when it rolled epic or better, or when it tops the designed techniques you know.
+  // How rare a merge's structure is across the whole database: the share of merges at least this rare.
+  function rarityRoll(r) {
+    const n = DB.rarity.slice(r.rarity).reduce((a, b) => a + b, 0), pct = Math.max(0.01, Math.round(n / DB.count * 10000) / 100);
+    return { pct, odds: Math.max(1, Math.round(100 / pct)) };
+  }
+  // A technique is special when it is a Trinity or an Anomaly, or when it tops the techniques you know.
   function celebrateTech(key) {
     const r = ENG.rec(key);
-    if (!S || !r.bridge || !r.mod || !discovered.has(key)) return false;
+    if (!S || !discovered.has(key)) return false;
     if (revealed.has('tech:' + key)) return markCelebrated('tech:' + key);
-    const pool = [...discovered].filter(k => k !== key).map(k => ENG.rec(k)).filter(x => x.bridge);
+    const pool = [...discovered].filter(k => k !== key).map(k => ENG.rec(k));
     const p = percentile(techScore(r), pool.map(techScore)), outlier = pool.length >= 12 && p >= 0.95;
-    if (r.mod.tier < 3 && !outlier) return false;
-    return celebrate('tech:' + key, { kicker: r.mod.tier >= 3 ? `${TIER_WORD[r.mod.tier]} technique` : 'Statistically unique technique', name: r.name, tier: Math.max(r.mod.tier, 2), odds: r.mod.odds,
-      lines: [`${r.cls}${r.damaging ? ` · power ${r.power}${r.hits > 1 ? '×' + r.hits : ''}` : ''} · Flux ${r.flux} · ${r.fx.map(f => esc(ENG.describeFx(f))).join(', ')}`,
-        outlier ? `Top ${topPct(p)}% of the ${pool.length + 1} designed techniques you know, by value per Flux` : `Rolled ${r.mod.pct}% on the rarity modulator`],
-      reveal: { kicker: r.mod.tier >= 3 ? `${TIER_WORD[r.mod.tier]} technique` : 'Statistically unique technique', parts: genomeParts(key),
-        design: Object.assign(techDesign(key), { note: outlier ? `Top ${topPct(p)}% of the ${pool.length + 1} designed techniques you know, by value per Flux` : '' }) } });
+    if (r.rarity < 3 && !outlier) return false;
+    const roll = rarityRoll(r), kicker = r.rarity >= 3 ? `${RARITY[r.rarity]} technique` : 'Statistically unique technique';
+    const note = outlier ? `Top ${topPct(p)}% of the ${pool.length + 1} techniques you know, by value per Flux` : `${roll.pct}% of the lattice is this rare`;
+    return celebrate('tech:' + key, { kicker, name: r.name, tier: Math.max(r.rarity, 2), odds: roll.odds,
+      lines: [`${r.cls}${r.damaging ? ` · power ${r.power}${r.hits > 1 ? '×' + r.hits : ''}` : ''} · Flux ${r.flux} · ${r.fx.map(f => esc(ENG.describeFx(f))).join(', ')}`, note],
+      reveal: { kicker, parts: genomeParts(key), design: Object.assign(techDesign(key), { note }) } });
   }
   function celebrateTrait(d, prev, live) {
     const t = d.trait, others = ownedDaemons().filter(x => x !== d && x.trait);
     const newCodes = t.fx.filter(f => !others.some(x => x.trait.fx.some(g => g.code === f.code)));
     const p = percentile(traitStrength(t), others.map(x => traitStrength(x.trait))), outlier = others.length >= 5 && p >= 0.9;
-    const lines = [t.fx.map(f => esc(BR.describeTrait(f))).join(' · '), prev ? `Evolved from ${esc(prev.name)}` : '',
+    const lines = [t.fx.map(f => esc(DZ.describeTrait(f))).join(' · '), prev ? `Evolved from ${esc(prev.name)}` : '',
       outlier ? `Strongest trait of your ${others.length + 1} daemons (top ${topPct(p)}%)` : newCodes.length ? `New trait type: ${newCodes.map(f => f.code).join(', ')}` : `Rolled ${t.pct}% on the rarity modulator`];
     const special = t.tier >= 2 || outlier || newCodes.length;
     if (live && canReveal()) {
       if (special) markCelebrated('trait:' + t.key);
-      RV.play({ kicker: `${prev ? 'Evolved trait' : 'Trait'} · ${dName(d)}`, parts: genomeParts(d.key), sprite: d.key, prism: d.prism, design: Object.assign(traitDesign(t), { note: lines.slice(1).filter(Boolean).join(' · ') }) });
-      return;
+      return RV.play({ kicker: `${prev ? 'Evolved trait' : 'Trait'} · ${dName(d)}`, parts: genomeParts(d.key), sprite: d.key, prism: d.prism, design: Object.assign(traitDesign(t), { note: lines.slice(1).filter(Boolean).join(' · ') }) });
     }
     if (special) celebrate('trait:' + t.key, { kicker: `${TIER_WORD[t.tier]} trait · ${dName(d)}`, name: t.name, tier: Math.max(t.tier, outlier ? 3 : 1), odds: t.odds, lines });
-    else toast(`✦ ${esc(dName(d))}'s trait: <b>${esc(t.name)}</b> · ${esc(BR.describeTrait(t.fx[0]))}`, 'rare');
+    else toast(`✦ ${esc(dName(d))}'s trait: <b>${esc(t.name)}</b> · ${esc(DZ.describeTrait(t.fx[0]))}`, 'rare');
   }
-  function celebrateItem(key, t) {
-    const it = ENG.rec(key).items && ENG.rec(key).items[t];
-    if (!it) return false;
-    if (revealed.has(`item.${t}:${key}`)) return it.mod.tier >= 3 ? markCelebrated(`item.${t}:${key}`) : true;
-    if (it.mod.tier < 3) return false;
-    return celebrate(`item.${t}:${key}`, { kicker: `${TIER_WORD[it.mod.tier]} ${BR.ITEM_TYPES[t][0]}`, name: it.name, tier: it.mod.tier, odds: it.mod.odds, lines: [esc(it.desc), `Quality from rolling ${it.mod.pct}% on the rarity modulator`] });
+  function celebrateItem(key) {
+    const it = ENG.rec(key).item;
+    if (revealed.has('item:' + key)) return it.tier >= 3 ? markCelebrated('item:' + key) : true;
+    if (it.tier < 3) return false;
+    return celebrate('item:' + key, { kicker: `${TIER_WORD[it.tier]} ${KIND_NAME[it.kind]}`, name: it.name, tier: it.tier, odds: it.odds, lines: [esc(it.lore), `Quality from rolling ${it.pct}% on the rarity modulator`] });
   }
 
   // ---- merge reveals (js/reveal.js): converge, fuse, rarity roll, powers. Never during battle.
@@ -312,35 +261,18 @@
   const fxChip = f => ({ t: ENG.describeFx(f), c: E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf' });
   function techDesign(key) {
     const r = ENG.rec(key);
-    if (!r.bridge || !r.mod) return null;
-    return { name: r.name, desc: r.text, tier: r.mod.tier, pct: r.mod.pct, odds: r.mod.odds,
+    const roll = rarityRoll(r);
+    return { name: r.name, desc: r.text, tier: r.rarity, tierName: RARITY[r.rarity], pct: roll.pct, odds: roll.odds,
       chips: [{ t: r.cls, c: ENG.isAttack(key) ? 'atk' : 'act' }].concat(r.fx.map(fxChip)),
       bars: (r.damaging ? [{ label: 'Power', v: r.power * r.hits, max: 160, text: r.power + (r.hits > 1 ? '×' + r.hits : '') }] : []).concat([{ label: 'Flux cost', v: r.flux, max: 30 }, { label: 'Instability', v: r.instab, max: 60, text: r.instab + '%' }]) };
   }
   const traitDesign = t => ({ name: t.name, desc: t.desc, tier: t.tier, pct: t.pct, odds: t.odds,
-    chips: t.fx.map(f => ({ t: BR.describeTrait(f), c: f.cat === 'passive' ? 'pas' : f.cat === 'active' ? 'act' : 'utl' })),
-    bars: t.fx.filter(f => !['warp', 'transmute'].includes(f.code)).map(f => ({ label: f.code, v: f.mag, max: BR.TRAITS[f.code][2][4], text: f.mag })) });
-
-  if (BR) {
-    applyAllCached();
-    BR.init({ rec: bridgeRec });
-    BR.on(ev => {
-      if (ev.type === 'flavor' && bridgeOn()) {
-        applyFlavor(ev.kind, ev.key, ev.entry);
-        const t = itemKind(ev.kind);
-        if (ev.kind === 'tech' && discovered.has(ev.key)) { if (!celebrateTech(ev.key) && ev.fresh) toast(`✦ FriedrichBridge designed <b>${esc(ev.entry.name)}</b> · ${ENG.rec(ev.key).cls} <span class="rar r${ENG.rec(ev.key).mod.tier}">${TIER_WORD[ENG.rec(ev.key).mod.tier]}</span>`, 'rare'); }
-        else if (ev.kind === 'form' && ev.fresh && seen.has(ev.key)) toast(`✦ FriedrichBridge named a form: <b>${esc(ev.entry.name)}</b>`, 'rare');
-        else if (t && S && S.bag[t + ':' + ev.key] && !celebrateItem(ev.key, t) && ev.fresh) toast(`✦ FriedrichBridge named your item: <b>${esc(ev.entry.name)}</b>`, 'rare');
-        if (mode === 'battle' && B && !B.over && $('bpanel').classList.contains('hidden')) { buildControls(); if (ui) { ui[0].name = dName(B.act(0)); ui[1].name = dName(B.act(1)); renderCards(); } }
-        if (mode === 'sheet') renderSheet();
-      } else if (ev.type === 'status' && mode === 'sheet' && ['system', 'splice'].includes(sheetTab)) renderSheet();
-    });
-  }
+    chips: t.fx.map(f => ({ t: DZ.describeTrait(f), c: f.cat === 'passive' ? 'pas' : f.cat === 'active' ? 'act' : 'utl' })),
+    bars: t.fx.filter(f => !['warp', 'transmute'].includes(f.code)).map(f => ({ label: f.code, v: f.mag, max: DZ.TRAITS[f.code][2][4], text: f.mag })) });
 
   function markDiscovered(key, silent) {
     if (discovered.has(key)) return;
     discovered.add(key);
-    flavorOf(key, 'tech');
     const r = ENG.rec(key);
     if (!silent) toast(`◈ New merge: <b>${esc(r.name)}</b> <span class="rar r${r.rarity}">${RARITY[r.rarity]}</span>`, r.rarity >= 3 ? 'myth' : r.rarity === 2 ? 'rare' : '');
     if (S) {
@@ -364,7 +296,7 @@
   function upgradeKey(key, random) {
     const p = E.parseKey(key);
     if (p.subs.length >= 3) return key;
-    const opts = E.slotsFor(p.a, p.b).filter(t => !p.subs.some(u => u.s === t.s && u.h === t.h)).map(t => E.makeKey(p.a, p.b, p.subs.concat([t]))).filter(k => M.table[k]);
+    const opts = E.slotsFor(p.a, p.b).filter(t => !p.subs.some(u => u.s === t.s && u.h === t.h)).map(t => E.makeKey(p.a, p.b, p.subs.concat([t]))).filter(k => DB.has(k));
     if (!opts.length) return key;
     return random ? opts[rnd(opts.length)] : opts[0];
   }
@@ -448,6 +380,17 @@
       o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + dur);
     } catch (e) { /* no audio */ }
   }
+  // Short vibrations on phones that support them (Android); a setting turns them off.
+  function buzz(ms) { if (S && S.settings.haptics === false) return; try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* ignore */ } }
+  // iOS only lets audio start inside a user gesture: unlock it on the first touch.
+  addEventListener('pointerdown', function unlock() {
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { /* no audio */ }
+    removeEventListener('pointerdown', unlock);
+  });
+  // Phones background and kill apps without warning: save and pause whenever the page is hidden.
+  function onHide() { if (mode === 'battle' && B && B.rt && !B.over) setPaused(true); if (S && mode !== 'title' && mode !== 'starter') save(); }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); });
+  addEventListener('pagehide', onHide);
   const NOTE = { F: 392, W: 330, E: 196, A: 523 };
   function castSfx(key) { const p = E.parseKey(key); beep(NOTE[p.a], 0.12, 'square'); setTimeout(() => beep(NOTE[p.b] * 1.5, 0.12, 'triangle'), 70); p.subs.forEach((t, i) => setTimeout(() => beep(600 + i * 180, 0.08, 'sine'), 140 + i * 60)); }
 
@@ -462,9 +405,11 @@
   const OPP = { up: 'down', down: 'up', left: 'right', right: 'left' };
   const rustle = new Map();
 
+  // The overworld is pixel art, so it renders at one canvas pixel per CSS pixel and the browser
+  // scales it up (image-rendering: pixelated). On a 3x phone that is 9x fewer pixels to fill.
   function resize() {
-    dpr = Math.min(window.devicePixelRatio || 1, 2);
-    cv.width = Math.floor(innerWidth * dpr); cv.height = Math.floor(innerHeight * dpr);
+    dpr = 1;
+    cv.width = Math.floor(innerWidth); cv.height = Math.floor(innerHeight);
     zoom = Math.max(2, Math.round(Math.min(innerWidth / (TS * 12), innerHeight / (TS * 11))));
     vignette = null;
     if (bctx && !$('battle').classList.contains('hidden')) drawBattleBg();
@@ -747,17 +692,26 @@
       drawPerson(sx, sy, s, PAL.player, player.dir, fr, 'player', 0);
     } });
     actors.sort((a, b) => a.y - b.y).forEach(a => a.draw());
-    // additive lights
+    // additive lights: each glow is a cached sprite, not a new gradient every frame
     ctx.globalCompositeOperation = 'lighter';
-    for (const [lx, ly, r, col, a] of lights) {
-      const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, r);
-      g.addColorStop(0, `rgba(${col},${a})`); g.addColorStop(1, `rgba(${col},0)`);
-      ctx.fillStyle = g; ctx.fillRect(lx - r, ly - r, r * 2, r * 2);
-    }
+    for (const [lx, ly, r, col, a] of lights) { ctx.globalAlpha = Math.min(1, a); ctx.drawImage(glow(col, r), lx - r, ly - r); }
+    ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
     drawAmbient(dt, camX, camY, W, H, s, zoneAt(player.x, player.y));
-    if (!vignette) { vignette = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75); vignette.addColorStop(0, 'rgba(2,3,8,0)'); vignette.addColorStop(1, 'rgba(2,3,8,.72)'); }
-    ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
+    // the vignette is a CSS layer (#vignette), composited by the GPU
+  }
+  const glows = new Map();
+  function glow(col, r) {
+    const R = Math.max(1, Math.round(r)), id = col + '|' + R;
+    let c = glows.get(id);
+    if (!c) {
+      c = document.createElement('canvas'); c.width = c.height = R * 2;
+      const g = c.getContext('2d'), gr = g.createRadialGradient(R, R, 0, R, R, R);
+      gr.addColorStop(0, `rgba(${col},1)`); gr.addColorStop(1, `rgba(${col},0)`);
+      g.fillStyle = gr; g.fillRect(0, 0, R * 2, R * 2);
+      glows.set(id, c);
+    }
+    return c;
   }
 
   function frame(t) {
@@ -892,11 +846,23 @@
     } else if (e.key === 'Escape' && !$('sheet').classList.contains('hidden')) closeSheet();
   });
   addEventListener('keyup', e => { if (KEYMAP[e.key] === held) held = null; });
-  document.querySelectorAll('.dpad button').forEach(b => {
-    const on = e => { e.preventDefault(); held = b.dataset.dir; b.classList.add('on'); };
-    const off = e => { e.preventDefault(); if (held === b.dataset.dir) held = null; b.classList.remove('on'); };
-    b.addEventListener('pointerdown', on); b.addEventListener('pointerup', off); b.addEventListener('pointerleave', off); b.addEventListener('pointercancel', off);
-  });
+  // One touch surface for the whole D-pad: the direction follows the thumb, so sliding from
+  // ▲ to ▶ turns without lifting (separate buttons keep the first one pressed on touch screens).
+  {
+    const pad = document.querySelector('.dpad');
+    let pid = null;
+    const aim = e => {
+      const r = pad.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+      const dir = Math.hypot(dx, dy) < r.width * 0.12 ? null : Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'up' : 'down');
+      if (dir !== held && dir) buzz(6);
+      held = dir;
+      pad.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.dir === dir));
+    };
+    const end = e => { if (e.pointerId !== pid) return; pid = null; held = null; pad.querySelectorAll('button').forEach(b => b.classList.remove('on')); };
+    pad.addEventListener('pointerdown', e => { e.preventDefault(); pid = e.pointerId; pad.setPointerCapture(pid); aim(e); });
+    pad.addEventListener('pointermove', e => { if (e.pointerId === pid) aim(e); });
+    pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', end);
+  }
   $('aBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (!$('dialog').classList.contains('hidden')) advanceDialog(); else interact(); });
   $('menuBtn').addEventListener('click', () => { if (mode === 'world') openSheet('party'); });
   function setPad(on) { $('pad').classList.toggle('hidden', !on); if (!on) { held = null; document.querySelectorAll('.dpad button').forEach(b => b.classList.remove('on')); } }
@@ -973,7 +939,7 @@
     $('hud').classList.add('hidden');
     B = new ENG.Battle({ player: S.party, enemy: o.enemy, wild: o.wild, trainer: o.trainer ? { name: o.trainer.name } : null, discovered: new Set(discovered), bonus: { xp: partyTrait('tutor'), bind: partyTrait('binder') } });
     bctx = o;
-    for (const d of o.enemy) { seen.add(d.key); flavorOf(d.key, 'form'); }
+    for (const d of o.enemy) { seen.add(d.key); }
     ui = [snapshot(0), snapshot(1)];
     $('battle').classList.remove('hidden'); document.body.classList.add('inbattle');
     $('blog').innerHTML = '';
@@ -1213,7 +1179,7 @@
           else if (e.anim === 'buff' || e.anim === 'debuff') { const [x, y] = centerOf(spriteEl(e.side)); for (let i = 0; i < 10; i++) parts.push({ x: x + (Math.random() - 0.5) * 70, y: y + (e.anim === 'buff' ? 30 : -30), vx: 0, vy: e.anim === 'buff' ? -2.5 : 2.5, c: e.anim === 'buff' ? '#5dff9a' : '#ff5470', s: 3, life: 26 }); }
           else if (STATUS_COL[e.anim] && e.side != null) { const [x, y] = centerOf(spriteEl(e.side)); ring(x, y, 70, 20, STATUS_COL[e.anim], 400); burstAt(x, y, [STATUS_COL[e.anim]], 16, 0.8); }
           else if (e.anim === 'levelup') { beep(988, 0.2, 'triangle', 0.05); const [x, y] = centerOf(spriteEl(0)); sparkles(x, y, '#ffd23d', 24); }
-          else if (e.anim === 'bound') { beep(784, 0.15, 'sine'); setTimeout(() => beep(1046, 0.25, 'sine'), 150); const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, ['#46f3ff', '#ffffff', '#ffd23d'], 50); }
+          else if (e.anim === 'bound') { buzz([30, 60, 60]); beep(784, 0.15, 'sine'); setTimeout(() => beep(1046, 0.25, 'sine'), 150); const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, ['#46f3ff', '#ffffff', '#ffd23d'], 50); }
           else if (e.anim === 'bind') {
             const lat = bindLat || bestLattice();
             if (lat) { lat.count--; if (lat.count <= 0 && lat.id !== 'lattice:basic') delete S.bag[lat.id]; }
@@ -1224,6 +1190,7 @@
         }
         case 'hit':
           flashSprite(e.side, 'hit', 360);
+          if (e.side === 0 || e.crit) buzz(e.crit ? 35 : 15);
           dmgNum(e.side, (e.crit ? '✹' : '') + e.amount, e.crit ? 'crit' : '');
           if (e.crit || e.amount >= ui[e.side].max * 0.3) shakeArena();
           beep(e.crit ? 90 : 140, 0.08, 'square', 0.05);
@@ -1237,7 +1204,7 @@
         case 'switch': {
           ui[e.side] = snapshot(e.side);
           const el = spriteEl(e.side); el.classList.remove('faint', 'enter'); void el.offsetWidth; el.classList.add('enter');
-          paintSide(e.side); dirty = true; seen.add(e.key); flavorOf(e.key, 'form');
+          paintSide(e.side); dirty = true; seen.add(e.key);
           const [x, y] = centerOf(el); ring(x, y, 10, 90, MAINC(e.key[0]), 400);
           if (e.side === 0 && B.rt) { B.rt[0].queued = defaultAttack(); buildControls(); }
           break;
@@ -1572,6 +1539,7 @@
     hydrateCanvases(p);
   }
 
+  let boundNow = null; // a daemon bound this battle: its trait is revealed once the arena closes
   async function endBattle() {
     const res = B.result, o = bctx;
     await sleep(250);
@@ -1599,12 +1567,13 @@
       S.stats.binds++;
       if (d.prism) S.prisms.push(d.key);
       if (S.party.length < 6) S.party.push(d); else { S.box.push(d); toast(`${esc(dName(d))} was sent to Storage.`); }
-      flavorOf(d.key, 'form'); requestTrait(d);
+      designTrait(d); boundNow = d;
       questEvent('bind', { key: d.key });
     }
     for (const k of B.discovered) if (!discovered.has(k)) markDiscovered(k, true);
     $('battle').classList.add('hidden'); document.body.classList.remove('inbattle');
     mode = 'busy';
+    if (boundNow) { const d = boundNow; boundNow = null; await celebrateTrait(d, null, true); }
     if (res === 'lose') {
       for (const d of S.party) d.hp = ENG.calcStats(d).hp;
       player.x = player.px = follower.x = follower.px = S.lastHeal.x; player.y = player.py = follower.y = follower.py = S.lastHeal.y;
@@ -1643,7 +1612,7 @@
   async function riftTerminal() {
     mode = 'busy'; setPad(false);
     if (!S.won) { await say('Rift', ['A tear in the lattice, humming with every merge at once. It stays sealed until the Architect falls.']); mode = 'world'; setPad(true); return; }
-    const c = await choose('The Rift', `Endless floors of daemons drawn from the entire lattice, any of the ${M.count} genomes. Floors get harder, every fifth floor holds a guardian, and rewards grow as you descend. You recover 30% HP between floors and can leave after any floor. Your best: floor ${S.rift.best}.`, ['Enter the Rift', 'Not now']);
+    const c = await choose('The Rift', `Endless floors of daemons drawn from the entire lattice, any of the ${DB.count} genomes. Floors get harder, every fifth floor holds a guardian, and rewards grow as you descend. You recover 30% HP between floors and can leave after any floor. Your best: floor ${S.rift.best}.`, ['Enter the Rift', 'Not now']);
     if (c !== 0) { mode = 'world'; setPad(true); return; }
     startRiftFloor(1);
   }
@@ -1727,9 +1696,10 @@
         <button class="btn" data-no>Not now</button>`);
       card.querySelectorAll('[data-k]').forEach(b => { b.onclick = () => {
         const before = dName(d);
-        ENG.recompile(d, b.dataset.k); seen.add(d.key); boundForms.add(d.key); flavorOf(d.key, 'form'); evolveTrait(d);
+        ENG.recompile(d, b.dataset.k); seen.add(d.key); boundForms.add(d.key);
         closeModal();
         toast(`${esc(before)} recompiled into <b>${esc(ENG.rec(d.key).dName)}</b>!`, 'rare');
+        evolveTrait(d);
         res();
       }; });
       card.querySelector('[data-no]').onclick = () => { closeModal(); res(); };
@@ -1852,7 +1822,7 @@
 
   function sheetParty(body) {
     if (detailUid) return daemonDetail(body, detailUid);
-    const utils = Object.keys(TRAIT_CAP).map(c => [c, partyTrait(c)]).filter(([, v]) => v).map(([c, v]) => BR.describeTrait({ code: c, mag: v }));
+    const utils = Object.keys(TRAIT_CAP).map(c => [c, partyTrait(c)]).filter(([, v]) => v).map(([c, v]) => DZ.describeTrait({ code: c, mag: v }));
     body.innerHTML = `<h3>Party (${S.party.length}/6)</h3><div class="plist">${S.party.map(d => partyCard(d)).join('')}</div>
       <p class="fine">Daemons that sit out a battle still earn half XP, as long as they're standing.</p>
       ${utils.length ? `<p class="fine"><b>Party traits:</b> ${utils.map(esc).join(' · ')}${S.steps < S.repelUntil ? ` · repel active for ${S.repelUntil - S.steps} steps` : ''}</p>` : S.steps < S.repelUntil ? `<p class="fine">Repel active for ${S.repelUntil - S.steps} steps.</p>` : ''}
@@ -1932,25 +1902,24 @@
   const activeLeft = (d, code) => Math.max(0, ((d.cd || {})[code] || 0) - S.steps);
   function traitHTML(d) {
     const t = d.trait;
-    if (!t) return `<h3>Trait</h3><p class="fine">Seed ${esc(d.seed || '?')}. ${!bridgeOn() ? 'Traits are live-baked by FriedrichBridge. Turn bridge designs on in System.' : BR.status.state === 'online' ? 'FriedrichBridge is designing this daemon\'s trait…' : 'FriedrichBridge designs its trait once the bridge is reachable.'}</p>`;
+    if (!t) return '';
     const inParty = S.party.includes(d);
-    const fxRow = f => `<div class="tfx-row"><span class="kb ${f.cat === 'passive' ? 'pas' : f.cat === 'active' ? 'act' : 'utl'}">${f.cat}</span><span>${esc(BR.describeTrait(f))}</span>${f.cat === 'active' ? (() => { const left = activeLeft(d, f.code); return `<button class="btn small" data-active="${f.code}" ${left || !inParty ? 'disabled' : ''}>${left ? `${left} steps` : 'Use'}</button>`; })() : ''}</div>`;
+    const fxRow = f => `<div class="tfx-row"><span class="kb ${f.cat === 'passive' ? 'pas' : f.cat === 'active' ? 'act' : 'utl'}">${f.cat}</span><span>${esc(DZ.describeTrait(f))}</span>${f.cat === 'active' ? (() => { const left = activeLeft(d, f.code); return `<button class="btn small" data-active="${f.code}" ${left || !inParty ? 'disabled' : ''}>${left ? `${left} steps` : 'Use'}</button>`; })() : ''}</div>`;
     return `<h3>Trait</h3><div class="preview trait"><span class="genome">${traitChip(t)}<span class="fine">rolled ${t.pct}% · seed ${esc(d.seed)}</span></span>
       <div class="pn">${esc(t.name)}</div><p class="lore">${esc(t.desc)}</p>${t.fx.map(fxRow).join('')}
       ${t.fx.some(f => f.cat !== 'passive') && !inParty ? '<div class="fine">Utilities and actives only work while it is in the party.</div>' : ''}
-      ${t.key !== traitKeyOf(d) ? '<div class="fine">Evolving: FriedrichBridge is designing the next version of this trait for its new form.</div>' : ''}
       ${(d.ancestry || []).length ? `<div class="fine">Ancestry: ${d.ancestry.map(a => esc(a.name)).join(' ← ')}</div>` : ''}</div>`;
   }
   function lineHTML(d) {
     if (!d.line) return '';
     const l = d.line;
-    return `<h3>Lineage</h3><div class="kv two"><span class="lab">Line</span><b>${l.name ? `${esc(l.name)} <span class="rar r${l.tier}">${TIER_WORD[l.tier]}</span>` : 'unregistered, waiting for FriedrichBridge'}</b>
+    return `<h3>Lineage</h3><div class="kv two"><span class="lab">Line</span><b>${l.name ? `${esc(l.name)} <span class="rar r${l.tier}">${TIER_WORD[l.tier]}</span>` : 'unregistered'}</b>
       <span class="lab">Generation</span><b>${d.gen || 1}</b><span class="lab">Parents</span><b>${esc((l.parents || []).join(' × '))}</b>
       <span class="lab">Pedigree</span><b>${d.pedigree ? pedigreeText(d.pedigree) : 'none'}</b></div>${l.desc ? `<p class="lore">${esc(l.desc)}</p>` : ''}`;
   }
   function useTraitActive(d, f) {
     if (!f || activeLeft(d, f.code) || !S.party.includes(d)) return;
-    const setCd = () => { (d.cd || (d.cd = {}))[f.code] = S.steps + (f.code === 'warp' ? f.mag : BR.ACTIVE_CD[f.code]); };
+    const setCd = () => { (d.cd || (d.cd = {}))[f.code] = S.steps + (f.code === 'warp' ? f.mag : DZ.ACTIVE_CD[f.code]); };
     if (f.code === 'warp') {
       setCd(); closeSheet();
       player.x = player.px = follower.x = follower.px = S.lastHeal.x; player.y = player.py = follower.y = follower.py = S.lastHeal.y;
@@ -2054,7 +2023,7 @@
   }
 
   function codexMerges(body) {
-    const total = M.count, n = discovered.size;
+    const total = DB.count, n = discovered.size;
     const pairs = []; for (const a of E.MAINS) for (const b of E.MAINS) pairs.push(a + b);
     let list = [...discovered];
     if (codexFilter !== 'all') list = list.filter(k => k.slice(0, 2) === codexFilter);
@@ -2077,8 +2046,8 @@
 
   function codexForms(body) {
     const list = [...seen].sort((x, y) => E.parseKey(x).subs.length - E.parseKey(y).subs.length || (x < y ? -1 : 1));
-    body.innerHTML = `<div>Seen <b>${seen.size}</b> · Bound <b>${boundForms.size}</b> · Prismatic <b>${S.prisms.length}</b> of ${M.count} possible genomes</div>
-      <div class="progress"><i style="width:${seen.size / M.count * 100}%"></i></div>
+    body.innerHTML = `<div>Seen <b>${seen.size}</b> · Bound <b>${boundForms.size}</b> · Prismatic <b>${S.prisms.length}</b> of ${DB.count} possible genomes</div>
+      <div class="progress"><i style="width:${seen.size / DB.count * 100}%"></i></div>
       <p class="fine">Every merge identity is also a daemon genome. Recompiling adds a sub-essence and turns a daemon into a new form. About one wild daemon in 64 is prismatic.</p>
       <div id="fdet"></div>
       <div class="grid-sprites">${list.map(k => `<button class="gs ${boundForms.has(k) ? 'bound' : ''}" data-k="${k}"><canvas data-sprite="${k}" ${S.prisms.includes(k) ? 'data-prism="1"' : ''} width="64" height="64"></canvas><span>${esc(ENG.rec(k).dName)}</span></button>`).join('')}</div>`;
@@ -2136,14 +2105,11 @@
       case 'Field': it = { id: 'catalyst:' + k, kind: 'catalyst', main: r.a }; break;
       default: it = r.subs.length ? { id: 'script:' + k, kind: 'script', subs: [...new Set(r.subs.map(t => t.s))] } : { id: 'cell:' + k, kind: 'cell' };
     }
-    // A live-baked item carries the bridge's name, and its rarity roll adds quality.
-    const d = r.items && r.items[it.kind];
-    it.name = d ? d.name : r.name + ' ' + KIND_NAME[it.kind];
-    if (d) {
-      it.lore = d.desc; it.tier = d.mod.tier;
-      if (it.mag) it.mag += (it.kind === 'patch' ? 5 : 4) * d.mod.tier;
-      if (it.power) it.power = +(it.power + 0.05 * d.mod.tier).toFixed(2);
-    }
+    // The item's name, lore and quality roll are pre-baked per merge; the roll adds strength.
+    const d = r.item;
+    it.name = d.name; it.lore = d.lore; it.tier = d.tier;
+    if (it.mag) it.mag += (it.kind === 'patch' ? 5 : 4) * d.tier;
+    if (it.power) it.power = +(it.power + 0.05 * d.tier).toFixed(2);
     return it;
   }
   const KIND_NAME = { patch: 'Patch', ward: 'Module', lattice: 'Lattice', catalyst: 'Catalyst', script: 'Script', cell: 'Flux Cell' };
@@ -2152,7 +2118,7 @@
     const subs = E.SUB_ORDER.filter(s => (have[s] || 0) > 0);
     const mains = E.MAINS.filter(m => (have[m] || 0) > 0);
     const smith = partyTrait('smith');
-    body.innerHTML = `<h3>Nexus Forge</h3><p class="fine">Merge motes into items. The merge's class decides the item: Mend → Patch, Ward → Module, Hex → Lattice, Field → Catalyst, other merges with subs → Attune Script, plain merges → Flux Cell. Forging also records the merge in your Codex. FriedrichBridge names each item and rolls its quality, which strengthens it.${smith ? ` Smith trait: ${smith}% chance a forge is free.` : ''}</p>
+    body.innerHTML = `<h3>Nexus Forge</h3><p class="fine">Merge motes into items. The merge's class decides the item: Mend → Patch, Ward → Module, Hex → Lattice, Field → Catalyst, other merges with subs → Attune Script, plain merges → Flux Cell. Forging also records the merge in your Codex. Each merge's item, with its name and a quality roll that strengthens it, is pre-baked in the merge database.${smith ? ` Smith trait: ${smith}% chance a forge is free.` : ''}</p>
       <div class="motes">${Object.entries(have).filter(([, n]) => n > 0).map(([k, n]) => essChip(k, '×' + n)).join('') || '<span class="fine">You have no motes. Defeat daemons to collect them.</span>'}</div>
       <div id="fcmp"></div>`;
     if (!mains.length) return;
@@ -2170,28 +2136,24 @@
         S.stats.forged++; questEvent('forge');
         beep(440, 0.1, 'triangle'); setTimeout(() => beep(660, 0.12, 'triangle'), 90);
         toast(`Forged <b>${esc(it.name)}</b>.${free ? ' The smith trait saved your motes!' : ''}`);
-        const ik = 'item.' + it.kind;
-        if (canReveal()) { revealed.add(ik + ':' + k); revealed.add('tech:' + k); }
-        const design = flavorOf(k, ik).then(e => {
-          if (!e) return null;
-          const d = ENG.rec(k).items[it.kind], cur = S.bag[it.id] || it, tech = techDesign(k);
-          return { name: d.name, desc: d.desc, tier: d.mod.tier, pct: d.mod.pct, odds: d.mod.odds,
-            chips: [{ t: KIND_NAME[it.kind], c: 'inf' }, { t: itemDesc(cur), c: 'good' }].concat(tech ? tech.chips.slice(0, 4) : []),
-            bars: cur.mag ? [{ label: it.kind === 'patch' ? 'Heal' : 'Shield', v: cur.mag, max: 100, text: cur.mag + '%' }] : cur.power ? [{ label: 'Bind power', v: cur.power, max: 2.5, text: '×' + cur.power }] : [],
-            note: tech ? `Forged from ${tech.name}` : '' };
-        });
-        if (canReveal()) RV.play({ kicker: 'Nexus Forge · ' + KIND_NAME[it.kind], parts: genomeParts(k), design, fallbackName: it.name, fallbackChips: [{ t: itemDesc(it), c: 'good' }] });
-        else design.then(e => { if (e) celebrateItem(k, it.kind); });
+        if (canReveal()) {
+          revealed.add('item:' + k); revealed.add('tech:' + k);
+          const d = ENG.rec(k).item, tech = techDesign(k);
+          RV.play({ kicker: 'Nexus Forge · ' + KIND_NAME[it.kind], parts: genomeParts(k), design: { name: d.name, desc: d.lore, tier: d.tier, pct: d.pct, odds: d.odds,
+            chips: [{ t: KIND_NAME[it.kind], c: 'inf' }, { t: itemDesc(it), c: 'good' }].concat(tech.chips.slice(0, 4)),
+            bars: it.mag ? [{ label: it.kind === 'patch' ? 'Heal' : 'Shield', v: it.mag, max: 100, text: it.mag + '%' }] : it.power ? [{ label: 'Bind power', v: it.power, max: 2.5, text: '×' + it.power }] : [],
+            note: `Forged from ${tech.name}` } });
+        } else celebrateItem(k);
         save(); renderSheet();
       } }],
     });
   }
 
   // ---- splicing: two daemons make a kernel that compiles while you walk, then boots as a new
-  // daemon. The lineage (which essences lead, what it inherits, its pedigree and name) is a bridge
-  // design saved in the database, so the same two genomes always splice the same way. Each
-  // offspring also gets its own trait, evolved from its parents'.
-  const SPLICE_LEVEL = 10, SPLICE_REST = 300, KERNEL_STEPS = 60, KERNEL_MAX = 3, KERNEL_WAIT = 240;
+  // daemon. The lineage (which essences lead, what it inherits, its pedigree and name) is designed
+  // from the two parent genomes' database records, so the same two genomes always splice the same
+  // way. Each offspring also gets its own trait, evolved from its parents'.
+  const SPLICE_LEVEL = 10, SPLICE_REST = 300, KERNEL_STEPS = 60, KERNEL_MAX = 3;
   const STAT_NAME = { hp: 'HP', atk: 'Logic', def: 'Firewall', spd: 'Clock', flux: 'Flux', coh: 'Coherence' };
   const pedigreeText = p => Object.entries(p).map(([k, v]) => `+${v}% ${STAT_NAME[k]}`).join(', ');
   let spliceSel = [];
@@ -2203,29 +2165,16 @@
   const restLeft = d => Math.max(0, (d.splicedAt != null ? d.splicedAt + SPLICE_REST : 0) - S.steps);
   const canParent = d => d.level >= SPLICE_LEVEL && !restLeft(d);
   const kernelNeed = () => Math.ceil(KERNEL_STEPS * (1 - partyTrait('nurture') / 100));
-  // compiling -> (waiting for the bridge's lineage) -> ready; a kernel never waits forever
-  function kernelState(kn) {
-    const age = S.steps - kn.at, need = kernelNeed();
-    if (age < need) return 'compiling';
-    if (!bridgeOn() || BR.cached(kn.pair, 'breed')) return 'ready';
-    const trying = BR.inFlight(kn.pair, 'breed') || (['online', 'unknown'].includes(BR.status.state) && !BR.hasFailed(kn.pair, 'breed'));
-    return trying && age < need + KERNEL_WAIT ? 'waiting' : 'ready';
-  }
-  function tickKernels() {
-    for (const kn of S.kernels.slice()) {
-      const st = kernelState(kn);
-      if (st === 'waiting' && !BR.inFlight(kn.pair, 'breed')) flavorOf(kn.pair, 'breed', 2);
-      else if (st === 'ready') bootKernel(kn);
-    }
-  }
+  const kernelState = kn => (S.steps - kn.at < kernelNeed() ? 'compiling' : 'ready');
+  function tickKernels() { for (const kn of S.kernels.slice()) if (kernelState(kn) === 'ready') bootKernel(kn); }
   function startSplice(a, b) {
     for (const [x, n] of Object.entries(spliceCost(a, b))) S.motes[x] -= n;
-    const pair = BR.breedKey(a.key, b.key);
+    const pair = DZ.breedKey(a.key, b.key);
     const byKey = a.key <= b.key ? [a, b] : [b, a];
     const kn = {
       id: 'k' + Date.now().toString(36) + rnd(1e6).toString(36), pair, at: S.steps,
       parents: byKey.map(d => dName(d)),
-      seed: BR.seedOf([a.seed, b.seed, S.steps, rnd(1e9)].join('|')), // every offspring is its own individual
+      seed: DZ.seedOf([a.seed, b.seed, S.steps, rnd(1e9)].join('|')), // every offspring is its own individual
       gen: 1 + Math.max(a.gen || 0, b.gen || 0),
       parentTier: Math.round(((a.trait ? a.trait.tier : 0) + (b.trait ? b.trait.tier : 0)) / 2),
       ancestry: [a, b].filter(d => d.trait).map(d => ({ name: d.trait.name, codes: d.trait.fx.map(f => f.code) })),
@@ -2234,51 +2183,37 @@
     a.splicedAt = b.splicedAt = S.steps;
     S.kernels.push(kn);
     spliceSel = [];
-    flavorOf(pair, 'breed', 2);
     beep(392, 0.1, 'sine'); setTimeout(() => beep(587, 0.14, 'sine'), 100);
     toast(`⬢ Spliced <b>${esc(dName(a))}</b> × <b>${esc(dName(b))}</b>. The kernel compiles while you walk.`, 'rare', 4500);
     save();
   }
   function bootKernel(kn) {
     S.kernels.splice(S.kernels.indexOf(kn), 1);
-    const entry = bridgeOn() ? BR.cached(kn.pair, 'breed') : null;
-    const mod = BR.modFor('breed', kn.pair), o = BR.offspringFrom(entry, kn.pair, mod);
+    const o = DZ.lineage(kn.pair, ENG.rec);
     const d = ENG.createDaemon(o.key, 5, { attune: o.attune, extraAttune: 0 });
     Object.assign(d, { seed: kn.seed, gen: kn.gen, parentTier: kn.parentTier, ancestry: kn.ancestry, prism: kn.prism, pedigree: o.pedigree });
-    d.line = { pair: kn.pair, parents: kn.parents, name: entry ? entry.name : null, desc: entry ? entry.description : null, tier: entry ? mod.tier : null, odds: entry ? mod.odds : null };
+    d.line = { pair: kn.pair, parents: kn.parents, name: o.name, desc: o.desc, tier: o.tier, odds: o.odds };
     d.hp = ENG.calcStats(d).hp;
     seen.add(d.key); boundForms.add(d.key);
     if (d.prism) S.prisms.push(d.key);
     if (S.party.length < 6) S.party.push(d); else S.box.push(d);
     S.stats.spliced++;
-    flavorOf(d.key, 'form'); requestTrait(d);
+    designTrait(d);
     const where = S.party.includes(d) ? 'joined your party' : 'was sent to Storage';
     const lines = [`${genomeText(d.key)} · inherits ${o.attune.map(s => E.SUB[s].name).join(', ') || 'no sub-essences'}`, d.pedigree ? `Pedigree ${pedigreeText(d.pedigree)}` : '', `Generation ${d.gen} · ${where}`];
     const peers = ownedDaemons().filter(x => x !== d && x.pedigree), sum = p => Object.values(p || {}).reduce((s, v) => s + v, 0);
     const p = percentile(sum(d.pedigree), peers.map(x => sum(x.pedigree))), outlier = peers.length >= 4 && p >= 0.9;
     if (canReveal()) {
-      if (entry && (mod.tier >= 2 || outlier)) markCelebrated('line:' + kn.id);
+      if (o.tier >= 2 || outlier) markCelebrated('line:' + kn.id);
       const parents = kn.pair.split('~').map((k, i) => ({ color: MAINC(k[0]), label: kn.parents[i], role: 'parent' }));
       RV.play({ kicker: `Splice · kernel booted${d.prism ? ' · prismatic' : ''}`, parts: parents.concat(o.attune.map(s => essPart(s, 'inherited'))), sprite: d.key, prism: d.prism,
-        design: entry ? { name: `${entry.name}: ${dName(d)}`, desc: entry.description, tier: mod.tier, pct: mod.pct, odds: mod.odds,
-          chips: [{ t: genomeText(d.key), c: 'inf' }].concat(o.attune.map(s => ({ t: 'Inherits ' + E.SUB[s].name, c: 'good' })), [{ t: 'Generation ' + d.gen, c: 'pas' }]),
-          bars: Object.entries(d.pedigree || {}).map(([k, v]) => ({ label: STAT_NAME[k], v, max: 15, text: '+' + v + '%' })), note: where[0].toUpperCase() + where.slice(1) + (outlier ? ' · the strongest pedigree you own' : '') } : null,
-        fallbackName: dName(d), fallbackChips: [{ t: genomeText(d.key), c: 'inf' }].concat(o.attune.map(s => ({ t: 'Inherits ' + E.SUB[s].name, c: 'good' }))) });
-    } else if (entry && (mod.tier >= 2 || outlier)) celebrate('line:' + kn.id, { kicker: outlier && mod.tier < 2 ? 'Statistically unique lineage' : `${TIER_WORD[mod.tier]} lineage${d.prism ? ' · prismatic' : ''}`, name: `${entry.name}: ${dName(d)}`, tier: Math.max(mod.tier, 2), odds: mod.odds, lines });
-    else toast(`⬢ A kernel booted: <b>${esc(dName(d))}</b>${d.line.name ? ` of the <b>${esc(d.line.name)}</b> line` : ''}${d.prism ? ' ✦' : ''} ${where}.`, 'rare', 5000);
+        design: { name: `${o.name}: ${dName(d)}`, desc: o.desc, tier: o.tier, pct: o.pct, odds: o.odds,
+          chips: [{ t: genomeText(d.key), c: 'inf' }].concat(o.attune.map(s => ({ t: 'Inherits ' + E.SUB[s].name, c: 'good' })), [{ t: 'Generation ' + d.gen, c: 'pas' }, { t: 'Trait: ' + d.trait.name, c: 'utl' }]),
+          bars: Object.entries(d.pedigree || {}).map(([k, v]) => ({ label: STAT_NAME[k], v, max: 15, text: '+' + v + '%' })), note: where[0].toUpperCase() + where.slice(1) + (outlier ? ' · the strongest pedigree you own' : '') } });
+    } else if (o.tier >= 2 || outlier) celebrate('line:' + kn.id, { kicker: outlier && o.tier < 2 ? 'Statistically unique lineage' : `${TIER_WORD[o.tier]} lineage${d.prism ? ' · prismatic' : ''}`, name: `${o.name}: ${dName(d)}`, tier: Math.max(o.tier, 2), odds: o.odds, lines });
+    else toast(`⬢ A kernel booted: <b>${esc(dName(d))}</b> of the <b>${esc(d.line.name)}</b>${d.prism ? ' ✦' : ''} ${where}.`, 'rare', 5000);
     beep(523, 0.1, 'triangle'); setTimeout(() => beep(784, 0.16, 'triangle'), 110);
     save();
-  }
-  function registerLineage(pair, entry, quiet) {
-    if (!S) return;
-    const mod = BR.modFor('breed', pair), o = BR.offspringFrom(entry, pair, mod);
-    for (const d of ownedDaemons()) {
-      if (!d.line || d.line.pair !== pair || d.line.name) continue;
-      // booted before the design arrived: the lineage registers now (the genome it booted with stays)
-      Object.assign(d.line, { name: entry.name, desc: entry.description, tier: mod.tier, odds: mod.odds });
-      d.pedigree = o.pedigree;
-      if (!quiet) toast(`✦ Lineage registered: <b>${esc(dName(d))}</b> is of the <b>${esc(entry.name)}</b> line (${pedigreeText(o.pedigree)}).`, 'rare');
-    }
   }
   function genomeText(k) { const p = E.parseKey(k); return p.a === p.b ? `Pure ${E.MAIN[p.a].name}` : `${E.MAIN[p.a].name} › ${E.MAIN[p.b].name}`; }
   const spliceCard = (d, on) => `<button class="pcard ${on ? 'sel' : ''} ${canParent(d) || on ? '' : 'fainted'}" data-uid="${d.uid}"><canvas data-sprite="${d.key}" ${d.prism ? 'data-prism="1"' : ''} width="64" height="64"></canvas>
@@ -2287,15 +2222,15 @@
   function kernelsHTML() {
     const need = kernelNeed();
     return S.kernels.map(kn => {
-      const st = kernelState(kn), line = bridgeOn() ? BR.cached(kn.pair, 'breed') : null, age = Math.min(need, S.steps - kn.at);
-      return `<div class="quest"><div class="qt">⬢ ${esc(kn.parents.join(' × '))}${line ? ` · <b>${esc(line.name)}</b> line` : ''}${kn.prism ? ' <em class="prism">✦</em>' : ''} <span class="fine">Gen ${kn.gen}</span></div><div class="xpbar"><i style="width:${age / need * 100}%"></i></div>
-        <div class="fine">${st === 'compiling' ? `Compiling · ${age}/${need} steps` : st === 'waiting' ? 'Compiled · waiting for FriedrichBridge to design the lineage' : 'Ready: it boots on your next step'}</div></div>`;
+      const st = kernelState(kn), age = Math.min(need, S.steps - kn.at);
+      return `<div class="quest"><div class="qt">⬢ ${esc(kn.parents.join(' × '))}${kn.prism ? ' <em class="prism">✦</em>' : ''} <span class="fine">Gen ${kn.gen}</span></div><div class="xpbar"><i style="width:${age / need * 100}%"></i></div>
+        <div class="fine">${st === 'compiling' ? `Compiling · ${age}/${need} steps` : 'Ready: it boots on your next step'}</div></div>`;
     }).join('');
   }
   function sheetSplice(body) {
     const pool = ownedDaemons();
     spliceSel = spliceSel.filter(uid => pool.some(d => d.uid === uid));
-    body.innerHTML = `<h3>Splice chamber</h3><p class="fine">Splice two daemons at level ${SPLICE_LEVEL} or higher into a kernel. It compiles while you walk (${kernelNeed()} steps) and boots as a new level 5 daemon. FriedrichBridge designs the lineage (which of the parents' essences lead, which sub-essences carry on, its stat pedigree and its name) and saves it in its database, so the same two genomes always splice the same way. Every offspring also gets its own trait, evolved from its parents' traits. Parents rest for ${SPLICE_REST} steps afterwards.</p>
+    body.innerHTML = `<h3>Splice chamber</h3><p class="fine">Splice two daemons at level ${SPLICE_LEVEL} or higher into a kernel. It compiles while you walk (${kernelNeed()} steps) and boots as a new level 5 daemon. The lineage (which of the parents' essences lead, which sub-essences carry on, its stat pedigree and its name) comes from the two genomes' records in the merge database, so the same two genomes always splice the same way; its name is revealed when the kernel boots. Every offspring also gets its own trait, evolved from its parents' traits. Parents rest for ${SPLICE_REST} steps afterwards.</p>
       <h3>Kernels (${S.kernels.length}/${KERNEL_MAX})</h3>${kernelsHTML() || '<p class="sub">Nothing is compiling.</p>'}
       <h3>Choose two parents</h3><div class="plist">${pool.map(d => spliceCard(d, spliceSel.includes(d.uid))).join('')}</div>
       <div id="spv"></div>`;
@@ -2309,17 +2244,12 @@
     if (spliceSel.length === 2) splicePreview(body.querySelector('#spv'), findDaemon(spliceSel[0]), findDaemon(spliceSel[1]));
   }
   function splicePreview(box, a, b) {
-    const pair = BR.breedKey(a.key, b.key), cost = spliceCost(a, b), mod = BR.modFor('breed', pair);
+    const pair = DZ.breedKey(a.key, b.key), cost = spliceCost(a, b), off = DZ.lineage(pair, ENG.rec);
     const afford = Object.entries(cost).every(([x, n]) => (S.motes[x] || 0) >= n), room = S.kernels.length < KERNEL_MAX;
-    const line = bridgeOn() ? BR.cached(pair, 'breed') : null, o = BR.spliceOptions(pair);
-    const roll = `Rarity roll ${mod.pct}% · <span class="rar r${mod.tier}">${TIER_WORD[mod.tier]}</span> · inherits up to ${BR.INHERIT[mod.tier]} sub-essence${BR.INHERIT[mod.tier] > 1 ? 's' : ''}, pedigree +${BR.PEDIGREE[mod.tier]}%`;
-    let out;
-    if (line || !bridgeOn()) {
-      const off = BR.offspringFrom(line, pair, mod);
-      out = `<div class="pn">${line ? `${esc(line.name)} line` : 'Unregistered lineage'}</div>${line ? `<p class="lore">${esc(line.description)}</p>` : ''}
+    const roll = `Rarity roll ${off.pct}% · <span class="rar r${off.tier}">${TIER_WORD[off.tier]}</span> · inherits up to ${DZ.INHERIT[off.tier]} sub-essence${DZ.INHERIT[off.tier] > 1 ? 's' : ''}, pedigree +${DZ.PEDIGREE[off.tier]}%`;
+    const out = `<div class="pn">${TIER_WORD[off.tier]} lineage</div>
         <div class="row">Boots as <b>${seen.has(off.key) ? esc(ENG.rec(off.key).dName) : '??? form'}</b> ${genomeHTML(off.key)}</div>
-        <div class="fine">Inherits ${off.attune.map(s => essChip(s)).join(' ') || 'no sub-essences'} · ${off.pedigree ? `pedigree ${pedigreeText(off.pedigree)}` : 'no pedigree without FriedrichBridge'}</div>`;
-    } else out = `<div class="pn">Unknown lineage</div><div class="fine">It will lead with one of ${o.mains.map(m => essChip(m)).join(' ')} and can inherit ${o.subs.map(s => essChip(s)).join(' ') || 'no sub-essences'}. FriedrichBridge designs it when you splice.</div>`;
+        <div class="fine">Inherits ${off.attune.map(s => essChip(s)).join(' ') || 'no sub-essences'} · pedigree ${pedigreeText(off.pedigree)}</div>`;
     const anc = [a, b].filter(d => d.trait).map(d => `${esc(dName(d))}: ${esc(d.trait.name)} (${d.trait.fx.map(f => f.code).join(', ')})`);
     box.innerHTML = `<div class="preview">${out}<div class="fine">${roll}</div>${anc.length ? `<div class="fine">Traits it evolves from: ${anc.join(' · ')}</div>` : ''}
       <div class="fine">Cost: ${Object.entries(cost).map(([x, n]) => essChip(x, `${n}/${S.motes[x] || 0}`)).join(' ')}</div>
@@ -2328,61 +2258,15 @@
     box.querySelector('[data-splice]').onclick = () => { startSplice(a, b); renderSheet(); };
   }
 
-  let dbRecipes = null; // the database's newest recipes, fetched on demand
-  const RECIPE_KIND = { t: 'Technique', f: 'Form', i: 'Item', b: 'Lineage', d: 'Trait', s: 'Trait' };
-  function bridgeSection() {
-    if (!BR) return '<p class="fine">Bridge client not loaded.</p>';
-    const st = BR.status, conf = BR.conf;
-    const col = { online: 'good', offline: 'bad', error: 'bad', unknown: 'inf' }[st.state];
-    const count = { tech: 0, form: 0, item: 0, breed: 0, trait: 0 }, wait = { tech: 0, form: 0, item: 0, breed: 0, trait: 0 };
-    for (const ck of Object.keys(BR.allCached())) { const k = ck.slice(0, ck.indexOf(':')).split('.')[0]; if (k in count) count[k]++; }
-    const waiting = BR.waiting();
-    for (const ck of waiting) { const k = ck.slice(0, ck.indexOf(':')).split('.')[0]; if (k in wait) wait[k]++; }
-    const total = ALL_KEYS.length, designed = ALL_KEYS.filter(k => BR.cached(k, 'tech')).length;
-    const missing = [...discovered].filter(k => !BR.cached(k, 'tech')).length;
-    const kinds = [['tech', 'Techniques'], ['form', 'Forms'], ['item', 'Items'], ['breed', 'Lineages'], ['trait', 'Traits']];
-    const book = dbRecipes === null ? '' : !dbRecipes ? '<p class="fine">The database could not be read (is the bridge running?).</p>'
-      : `<h3>Newest database recipes</h3><div class="clist">${dbRecipes.recipes.filter(r => /^ep\./.test(r.a_id)).map(r => `<div class="crow"><span class="grow"><span class="t">${esc(r.result_name || '?')}</span><span class="fine">${RECIPE_KIND[r.a_id[3]] || 'Merge'} · ${esc(r.result_rarity || '')} · ${esc(String(r.created_at || '').slice(0, 16).replace('T', ' '))}${r.model ? ' · ' + esc(r.model) : ''}</span></span></div>`).join('') || '<p class="sub">No Essence Protocol recipes yet.</p>'}</div>`;
-    return `<p class="fine"><b>Live baking.</b> The lattice was baked once offline; FriedrichBridge bakes it again while you play. A local model designs every technique, daemon form, forged item, splice lineage and daemon trait you meet, and the bridge saves each design in its database, so asking again always returns the same one. Every request carries a seed and a %RARITY% roll that sets how rare the design is and how much it can do. Anything the database hasn't saved yet waits in an outbox (kept across sessions) and is sent when the bridge is back; meanwhile the baked lattice fills in. Run the game with <b>tools/serve.py</b> so requests go through the local proxy (the API key stays on your PC).</p>
-      <div class="xpbar"><i style="width:${designed / total * 100}%"></i></div><p class="fine">${designed} / ${total} techniques live-baked</p>
-      <div class="kv two"><span class="lab">Status</span><b><span class="st ${col}">${st.state}</span> ${esc(st.detail || '')}</b>
-      <span class="lab">Endpoint</span><b>${esc(conf.url)}${conf.key ? ' · direct key set' : ' · via proxy'}</b>
-      ${kinds.map(([k, nm]) => `<span class="lab">${nm}</span><b>${count[k]} designed${wait[k] ? ` · <span class="st inf">${wait[k]} waiting for the database</span>` : ''}</b>`).join('')}
-      <span class="lab">In progress</span><b>${BR.pending()} request${BR.pending() === 1 ? '' : 's'}${missing ? ` · ${missing} discovered techniques still baked` : ''}</b></div>
-      <div class="btnrow gap">
-        <button class="btn ${S.settings.bridge ? 'pri' : ''}" data-br="toggle">${S.settings.bridge ? 'Bridge designs: on' : 'Bridge designs: off'}</button>
-        <button class="btn" data-br="test">Test connection</button>
-        <button class="btn" data-br="sync">Sync now${waiting.length ? ` (${waiting.length})` : ''}</button>
-        <button class="btn" data-br="fill">Send everything I've met</button>
-        <button class="btn" data-br="all">Design the whole lattice…</button>
-        <button class="btn" data-br="book">Newest database recipes</button>
-        <button class="btn" data-br="conf">Endpoint…</button>
-        <button class="btn" data-br="clear">Forget local designs</button>
-      </div>${book}`;
-  }
-  function wireBridgeSection(body) {
-    const q = a => body.querySelector(`[data-br=${a}]`);
-    if (!q('toggle')) return;
-    const reach = async () => { await BR.health(); if (BR.status.state !== 'online') { renderSheet(); toast('The bridge is not reachable.'); return false; } return true; };
-    q('toggle').onclick = () => { S.settings.bridge = !S.settings.bridge; if (!S.settings.bridge) restoreBaked(); else { applyAllCached(); recordKnown(); } save(); renderSheet(); };
-    q('test').onclick = async () => { await BR.health(); renderSheet(); toast(`Bridge: ${BR.status.state}${BR.status.detail ? ' · ' + esc(BR.status.detail) : ''}`); };
-    q('sync').onclick = async () => { if (!(await reach())) return; const n = BR.flush(); toast(n ? `Sending ${n} waiting design${n > 1 ? 's' : ''} to the database…` : 'Nothing is waiting for the database.'); renderSheet(); };
-    q('fill').onclick = async () => { if (!(await reach())) return; recordKnown(); toast('Asking FriedrichBridge for everything you have met…'); renderSheet(); };
-    q('all').onclick = async () => {
-      if (!(await reach())) return;
-      const left = ALL_KEYS.filter(k => !BR.cached(k, 'tech'));
-      if ((await choose('Design the whole lattice?', `Queues ${left.length} techniques. At a few seconds each on a local model this takes hours, and it runs in the background while you play. Anything you meet in play still goes first.`, ['Start', 'Cancel'])) !== 0) return;
-      for (const k of left) { const rec = bridgeRec(k, 'tech'); if (rec) BR.flavor(k, 'tech', rec, { pri: 0, record: false }); }
-      toast(`Queued ${left.length} techniques for FriedrichBridge.`); renderSheet();
-    };
-    q('book').onclick = async () => { dbRecipes = await BR.recipes(50); renderSheet(); };
-    q('clear').onclick = async () => { if ((await choose('Forget local designs?', 'Techniques, forms and items go back to their lattice versions in this browser, then everything you have met is asked of the bridge again. Its database keeps every recipe, so the same designs come back. Traits and lineages stay with your daemons.', ['Forget', 'Cancel'])) === 0) { BR.clearCache(); restoreBaked(); recordKnown(); renderSheet(); } };
-    q('conf').onclick = async () => {
-      const url = await askText('Bridge endpoint', 'Use /bridge with tools/serve.py (recommended). A direct URL like http://127.0.0.1:8765 also needs the key below, and the bridge must allow cross-origin requests.', BR.conf.url, 'Next');
-      if (url === null) return;
-      const key = url.trim() === '/bridge' ? '' : await askText('Bridge API key', 'Stored only in this browser. Leave empty when using the proxy.', BR.conf.key || '', 'Save');
-      BR.setConf({ url: url.trim() || '/bridge', key: (key || '').trim() }); await BR.health(); renderSheet();
-    };
+  // The merge database: what the game reads every merge from, and how it was made.
+  function dbSection() {
+    const kb = Math.round(DB.bytes / 1024);
+    return `<p class="fine">Every one of the ${DB.count.toLocaleString()} merge identities is pre-baked by <b>tools/bake.js</b>, one merge at a time, into a record in <b>db/</b>: its technique, its daemon form, the item it forges into, the word it lends to lineages and the traits it leans toward. Splice lineages and each daemon's own trait are designed from those records and a seed, so nothing is generated live and the same merge is always the same.</p>
+      <div class="kv two"><span class="lab">Schema</span><b>${esc(DB.schema)} · bake v${DB.version}</b>
+      <span class="lab">Records</span><b>${DB.count.toLocaleString()} merges in ${DB.shards.length} shards (${kb.toLocaleString()} KB)</b>
+      <span class="lab">By rarity</span><b>${DB.rarity.map((n, i) => `${RARITY[i]} ${n}`).join(' · ')}</b>
+      <span class="lab">Yours</span><b>${discovered.size} discovered · ${seen.size} forms seen · ${ownedDaemons().filter(d => d.trait).length} traits · ${ownedDaemons().filter(d => d.line).length} spliced</b></div>
+      <p class="fine">Live AI designs (FriedrichBridge and its local model) were retired: the game sends nothing anywhere while you play.</p>`;
   }
 
   function sheetSystem(body) {
@@ -2390,17 +2274,18 @@
     body.innerHTML = `<h3>Settings</h3><div class="btnrow">
         <button class="btn ${S.settings.speed === 'normal' ? 'pri' : ''}" data-speed="normal">Battle speed: normal</button>
         <button class="btn ${S.settings.speed === 'fast' ? 'pri' : ''}" data-speed="fast">Battle speed: fast</button>
-        <button class="btn" data-mute>${muted ? 'Unmute' : 'Mute'} sound</button></div>
+        <button class="btn" data-mute>${muted ? 'Unmute' : 'Mute'} sound</button>
+        <button class="btn ${S.settings.haptics !== false ? 'pri' : ''}" data-haptics>Vibration: ${S.settings.haptics !== false ? 'on' : 'off'}</button></div>
       <div class="btnrow gap"><button class="btn ${S.settings.tips === 'compact' ? 'pri' : ''}" data-tips="compact">Tooltips: compact</button><button class="btn ${S.settings.tips === 'complex' ? 'pri' : ''}" data-tips="complex">Tooltips: complex</button><button class="btn ${S.settings.tips === 'off' ? 'pri' : ''}" data-tips="off">Tooltips: off</button></div>
       <p class="fine">Hover (or press and hold on touch) any merge, essence, status, item or daemon card for details. Press T or tap ⓘ in the top bar to switch compact and complex.</p>
       <p class="fine">Tap the battle text or press Space to fast-forward a turn. Keys 1–4 cast your memory merges.</p>
-      <h3>FriedrichBridge</h3>${bridgeSection()}
+      <h3>Merge database</h3>${dbSection()}
       <h3>Save</h3><div class="btnrow"><button class="btn pri" data-save>Save now</button><button class="btn" data-wipe>Delete save…</button></div>
       <p class="fine">Playing for ${mins} min · ${S.steps} steps · ${S.stats.wild} wild daemons defeated · ${S.stats.binds} bound · ${S.stats.forged} items forged · ${S.stats.spliced} spliced.</p>
-      <h3>About</h3><p class="fine">Essence Protocol. All ${M.count} merge outcomes were baked ahead of time by tools/bake.js from the rules in js/essences.js, and FriedrichBridge live-bakes them again as you play. Nothing is rolled when you compose a merge: a design's rarity comes from its seed, so the same merge is always the same. The randomness is in battle (accuracy, effect chances, instability), in encounters, and in each new daemon's seed.</p>`;
+      <h3>About</h3><p class="fine">Essence Protocol. All ${DB.count} merge outcomes and their designs were pre-baked by tools/bake.js from the rules in js/essences.js. Nothing is rolled when you compose a merge: a design's rarity comes from its seed, so the same merge is always the same. The randomness is in battle (accuracy, effect chances, instability), in encounters, and in each new daemon's seed.</p>`;
     body.querySelectorAll('[data-speed]').forEach(b => { b.onclick = () => { S.settings.speed = b.dataset.speed; save(); renderSheet(); }; });
-    wireBridgeSection(body);
     body.querySelectorAll('[data-tips]').forEach(b => { b.onclick = () => { S.settings.tips = b.dataset.tips; save(); renderSheet(); }; });
+    body.querySelector('[data-haptics]').onclick = () => { S.settings.haptics = S.settings.haptics === false; save(); renderSheet(); buzz(20); };
     body.querySelector('[data-save]').onclick = () => { save(); toast('Saved.'); };
     body.querySelector('[data-mute]').onclick = () => { muted = !muted; try { localStorage.setItem('ep-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } renderSheet(); };
     body.querySelector('[data-wipe]').onclick = async () => {
@@ -2411,8 +2296,8 @@
   // ------------------------------------------------------------------ ending
   function showEnding() {
     $('hud').classList.add('hidden'); setPad(false);
-    const card = modal(`<h2>The lattice is yours</h2><p>The Architect is beaten and all four keys are turned. But the lattice still holds ${M.count - discovered.size} merges nobody has cast, and now it's open to you.</p>
-      <div class="kv two"><span class="lab">Merges discovered</span><b>${discovered.size} / ${M.count}</b><span class="lab">Forms seen</span><b>${seen.size}</b><span class="lab">Forms bound</span><b>${boundForms.size}</b><span class="lab">Resonances</span><b>${resonancesFound().size}</b></div>
+    const card = modal(`<h2>The lattice is yours</h2><p>The Architect is beaten and all four keys are turned. But the lattice still holds ${DB.count - discovered.size} merges nobody has cast, and now it's open to you.</p>
+      <div class="kv two"><span class="lab">Merges discovered</span><b>${discovered.size} / ${DB.count}</b><span class="lab">Forms seen</span><b>${seen.size}</b><span class="lab">Forms bound</span><b>${boundForms.size}</b><span class="lab">Resonances</span><b>${resonancesFound().size}</b></div>
       <p>Unlocked: <b>the Rift</b>, the swirling terminal in the Core, an endless descent through every genome. <b>Warden rematches</b> are open too, with recompiled teams.</p>
       <div class="btnrow"><button class="btn pri" data-go>Keep exploring</button></div>`);
     card.querySelector('[data-go]').onclick = () => { closeModal(); $('hud').classList.remove('hidden'); mode = 'world'; setPad(true); updateHud(); };
@@ -2444,13 +2329,14 @@
     $('starterList').querySelectorAll('[data-i]').forEach(b => { b.onclick = async () => {
       const st = C.STARTERS[+b.dataset.i];
       adopt(newState(st));
-      for (const k of S.party[0].memory) if (k) { discovered.add(k); flavorOf(k, 'tech'); }
-      flavorOf(st.key, 'form'); requestTrait(S.party[0]);
+      for (const k of S.party[0].memory) if (k) discovered.add(k);
+      designTrait(S.party[0]);
       $('starter').classList.add('hidden');
       enterWorld();
       mode = 'busy'; setPad(false);
       await say('Archivist Lo', [`${ENG.rec(st.key).dName}, a fine first daemon. It already knows its four basic merges.`, 'Walk into static, the flickering tiles, to meet wild daemons. Weaken one, then tap Bind to capture it.', 'Head west to the Cirrus Array when you\'re ready. Its Warden holds the first key. Your Requests tab always has something to chase.']);
-      mode = 'world'; setPad(true); save(); bridgeWarmup();
+      await celebrateTrait(S.party[0], null, true);
+      mode = 'world'; setPad(true); save();
     }; });
   }
   function enterWorld() {
@@ -2487,7 +2373,7 @@
     h += row('Forges into', esc(forgeItem(k).name));
     h += `<p>${esc(rx.line + ' ' + r.text)}</p>`;
     if (r.anomaly) h += `<p class="bad">∆ ${esc(E.ANOMALY[r.anomaly])}</p>`;
-    if (r.bridge) h += row('Designed by', `FriedrichBridge${r.mod ? ` · ${TIER_WORD[r.mod.tier]}, rolled ${r.mod.pct}% (1 in ${r.mod.odds})` : ''}${r.bridge.tags && r.bridge.tags.length ? ' · ' + esc(r.bridge.tags.slice(0, 4).join(', ')) : ''}`) + row('Lattice version', `${esc(r.baked.name)} · ${r.baked.cls}${r.baked.power ? ' ' + r.baked.power + (r.baked.hits > 1 ? '×' + r.baked.hits : '') : ''}`);
+    h += row('Forged item', `${esc(r.item.name)} · <span class="rar r${r.item.tier}">${TIER_WORD[r.item.tier]}</span>`);
     h += `<p class="fine">${esc(E.CLASSES[r.cls])} As a daemon genome: ${seen.has(k) ? esc(r.dName) : 'unseen form'}.</p>`;
     return h;
   }
@@ -2529,11 +2415,11 @@
   }
   function tipHTML(spec, full) {
     const kind = spec[0], id = spec.slice(2);
-    if (kind === 'm' && M.table[id]) return tipMerge(id, full);
+    if (kind === 'm' && DB.has(id)) return tipMerge(id, full);
     if (kind === 'e' && (E.MAIN[id] || E.SUB[id])) return tipEssence(id, full);
     if (kind === 's' && ENG.STATUS[id]) return `<div class="th">${ENG.STATUS[id].name}</div><p>${STATUS_TXT[id]}</p>` + (full ? row('Base duration', ENG.STATUS[id].turns + ' turns') : '');
-    if (kind === 'i' && S.bag[id]) { const it = S.bag[id]; return `<div class="th">${esc(it.name)}</div><p>${itemDesc(it)}</p>` + (it.lore ? `<p class="fine">${esc(it.lore)}</p>` : '') + row('Owned', it.count) + (it.tier != null ? row('Quality', `${TIER_WORD[it.tier]} (FriedrichBridge)`) : '') + (full && M.table[id.split(':')[1]] ? tipMerge(id.split(':')[1], false) : ''); }
-    if (kind === 't') { const d = ownedDaemons().find(x => x.trait && x.trait.key === id); if (d) { const t = d.trait; return `<div class="th">${esc(t.name)}</div>` + row('Rarity', `${TIER_WORD[t.tier]} · rolled ${t.pct}% (1 in ${t.odds})`) + t.fx.map(f => row(f.cat, esc(BR.describeTrait(f)))).join('') + (full ? `<p class="fine">${esc(t.desc)}</p><p class="fine">Designed by FriedrichBridge for this individual (seed ${esc(d.seed)}). The %RARITY% roll comes from the seed, its genome tier, generation, parents and prism.</p>` : ''); } }
+    if (kind === 'i' && S.bag[id]) { const it = S.bag[id]; return `<div class="th">${esc(it.name)}</div><p>${itemDesc(it)}</p>` + (it.lore ? `<p class="fine">${esc(it.lore)}</p>` : '') + row('Owned', it.count) + (it.tier != null ? row('Quality', `${TIER_WORD[it.tier]} (pre-baked roll)`) : '') + (full && DB.has(id.split(':')[1]) ? tipMerge(id.split(':')[1], false) : ''); }
+    if (kind === 't') { const d = ownedDaemons().find(x => x.trait && x.trait.key === id); if (d) { const t = d.trait; return `<div class="th">${esc(t.name)}</div>` + row('Rarity', `${TIER_WORD[t.tier]} · rolled ${t.pct}% (1 in ${t.odds})`) + t.fx.map(f => row(f.cat, esc(DZ.describeTrait(f)))).join('') + (full ? `<p class="fine">${esc(t.desc)}</p><p class="fine">Designed for this individual from its genome and seed (${esc(d.seed)}). The %RARITY% roll comes from the seed, its genome tier, generation, parents and prism.</p>` : ''); } }
     if (kind === 'd') return tipSide(+id, full);
     if (kind === 'p' && ENG.PASSIVES[id]) return `<div class="th"><span class="kb pas">Passive</span> ${ENG.PASSIVES[id][0]}</div><p>${esc(ENG.PASSIVES[id][1])}</p>` + (full ? '<p class="fine">Always on. It comes from the genome\'s lead sub-essence (or its main essence if it has none), so recompiling can change it.</p>' : '');
     if (kind === 'r') { const r = E.RESONANCE.concat(E.TRINITY).find(x => x.name === id); if (r) return `<div class="th">${esc(r.name)}</div><span class="genome">${r.subs.map(x => essChip(x)).join('')}</span>` + (full ? row('Adds', Object.entries(r.traits).map(([t, v]) => `${t} +${v}`).join(', ') + (r.fx.length ? ' · ' + r.fx.map(f => `${E.EFFECTS[f[0]]} ${f[1]}%`).join(', ') : '')) : ''); }
@@ -2574,18 +2460,25 @@
   // ------------------------------------------------------------------ boot
   resize();
   try { muted = localStorage.getItem('ep-muted') === '1'; } catch (e) { /* ignore */ }
-  $('bakeInfo').textContent = `${M.count.toLocaleString()} merges pre-baked · 4 main essences · 16 sub-essences · ${E.RESONANCE.length} resonances · ${E.TRINITY.length} trinities`;
   titleArt();
   const existing = loadSave();
   if (existing) $('contBtn').classList.remove('hidden');
   $('newBtn').onclick = async () => { if (existing && (await choose('Start a new game?', 'Your current save is overwritten the next time the game saves.', ['Start over', 'Cancel'])) !== 0) return; showStarter(); };
-  // On load, everything the player has met is asked of the bridge; whatever it can't answer yet
-  // waits in the outbox, which retries once the bridge is back.
-  function bridgeWarmup() {
-    if (!bridgeOn()) return;
-    BR.health().then(() => recordKnown());
+  $('contBtn').onclick = () => { adopt(existing); enterWorld(); if (S.won) toast('Welcome back. The Rift is waiting in the Core.'); };
+  // The title is up while the merge database streams in; the buttons wait for it.
+  function openDatabase() {
+    $('newBtn').disabled = $('contBtn').disabled = true;
+    DB.open({ onProgress: (n, of) => { $('bakeInfo').textContent = `Loading the merge database… ${n}/${of}`; $('dbBar').style.width = (of ? n / of * 100 : 0) + '%'; } }).then(() => {
+      $('newBtn').disabled = $('contBtn').disabled = false;
+      $('dbBar').parentNode.classList.add('done');
+      $('bakeInfo').textContent = `${DB.count.toLocaleString()} merges pre-baked · 4 main essences · 16 sub-essences · ${E.RESONANCE.length} resonances · ${E.TRINITY.length} trinities`;
+    }, err => {
+      console.error(err);
+      $('bakeInfo').innerHTML = 'The merge database could not be loaded. <button class="btn small" id="dbRetry">Retry</button>';
+      $('dbRetry').onclick = openDatabase;
+    });
   }
-  $('contBtn').onclick = () => { adopt(existing); enterWorld(); bridgeWarmup(); if (S.won) toast('Welcome back. The Rift is waiting in the Core.'); };
+  openDatabase();
   requestAnimationFrame(frame);
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
