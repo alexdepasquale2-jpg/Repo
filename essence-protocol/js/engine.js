@@ -1,26 +1,29 @@
 /* Essence Protocol: daemon model and turn-based battle engine.
    Pure logic with no DOM. The browser loads it as the global ENGINE, and
    tools/verify.js requires it to run headless battles. Every merge outcome
-   comes from the baked table; this file only decides how that outcome plays
-   out against the live battle state (stats, residue, statuses). */
+   comes from the pre-baked merge database (db.js); this file only decides how
+   that outcome plays out against the live battle state (stats, residue,
+   statuses). In the browser, nothing here reads a record before the database
+   has finished loading. */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./essences.js'), require('./merges.baked.js'));
-  else root.ENGINE = factory(root.ESSENCE, root.MERGES);
-})(typeof self !== 'undefined' ? self : this, function (E, M) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./essences.js'), require('./db.js'));
+  else root.ENGINE = factory(root.ESSENCE, root.MERGE_DB);
+})(typeof self !== 'undefined' ? self : this, function (E, DB) {
   'use strict';
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-  const F = {}; M.fields.forEach((f, i) => { F[f] = i; });
   const cache = new Map();
 
   function rec(key) {
     let r = cache.get(key);
     if (r) return r;
-    const row = M.table[key];
+    const row = DB.row(key);
     if (!row) return null;
     r = { key };
-    for (const f of M.fields) r[f] = row[F[f]];
+    DB.fields.forEach((f, i) => { r[f] = row[i]; });
     r.fx = r.fx.map(([code, chance, mag]) => ({ code, chance, mag }));
+    const [kind, name, lore, tier, pct] = r.item;
+    r.item = { kind, name, lore, tier, pct, odds: Math.max(1, Math.round(100 / pct)) };
     const p = E.parseKey(key);
     r.a = p.a; r.b = p.b; r.subs = p.subs; r.tier = p.subs.length;
     r.damaging = r.power > 0;
@@ -178,7 +181,7 @@
         if (!E.eligible(s, main)) continue;
         if (p.subs.some(t => t.s === s && t.h === h)) continue;
         const k = E.makeKey(p.a, p.b, p.subs.concat([{ s, h }]));
-        if (M.table[k] && !out.includes(k)) out.push(k);
+        if (DB.has(k) && !out.includes(k)) out.push(k);
       }
     }
     return out;
@@ -482,7 +485,7 @@
         const k2 = E.makeKey(p.a, p.b, flip);
         if (E.validKey(k2)) cands.push(k2);
       }
-      const ok = cands.filter(k => M.table[k]);
+      const ok = cands.filter(k => DB.has(k));
       if (!ok.length) return null;
       return rec(ok[Math.floor(this.rng() * ok.length)]);
     }

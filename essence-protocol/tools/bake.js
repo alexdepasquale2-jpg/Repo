@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-/* Essence Protocol: merge baker.
+/* Essence Protocol: merge pre-baker.
  *
  * Enumerates every legal merge identity (Main + second Main + up to three
- * sub-essences bound to either main) and runs each one through the rule system
- * below. The result is written to js/merges.baked.js. The game never computes
- * a merge at runtime; it only looks outcomes up in that table.
+ * sub-essences bound to either main) and bakes them into the merge database,
+ * one merge at a time: each identity becomes one self-contained record (one
+ * line) in db/<pair>.json, with its technique, its daemon form, the item it
+ * forges into, its lineage word and its trait affinity. The game never
+ * computes a merge at runtime; it only reads records from that database.
  *
  * The rules are layered so outcomes feel emergent rather than tabulated:
  *   mains -> pair reaction -> sub traits (weighted by host) -> universal-sub
@@ -14,19 +16,22 @@
  *   also bakes a daemon form (name, base stats, passive).
  *
  * Deterministic: the same essences.js always produces the same bytes.
- *   node tools/bake.js          write js/merges.baked.js
- *   node tools/bake.js --check  exit 1 if the committed file is stale
+ *   node tools/bake.js          write db/index.json and the 16 shards
+ *   node tools/bake.js --check  exit 1 (and name the stale merges) if the committed database is stale
  */
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const E = require('../js/essences.js');
+const D = require('../js/designs.js');
 
-const OUT = path.join(__dirname, '..', 'js', 'merges.baked.js');
-const BAKE_VERSION = 1;
+const OUT = path.join(__dirname, '..', 'db');
+const SCHEMA = 'essence-protocol.merges/2';
+const BAKE_VERSION = 2;
 
-// Record layout. The game reads these by index, see FIELDS in the output.
-const FIELDS = ['name', 'cls', 'power', 'acc', 'flux', 'prio', 'hits', 'instab', 'fx', 'rarity', 'tags', 'text', 'dName', 'dStats', 'dPassive', 'anomaly'];
+// Record layout. The game reads these by index, see `fields` in db/index.json.
+//   item: [kind, name, lore, tier, pct] (odds = round(100 / pct))   aff: [[trait code, weight], ...]
+const FIELDS = ['name', 'cls', 'power', 'acc', 'flux', 'prio', 'hits', 'instab', 'fx', 'rarity', 'tags', 'text', 'dName', 'dStats', 'dPassive', 'anomaly', 'dDesc', 'item', 'line', 'aff'];
 
 function fnv(str) {
   let h = 0x811c9dc5;
@@ -295,54 +300,141 @@ function daemonName(ev, attempt) {
   return cap(glue(body, suf)) + (attempt >= 36 ? '-' + (attempt - 35) : '');
 }
 
-function bakeAll() {
-  const keys = E.enumerateAll();
-  const table = {};
-  const techNames = new Set();
-  const dNames = new Set();
-  for (const key of keys) {
-    const ev = evaluate(key);
-    let name, i = 0;
-    do { name = techName(ev, i++); } while (techNames.has(name) && i < 40);
-    if (techNames.has(name)) { const R = ['II', 'III', 'IV', 'V', 'VI']; let k = 0; while (techNames.has(`${name} ${R[k]}`)) k++; name = `${name} ${R[k]}`; }
-    techNames.add(name);
-    let dn, j = 0;
-    do { dn = daemonName(ev, j++); } while (dNames.has(dn));
-    dNames.add(dn);
-    table[key] = [
-      name, ev.cls, ev.power, ev.acc, ev.flux, ev.prio, ev.hits, ev.instab, ev.fx, ev.rarity, ev.tags,
-      techText(ev), dn, ev.dStats, ev.dPassive, ev.anomaly,
-    ];
-  }
-  return { version: BAKE_VERSION, count: keys.length, fields: FIELDS, table };
+// ---- daemon form description (matches the sprite: body plan from the lead, organs from the subs)
+const BODY = {
+  F: ['A flickering flame body', 'A tongue of living fire', 'A restless teardrop of heat'],
+  W: ['A rippling droplet body', 'A smooth bead of water', 'A body that flows and reshapes'],
+  E: ['A blocky golem', 'A squat, stone-built body', 'A slab of a body that plants itself'],
+  A: ['A winged wisp', 'A flickering wisp with swept wings', 'A gust with a visor'],
+};
+const BELLY = { F: 'embers in its belly', W: 'water fins', E: 'rubble at its base', A: 'wind wings' };
+const ORGAN = {
+  Em: 'ember sparks', Pl: 'a plasma core', As: 'a haze of ash', Ti: 'tidal fins', Fr: 'a frost crown', Mi: 'a bead of mist', St: 'stone plates', Me: 'a metal band',
+  Ro: 'trailing roots', Sp: 'a spark antenna', Ga: 'gale wings', Ec: 'echo rings', Li: 'a halo', Vo: 'a void core', Si: 'a signal mast', Tm: 'a time gear',
+};
+const TEMPER = {
+  pow: 'It hits first.', grd: 'It outlasts fights.', mnd: 'It repairs itself.', spd: 'It moves between clock cycles.', prc: 'Nothing it does is wasted.',
+  hex: 'It cripples its foes.', drn: 'It feeds on what it touches.', spr: 'It fights like a swarm.', per: 'Its effects linger.', cha: 'It thrives on instability.',
+};
+function formDesc(ev) {
+  const { p, parts, key } = ev;
+  let s = pick(BODY[p.a], key, 'body');
+  const bits = [];
+  if (p.b !== p.a) bits.push(BELLY[p.b]);
+  for (const part of parts) if (!bits.includes(ORGAN[part.s])) bits.push(ORGAN[part.s]);
+  if (bits.length) s += ' with ' + (bits.length > 1 ? bits.slice(0, -1).join(', ') + ' and ' + bits[bits.length - 1] : bits[0]);
+  s += '. ';
+  const axes = Object.keys(ev.T).sort((x, y) => ev.T[y] - ev.T[x] || (x < y ? -1 : 1));
+  s += TEMPER[axes[0]];
+  if (ev.anomaly) s += ' Its code is wrong somehow.';
+  return s;
 }
 
-function render(data) {
-  const lines = Object.keys(data.table).map(k => JSON.stringify(k) + ':' + JSON.stringify(data.table[k]));
+// ---- the item a merge forges into
+const ITEM_PREFIX = ['', 'Fine ', 'Tempered ', 'Exalted ', 'Mythic '];
+function itemCore(ev) {
+  const { rx, p, parts, res, tri } = ev;
+  const rxName = rx.names[p.a];
+  if (tri) return `${tri.name}`;
+  if (res.length) return `${res[0].name} ${rxName}`;
+  if (parts.length) { const lead = parts.find(x => x.h === 1) || parts[0]; return `${lead.adj} ${rxName}`; }
+  return rxName;
+}
+function itemDesign(ev) {
+  const kind = D.itemKind(ev.cls, ev.n);
+  const mod = D.modFor('item.' + kind, ev.key, { rarity: ev.rarity });
+  const A = E.MAIN[ev.p.a].name, B = E.MAIN[ev.p.b].name;
+  const from = ev.pure ? `${A} motes` : `${A} and ${B} motes`;
+  const subs = [...new Set(ev.parts.map(x => E.SUB[x.s].name))];
+  const lore = {
+    patch: `Pressed from ${from}.`, ward: `A shield module forged from ${from}.`, lattice: `Woven from ${from}.`,
+    catalyst: `A sealed charge of ${A} residue.`, script: `Teaches ${subs.join(' or ')}.`, cell: `Charged from ${from}.`,
+  }[kind];
+  const name = `${ITEM_PREFIX[mod.tier]}${itemCore(ev)} ${D.ITEM_TYPES[kind][0]}`;
+  return [kind, name.slice(0, 48), lore, mod.tier, mod.pct];
+}
+
+// ---- the word a genome lends to the lineages it splices into
+const LINE_WORD = {
+  F: ['Ash', 'Cinder', 'Pyre', 'Blaze'], W: ['Tide', 'Brine', 'Deep', 'Rill'], E: ['Stone', 'Loam', 'Crag', 'Ore'], A: ['Gale', 'Cirrus', 'Zephyr', 'Squall'],
+  Em: ['Ember'], Pl: ['Arc'], As: ['Soot'], Ti: ['Surge'], Fr: ['Rime'], Mi: ['Veil'], St: ['Slate'], Me: ['Steel'],
+  Ro: ['Thorn'], Sp: ['Volt'], Ga: ['Gust'], Ec: ['Echo'], Li: ['Lux'], Vo: ['Null'], Si: ['Pulse'], Tm: ['Chron'],
+};
+function lineWord(ev) {
+  const lead = ev.parts.find(x => x.h === 1) || ev.parts[0];
+  return pick(LINE_WORD[lead ? lead.s : ev.p.a], ev.key, 'line');
+}
+
+// Bakes one merge identity into its database record. `names` holds the names taken so far.
+function bakeOne(key, names) {
+  const ev = evaluate(key);
+  let name, i = 0;
+  do { name = techName(ev, i++); } while (names.tech.has(name) && i < 40);
+  if (names.tech.has(name)) { const R = ['II', 'III', 'IV', 'V', 'VI']; let k = 0; while (names.tech.has(`${name} ${R[k]}`)) k++; name = `${name} ${R[k]}`; }
+  names.tech.add(name);
+  let dn, j = 0;
+  do { dn = daemonName(ev, j++); } while (names.form.has(dn));
+  names.form.add(dn);
   return [
-    '/* GENERATED by tools/bake.js from js/essences.js. Do not edit by hand.',
-    ` * ${data.count} merge identities, every one pre-resolved. */`,
-    '(function (root) {',
-    `var M = { version: ${data.version}, count: ${data.count}, fields: ${JSON.stringify(data.fields)}, table: {`,
-    lines.join(',\n'),
-    '} };',
-    "if (typeof module === 'object' && module.exports) module.exports = M; else root.MERGES = M;",
-    "})(typeof self !== 'undefined' ? self : this);",
-    '',
-  ].join('\n');
+    name, ev.cls, ev.power, ev.acc, ev.flux, ev.prio, ev.hits, ev.instab, ev.fx, ev.rarity, ev.tags,
+    techText(ev), dn, ev.dStats, ev.dPassive, ev.anomaly,
+    formDesc(ev), itemDesign(ev), lineWord(ev), D.affinity(ev.T, key),
+  ];
 }
 
-module.exports = { bakeAll, render, evaluate, OUT };
+// The whole database, baked one merge at a time in enumeration order (names are unique across it).
+function bakeAll() {
+  const names = { tech: new Set(), form: new Set() };
+  const shards = {};
+  for (const key of E.enumerateAll()) {
+    const pair = key.slice(0, 2);
+    (shards[pair] || (shards[pair] = {}))[key] = bakeOne(key, names);
+  }
+  return shards;
+}
+
+const sha = text => require('crypto').createHash('sha256').update(text).digest('hex').slice(0, 16);
+// One merge per line, so a rule change shows up in git as exactly the merges it touched.
+function renderShard(pair, rows) {
+  return '{"schema":' + JSON.stringify(SCHEMA) + ',"pair":"' + pair + '","rows":{\n' +
+    Object.keys(rows).map(k => JSON.stringify(k) + ':' + JSON.stringify(rows[k])).join(',\n') + '\n}}\n';
+}
+function render(shards) {
+  const files = {}, list = [], rarity = [0, 0, 0, 0, 0];
+  let count = 0;
+  for (const pair of Object.keys(shards)) {
+    const text = renderShard(pair, shards[pair]), n = Object.keys(shards[pair]).length;
+    files[pair + '.json'] = text; count += n;
+    for (const row of Object.values(shards[pair])) rarity[row[9]]++;
+    list.push({ pair, file: pair + '.json', count: n, bytes: Buffer.byteLength(text), sha: sha(text) });
+  }
+  const index = { schema: SCHEMA, version: BAKE_VERSION, count, fields: FIELDS, rarity, shards: list };
+  files['index.json'] = JSON.stringify(index, null, 1) + '\n';
+  return files;
+}
+
+module.exports = { bakeAll, bakeOne, render, evaluate, OUT, FIELDS, SCHEMA };
 
 if (require.main === module) {
-  const text = render(bakeAll());
+  const files = render(bakeAll());
+  const norm = t => t.replace(/\r\n/g, '\n'); // a Windows checkout with core.autocrlf has CRLF
   if (process.argv.includes('--check')) {
-    // line endings don't count (a Windows checkout with core.autocrlf has CRLF)
-    const cur = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8').replace(/\r\n/g, '\n') : '';
-    if (cur !== text) { console.error('merges.baked.js is stale: run `node tools/bake.js`'); process.exit(1); }
-    console.log('merges.baked.js is up to date');
+    const stale = [];
+    for (const [f, text] of Object.entries(files)) {
+      const p = path.join(OUT, f), cur = fs.existsSync(p) ? norm(fs.readFileSync(p, 'utf8')) : '';
+      if (cur === text) continue;
+      if (f === 'index.json') { stale.push(f); continue; }
+      const want = text.split('\n'), have = new Set(cur.split('\n'));
+      const merges = want.filter(l => l.startsWith('"') && !have.has(l)).map(l => JSON.parse(l.replace(/,$/, '').replace(/^("[^"]+"):/, '[$1,') + ']')[0]);
+      stale.push(`${f} (${merges.length ? merges.slice(0, 5).join(', ') + (merges.length > 5 ? ` and ${merges.length - 5} more` : '') : 'layout'})`);
+    }
+    if (stale.length) { console.error('the merge database is stale: run `node tools/bake.js`\n  ' + stale.join('\n  ')); process.exit(1); }
+    console.log('the merge database is up to date');
   } else {
-    fs.writeFileSync(OUT, text);
-    console.log(`baked ${Object.keys(bakeAll().table).length} merges -> ${path.relative(process.cwd(), OUT)} (${(text.length / 1024).toFixed(0)} KB)`);
+    fs.mkdirSync(OUT, { recursive: true });
+    let bytes = 0;
+    for (const [f, text] of Object.entries(files)) { fs.writeFileSync(path.join(OUT, f), text); bytes += Buffer.byteLength(text); }
+    const idx = JSON.parse(files['index.json']);
+    console.log(`baked ${idx.count} merges, one record each, into ${path.relative(process.cwd(), OUT)}/ (${idx.shards.length} shards, ${(bytes / 1024).toFixed(0)} KB)`);
   }
 }

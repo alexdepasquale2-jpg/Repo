@@ -1,0 +1,148 @@
+{
+ "schema": "essence-protocol.merges/2",
+ "version": 2,
+ "count": 5896,
+ "fields": [
+  "name",
+  "cls",
+  "power",
+  "acc",
+  "flux",
+  "prio",
+  "hits",
+  "instab",
+  "fx",
+  "rarity",
+  "tags",
+  "text",
+  "dName",
+  "dStats",
+  "dPassive",
+  "anomaly",
+  "dDesc",
+  "item",
+  "line",
+  "aff"
+ ],
+ "rarity": [
+  16,
+  3067,
+  2441,
+  265,
+  107
+ ],
+ "shards": [
+  {
+   "pair": "FF",
+   "file": "FF.json",
+   "count": 64,
+   "bytes": 32172,
+   "sha": "63af4548ebcb774d"
+  },
+  {
+   "pair": "FW",
+   "file": "FW.json",
+   "count": 470,
+   "bytes": 271562,
+   "sha": "3b2cc6508e5673d0"
+  },
+  {
+   "pair": "FE",
+   "file": "FE.json",
+   "count": 470,
+   "bytes": 267638,
+   "sha": "1c4af82b18bcaf14"
+  },
+  {
+   "pair": "FA",
+   "file": "FA.json",
+   "count": 470,
+   "bytes": 266557,
+   "sha": "46908e9ec2576864"
+  },
+  {
+   "pair": "WF",
+   "file": "WF.json",
+   "count": 470,
+   "bytes": 275472,
+   "sha": "b14ab6678b81787c"
+  },
+  {
+   "pair": "WW",
+   "file": "WW.json",
+   "count": 64,
+   "bytes": 33840,
+   "sha": "280814e3add0b9e6"
+  },
+  {
+   "pair": "WE",
+   "file": "WE.json",
+   "count": 470,
+   "bytes": 278276,
+   "sha": "5598ff83bf7350a5"
+  },
+  {
+   "pair": "WA",
+   "file": "WA.json",
+   "count": 470,
+   "bytes": 270072,
+   "sha": "73b6b00ec9bf7b70"
+  },
+  {
+   "pair": "EF",
+   "file": "EF.json",
+   "count": 470,
+   "bytes": 271417,
+   "sha": "ad2a1456034977ad"
+  },
+  {
+   "pair": "EW",
+   "file": "EW.json",
+   "count": 470,
+   "bytes": 276645,
+   "sha": "1c704ca013888bf9"
+  },
+  {
+   "pair": "EE",
+   "file": "EE.json",
+   "count": 64,
+   "bytes": 34629,
+   "sha": "9692b7625f53ae93"
+  },
+  {
+   "pair": "EA",
+   "file": "EA.json",
+   "count": 470,
+   "bytes": 274167,
+   "sha": "728cfd258c58b901"
+  },
+  {
+   "pair": "AF",
+   "file": "AF.json",
+   "count": 470,
+   "bytes": 271470,
+   "sha": "720a5b7f49f205a7"
+  },
+  {
+   "pair": "AW",
+   "file": "AW.json",
+   "count": 470,
+   "bytes": 272823,
+   "sha": "bdd63a7dbfd4dc68"
+  },
+  {
+   "pair": "AE",
+   "file": "AE.json",
+   "count": 470,
+   "bytes": 278486,
+   "sha": "8be5f1cf1f1708d3"
+  },
+  {
+   "pair": "AA",
+   "file": "AA.json",
+   "count": 64,
+   "bytes": 33046,
+   "sha": "81b8d018714d71d1"
+  }
+ ]
+}

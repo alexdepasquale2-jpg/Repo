@@ -10,14 +10,16 @@
 <title>Essence Protocol</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="stylesheet" href="style.css">
+<link rel="preload" href="db/index.json" as="fetch" crossorigin>
+<!-- the display font never blocks the first paint; system fonts stand in until it arrives -->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap" media="print" onload="this.media='all'">
 </head>
 <body>
 <canvas id="world"></canvas>
+<div id="vignette"></div>
 
 <div id="hud" class="hidden">
   <div id="zoneName">Nexus</div>
@@ -53,7 +55,8 @@
       <button class="big" id="newBtn">New game</button>
       <button class="big ghost hidden" id="contBtn">Continue</button>
     </div>
-    <p class="fine" id="bakeInfo"></p>
+    <div class="dbload"><i id="dbBar"></i></div>
+    <p class="fine" id="bakeInfo">Loading the merge database…</p>
   </div>
 </section>
 
@@ -97,11 +100,11 @@
 <div id="modal" class="hidden"><div class="modal-card" id="modalCard"></div></div>
 
 <script src="js/essences.js"></script>
-<script src="js/merges.baked.js"></script>
+<script src="js/db.js"></script>
+<script src="js/designs.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/content.js"></script>
 <script src="js/sprites.js"></script>
-<script src="js/bridge.js"></script>
 <script src="js/reveal.js"></script>
 <script src="js/game.js"></script>
 </body>

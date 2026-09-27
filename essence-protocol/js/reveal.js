@@ -1,11 +1,11 @@
 /* Essence Protocol: merge reveals. A full-screen sequence for live-baked designs:
  *   1 converge  the essences (or parents) fly in from the edges, color-coded by role
- *   2 fuse      they spiral into a core and flash; the core pulses while FriedrichBridge designs
+ *   2 fuse      they spiral into a core and flash (the core pulses while a design promise resolves)
  *   3 rarity    the %RARITY% roll counts down on a dial and the tier stamps in
  *   4 powers    the name types out, then effects pop in one by one and stat bars fill
  * REVEAL.play(o) queues a reveal and resolves when it closes (click, Esc or timeout).
  *   o = { kicker, parts: [{ color, label, role }], sprite?: genome key, prism?, design: value | Promise }
- *   design -> { name, desc, tier, pct, odds, chips: [{ t, c }], bars: [{ label, v, max }], note } | null
+ *   design -> { name, desc, tier, tierName?, pct, odds, chips: [{ t, c }], bars: [{ label, v, max }], note } | null
  * No DOM outside #reveal and no game state: the game builds the objects. */
 (function (root) {
   'use strict';
@@ -67,7 +67,7 @@
       }
       function showBody() {
         const b = $('.rv-body'); b.classList.remove('hidden');
-        const d = design || { name: o.fallbackName || 'Baked lattice version', desc: o.fallbackDesc || '', chips: o.fallbackChips || [], bars: [], note: 'FriedrichBridge is unreachable, so this is the offline bake. It will be live-baked when the bridge is back.' };
+        const d = design || { name: o.fallbackName || 'Merge', desc: o.fallbackDesc || '', chips: o.fallbackChips || [], bars: [], note: '' };
         if (o.sprite && root.SPRITES) { const c = document.createElement('canvas'); c.width = c.height = 96; root.SPRITES.paint(c, o.sprite, { prism: !!o.prism }); b.querySelector('.rv-sprite').appendChild(c); }
         const nm = b.querySelector('.rv-name');
         const full = String(d.name || '');
@@ -113,7 +113,7 @@
           core(cx, cy, 26 + pulse * 10, '#ffffff', 0.35 + pulse * 0.4);
           if (phase === 'fuse' && k >= 1) {
             burst(40, '#ffffff', 5); flash = 1;
-            if (design !== undefined || skip) showRoll(); else { phase = 'designing'; t0 = now; $('.rv-status').textContent = 'FriedrichBridge is designing it…'; }
+            if (design !== undefined || skip) showRoll(); else { phase = 'designing'; t0 = now; $('.rv-status').textContent = 'Compiling…'; }
           } else if (phase === 'designing' && (design !== undefined || skip)) {
             if (design === undefined) design = null; // skipped while waiting: the toast brings it later
             showRoll();
@@ -126,7 +126,7 @@
           $('.rv-dial .fg').style.strokeDashoffset = String(264 * (1 - shown / 100));
           core(cx, cy, 30, TC[tier], 0.4 + k * 0.4);
           if (k >= 1) {
-            $('.rv-tier').innerHTML = `<b>${TIER[tier]}</b>${design.odds > 1 ? `<span>about 1 in ${Number(design.odds).toLocaleString()}</span>` : ''}`;
+            $('.rv-tier').innerHTML = `<b>${esc(design.tierName || TIER[tier])}</b>${design.odds > 1 ? `<span>about 1 in ${Number(design.odds).toLocaleString()}</span>` : ''}`;
             $('.rv-tier').classList.add('stamp');
             burst(30 + tier * 25, TC[tier], 3 + tier * 1.5); flash = 0.5 + tier * 0.15; rays = tier >= 3 ? 1 : 0;
             if (root.REVEAL_SOUND) root.REVEAL_SOUND('tier', tier);
