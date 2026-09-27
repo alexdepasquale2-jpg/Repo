@@ -36,113 +36,113 @@
    "pair": "FF",
    "file": "FF.json",
    "count": 64,
-   "bytes": 32172,
-   "sha": "63af4548ebcb774d"
+   "bytes": 32036,
+   "sha": "b6815dc2e6e6e62e"
   },
   {
    "pair": "FW",
    "file": "FW.json",
    "count": 470,
-   "bytes": 271562,
-   "sha": "3b2cc6508e5673d0"
+   "bytes": 271730,
+   "sha": "ab131561c8da4bdf"
   },
   {
    "pair": "FE",
    "file": "FE.json",
    "count": 470,
-   "bytes": 267638,
-   "sha": "1c4af82b18bcaf14"
+   "bytes": 268246,
+   "sha": "64b3d82a17653ee9"
   },
   {
    "pair": "FA",
    "file": "FA.json",
    "count": 470,
-   "bytes": 266557,
-   "sha": "46908e9ec2576864"
+   "bytes": 266616,
+   "sha": "eb472a7aa2626c22"
   },
   {
    "pair": "WF",
    "file": "WF.json",
    "count": 470,
-   "bytes": 275472,
-   "sha": "b14ab6678b81787c"
+   "bytes": 275386,
+   "sha": "61f9dc9cd7fc1b8f"
   },
   {
    "pair": "WW",
    "file": "WW.json",
    "count": 64,
-   "bytes": 33840,
-   "sha": "280814e3add0b9e6"
+   "bytes": 33879,
+   "sha": "09914746cfe351d9"
   },
   {
    "pair": "WE",
    "file": "WE.json",
    "count": 470,
-   "bytes": 278276,
-   "sha": "5598ff83bf7350a5"
+   "bytes": 278715,
+   "sha": "5f268be1381add41"
   },
   {
    "pair": "WA",
    "file": "WA.json",
    "count": 470,
-   "bytes": 270072,
-   "sha": "73b6b00ec9bf7b70"
+   "bytes": 269906,
+   "sha": "50ca159dc62565e1"
   },
   {
    "pair": "EF",
    "file": "EF.json",
    "count": 470,
-   "bytes": 271417,
-   "sha": "ad2a1456034977ad"
+   "bytes": 271278,
+   "sha": "b6b8a40425f1f905"
   },
   {
    "pair": "EW",
    "file": "EW.json",
    "count": 470,
-   "bytes": 276645,
-   "sha": "1c704ca013888bf9"
+   "bytes": 277011,
+   "sha": "abe66473a2716083"
   },
   {
    "pair": "EE",
    "file": "EE.json",
    "count": 64,
-   "bytes": 34629,
-   "sha": "9692b7625f53ae93"
+   "bytes": 34390,
+   "sha": "f06247c49b581bbd"
   },
   {
    "pair": "EA",
    "file": "EA.json",
    "count": 470,
-   "bytes": 274167,
-   "sha": "728cfd258c58b901"
+   "bytes": 274366,
+   "sha": "0b33c469e9a883f7"
   },
   {
    "pair": "AF",
    "file": "AF.json",
    "count": 470,
-   "bytes": 271470,
-   "sha": "720a5b7f49f205a7"
+   "bytes": 270642,
+   "sha": "3390df97478ebf75"
   },
   {
    "pair": "AW",
    "file": "AW.json",
    "count": 470,
-   "bytes": 272823,
-   "sha": "bdd63a7dbfd4dc68"
+   "bytes": 272503,
+   "sha": "934094e0a88ef00a"
   },
   {
    "pair": "AE",
    "file": "AE.json",
    "count": 470,
-   "bytes": 278486,
-   "sha": "8be5f1cf1f1708d3"
+   "bytes": 277741,
+   "sha": "a4032315c7bd53fe"
   },
   {
    "pair": "AA",
    "file": "AA.json",
    "count": 64,
-   "bytes": 33046,
-   "sha": "81b8d018714d71d1"
+   "bytes": 33140,
+   "sha": "944bc644e8b20730"
   }
  ]
 }

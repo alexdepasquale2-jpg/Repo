@@ -1,5 +1,5 @@
 // Essence Protocol service worker: cache-first so the game and its merge database work offline.
-const CACHE = 'essence-protocol-v15';
+const CACHE = 'essence-protocol-v16';
 const SHARDS = ['FF', 'FW', 'FE', 'FA', 'WF', 'WW', 'WE', 'WA', 'EF', 'EW', 'EE', 'EA', 'AF', 'AW', 'AE', 'AA'].map(p => `db/${p}.json`);
 const ASSETS = ['./', 'index.html', 'style.css', 'manifest.json', 'icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',
   'js/data.js', 'js/essences.js', 'js/db.js', 'js/designs.js', 'js/engine.js', 'js/content.js', 'js/sprites.js', 'js/reveal.js', 'js/game.js', 'db/index.json'].concat(SHARDS);

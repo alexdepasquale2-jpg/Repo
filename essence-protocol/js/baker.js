@@ -34,7 +34,9 @@
     for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
     return h >>> 0;
   }
-  const pick = (arr, key, salt) => arr[fnv(key + '#' + salt) % arr.length];
+  // Word picks are stable (D.stablePick): adding a word to a list only renames the merges that
+  // end up with it, and reordering a list renames nothing.
+  const pick = (arr, key, salt) => D.stablePick(arr, key + '#' + salt);
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   // Fills {name} placeholders. Text that goes in is never scanned again.
   const fill = (tpl, vars) => tpl.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? vars[k] : m));
@@ -222,10 +224,10 @@
     return { key, p, pure, n, rx, T, parts, res, tri, anomaly, cls, score, power, acc, flux, prio, hits, instab, fx: fxList, rarity, tags, dStats, dPassive };
   }
 
+  // The i-th choice of noun for this merge (the next ones are tried when a name is taken).
   function nounFor(ev, i) {
-    const list = NOUNS[ev.cls];
-    const start = fnv(ev.key + '|noun') % list.length;
-    return list[(start + i) % list.length];
+    const ranked = ev.nouns || (ev.nouns = D.stableRank(NOUNS[ev.cls], ev.key + '|noun'));
+    return ranked[i % ranked.length];
   }
 
   function techName(ev, attempt) {
@@ -271,10 +273,15 @@
   function daemonName(ev, attempt) {
     const { p, n, parts } = ev;
     const roots = ROOT[p.a];
-    const root = roots[(fnv(p.a + p.b + '|root') + Math.floor(attempt / 6)) % roots.length].toLowerCase();
-    const suf = SUFFIX[n][(fnv(ev.key + '|suf') + attempt) % SUFFIX[n].length];
+    // every daemon of a pair shares its first-choice root; a taken name tries the next ending,
+    // then the next root, and only when every root and ending is taken does it get a number
+    const rootList = ev.roots || (ev.roots = D.stableRank(roots, p.a + p.b + '|root'));
+    const sufs = ev.sufs || (ev.sufs = D.stableRank(SUFFIX[n], ev.key + '|suf'));
+    const every = rootList.length * sufs.length, k = attempt % every, lap = Math.floor(attempt / every);
+    const root = rootList[Math.floor(k / sufs.length)].toLowerCase();
+    const suf = sufs[k % sufs.length];
     let body = root;
-    if (n === 0) body = glue(body, MIDB[p.b][fnv(p.a + p.b + '|mid') % MIDB[p.b].length]);
+    if (n === 0) body = glue(body, D.stablePick(MIDB[p.b], p.a + p.b + '|mid'));
     else if (n === 1) body = glue(body, SUBMID[parts[0].s][0]);
     else {
       const lead = parts.find(x => x.h === 1) || parts[0];
@@ -282,7 +289,7 @@
       body = glue(body, SUBMID[lead.s][1]);
       body = glue(body, SUBMID[others[fnv(ev.key + '|o') % others.length].s][1]);
     }
-    return cap(glue(body, suf)) + (attempt >= 36 ? '-' + (attempt - 35) : '');
+    return cap(glue(body, suf)) + (lap ? '-' + lap : '');
   }
   // ---- daemon form description (matches the sprite: body plan from the lead, organs from the subs)
   function formDesc(ev) {

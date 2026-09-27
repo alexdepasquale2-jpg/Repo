@@ -27,6 +27,19 @@
   const RARITY_CUTS = [40, 15, 5, 1]; // a roll at or below 40% is uncommon, 15% rare, 5% epic, 1% legendary
   function hash32(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
   const seedOf = str => hash32('ep|' + str).toString(16).padStart(8, '0');
+  // Stable word picks (rendezvous hashing): every word in a list gets a score from the seed, and
+  // the highest score wins. Adding a word only moves the picks where the new word scores highest,
+  // removing one only moves the picks that had it, and the order of a list doesn't matter.
+  function mix32(h) { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
+  const wordScore = (seed, w) => mix32(hash32(seed + '|' + w));
+  function stableRank(list, seed) {
+    return list.map(w => [w, wordScore(seed, w)]).sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0)).map(x => x[0]);
+  }
+  function stablePick(list, seed) {
+    let best = list[0], top = -1;
+    for (const w of list) { const sc = wordScore(seed, w); if (sc > top || (sc === top && w < best)) { top = sc; best = w; } }
+    return best;
+  }
   const unit = (seed, salt) => (hash32(seed + '|' + salt) + 0.5) / 4294967296;
   // `boost` (0 to 0.9) is how strongly the makeup favors rare outcomes; `pct` is the share of
   // designs at least this rare, so lower is rarer (2.7% is about 1 in 37).
@@ -110,7 +123,7 @@
   function genomeAdj(key, seed) {
     const p = E.parseKey(key), lead = p.subs.find(t => t.h === 1) || p.subs[0];
     const list = lead ? E.SUB[lead.s].adj : MAIN_ADJ[p.a];
-    return list[hash32(seed + '|adj') % list.length];
+    return stablePick(list, seed + '|adj');
   }
   const traitKey = (genome, seed) => genome + '@' + seed;
   // One individual daemon's trait. info: { gen, parentTier, prism, ancestry: [{ name, codes }] }.
@@ -125,7 +138,7 @@
     if (!codes.length) { const all = Object.keys(TRAITS); codes = [all[hash32(seed + '|trait') % all.length]]; weight[codes[0]] = 1; }
     const { fx, stats } = traitEffects(codes, weight, tier);
     const nouns = TRAITS[codes[0]][1], adj = genomeAdj(genome, seed);
-    let name = `${adj} ${nouns[hash32(seed + '|noun') % nouns.length]}`;
+    let name = `${adj} ${stablePick(nouns, seed + '|noun')}`;
     if (codes.length === 2) name += ` of ${EPITHET[codes[1]]}`;
     else if (codes.length === 3) name += ` of ${EPITHET[codes[1]]} and ${EPITHET[codes[2]]}`;
     const who = r.dName || 'This daemon';
@@ -187,7 +200,7 @@
   }
 
   return {
-    make, hash32, seedOf, unit, modulate, modFor, RARITY_NAMES, ITEM_TYPES, itemType, itemKind,
+    make, hash32, seedOf, stableRank, stablePick, unit, modulate, modFor, RARITY_NAMES, ITEM_TYPES, itemType, itemKind,
     TRAITS, TRAIT_SCOPE, ACTIVE_CD, affinity, traitEffects, traitKey, trait, describeTrait,
     PEDIGREE, INHERIT, breedKey, spliceOptions, lineage,
   };

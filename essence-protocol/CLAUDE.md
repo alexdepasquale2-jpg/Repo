@@ -30,7 +30,7 @@ Three ways, all the same underneath:
 Rules:
 - Never hand-edit `db/` or `js/data.js`; they're generated.
 - Keep `data/*.json` in the canonical layout (`node tools/content.js format`); the editor and CLI write it that way and `verify.js` checks it.
-- Everything is deterministic: the same data always bakes the same bytes. Adding a word to a list reshuffles which word each merge picks from that list (the pick is a hash modulo the list length), so one new noun can rename thousands of spells. The CLI and editor show exactly which.
+- Everything is deterministic: the same data always bakes the same bytes. Word picks are stable (rendezvous hashing, `stablePick`/`stableRank` in `js/designs.js`): every word gets a score from the merge's key and the highest wins, so adding a word only renames the merges that end up with it, plus some neighbors whose name had to be unique (a freed name goes back to the merge that wanted it); removing a word only moves the merges that had it; the order of a list never matters. The CLI and editor show exactly which merges change. Don't go back to `hash % list.length` picks: they rename most of a list's merges on any edit.
 - Saves store merge keys, not names, so renames are safe. Removing a sub-essence that already exists would break saves; the editor only lets you remove subs added in the current draft.
 - Seeds and the %RARITY% modulator (`modFor` in `designs.js`) keep the bridge-era formulas, so rolls in existing saves are unchanged.
 
