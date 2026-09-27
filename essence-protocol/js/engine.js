@@ -93,6 +93,8 @@
       coh: Math.floor(2 * b[5] * L / 100) + 5,
     };
     if (d.prism) for (const k in s) s[k] = Math.floor(s[k] * 1.1);
+    // live-baked bonuses: a spliced lineage's pedigree and the daemon's own trait (percent per stat)
+    for (const bonus of [d.pedigree, d.trait && d.trait.stats]) if (bonus) for (const k in bonus) if (s[k] != null) s[k] = Math.floor(s[k] * (1 + clamp(+bonus[k] || 0, 0, 20) / 100));
     const pv = passiveOf(d);
     if (pv === 'St') s.def = Math.floor(s.def * 1.15);
     if (pv === 'A' || pv === 'Ga') s.spd = Math.floor(s.spd * 1.15);
@@ -222,13 +224,14 @@
     return Math.round(m * 100) / 100;
   }
 
-  function captureChance(target, hpNow, maxHp, lattice, hasStatus) {
+  function captureChance(target, hpNow, maxHp, lattice, hasStatus, bonusPct) {
     const tier = tierOf(target.key);
     let c = (1 - (2 / 3) * (hpNow / maxHp)) * (lattice.power || 1);
     if (hasStatus) c *= 1.6;
     if (lattice.main && mainsOf(target.key)[0] === lattice.main) c *= 1.5;
     c *= [1, 0.8, 0.6, 0.45][tier];
     c *= 1 + Math.max(0, 12 - target.level) / 24;
+    c *= 1 + clamp(bonusPct || 0, 0, 100) / 100;
     return clamp(c, 0.03, 0.97);
   }
 
@@ -249,10 +252,12 @@
   }
 
   class Battle {
-    /* opts: { player: [daemons], enemy: [daemons], wild: bool, trainer: {name, ...}, rng, discovered: Set } */
+    /* opts: { player: [daemons], enemy: [daemons], wild: bool, trainer: {name, ...}, rng, discovered: Set,
+               bonus: { xp: %, bind: % } (party trait utilities) } */
     constructor(opts) {
       this.rng = opts.rng || Math.random;
       this.wild = !!opts.wild;
+      this.bonus = Object.assign({ xp: 0, bind: 0 }, opts.bonus || {});
       this.trainer = opts.trainer || null;
       this.discovered = opts.discovered || new Set();
       this.sides = [
@@ -424,7 +429,7 @@
     doBind(i, lattice) {
       if (!this.wild) { this.msg('You can\'t bind an Operator\'s daemon!'); return; }
       const t = this.act(1), v = this.sides[1].v;
-      const ch = captureChance(t, t.hp, v.stats.hp, lattice, !!v.status);
+      const ch = captureChance(t, t.hp, v.stats.hp, lattice, !!v.status, this.bonus.bind);
       this.msg(`You cast a ${lattice.name}!`, { anim: 'bind' });
       const shakes = [0, 1, 2].map(() => this.rng());
       const per = Math.pow(ch, 1 / 3);
@@ -1013,7 +1018,7 @@
       const alive = team.filter(d => d.hp > 0);
       if (!alive.length) return;
       const parts = alive.filter(d => this.sides[0].participants.has(d.uid));
-      const total = xpYield(enemy, !this.wild);
+      const total = Math.round(xpYield(enemy, !this.wild) * (1 + clamp(this.bonus.xp || 0, 0, 100) / 100));
       for (const d of alive) {
         const joined = parts.includes(d);
         const each = joined ? Math.max(1, Math.floor(total / Math.max(1, parts.length))) : Math.max(1, Math.floor(total * 0.5));

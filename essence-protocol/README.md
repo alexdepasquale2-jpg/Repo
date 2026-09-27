@@ -19,9 +19,9 @@ There are 16 sub-essences:
 
 That grammar gives **5,896** distinct merge identities: 12 cross pairs × 470 sub layouts, plus 4 pure pairs × 64. `FW-Em1Li2` means Fire leads, Water follows, Ember is bound to the Fire lead and Light to the Water follow.
 
-### Pre-baked, but emergent
+### Pre-baked, then live-baked
 
-The game never computes a merge at runtime. `tools/bake.js` runs every identity through a layered rule system once and writes the results to `js/merges.baked.js`:
+`tools/bake.js` runs every identity through a layered rule system once and writes the results to `js/merges.baked.js`:
 
 1. The two mains form a **reaction** (Scald/Steam, Magma/Obsidian, Wildfire/Firestorm, Mire/Clay, Squall/Thunderhead, Dune/Sandstorm, or a pure Inferno/Deluge/Tectonic/Tempest). Opposites (Fire/Water, Earth/Air) are volatile.
 2. Each essence pushes a 10-axis trait vector (force, guard, mend, speed, precision, status, drain, spread, persistence, chaos). Subs on the lead weigh 1.0 and subs on the follow weigh 0.7.
@@ -85,9 +85,47 @@ Every third cast of the same attack in a row is a **COMBO** (×1.6). Each trigge
 - **Rogue and Prismatic daemons:** 7% of wild encounters are Rogue builds with an extra sub-essence. About 1 in 64 is Prismatic, with a hue-shifted sprite and +10% stats.
 - **Post-game:** Wardens and the Architect offer rematches with recompiled, higher-level teams. **The Rift**, a terminal in the Core, is an endless descent through random genomes from the whole table. Floors get harder, every fifth floor has a guardian, and you can leave with your rewards after any floor.
 
-## FriedrichBridge (AI-named merges)
+## Live baking (FriedrichBridge)
 
-When [FriedrichBridge](CLAUDE.md) is running on your PC, it **designs every spell and ability**: the bridge's item for a merge decides its name, description, class, power, hits, Flux cost, accuracy, instability and effects. It also names daemon forms. Element typing, base stats and passives stay tied to the essences. Designs are cached in the browser. Without the bridge, the game uses the baked lattice. See `CLAUDE.md` for the contract and the id scheme.
+The lattice is baked twice. `tools/bake.js` bakes all 5,896 merges offline, and while you play, [FriedrichBridge](CLAUDE.md) (a local server in front of a local model) **bakes them again, live**. Every design is saved in the bridge's SQLite database, so asking again always returns the same design. Without the bridge, the offline bake fills in.
+
+What gets live-baked:
+
+| Design | Asked for when | What it decides |
+|---|---|---|
+| **Technique** | you discover a merge (cast, forge, see it cast) | name, text, class, power, hits, Flux, accuracy, instability, effects |
+| **Form** | you meet, bind, recompile or boot a daemon | species name and description |
+| **Forged item** | you forge | item name, lore and quality (stronger Patches, Modules and Lattices) |
+| **Lineage** | you splice two daemons | which of the parents' essences lead the offspring, which sub-essences it inherits, a stat pedigree, the line's name |
+| **Trait** | a daemon joins you, and again when it recompiles | one per individual daemon: utilities, passives and actives (below) |
+
+Element typing, base stats and passives stay with the essences.
+
+### Seeds and the %RARITY% modulator
+
+Every request carries a **seed** (fixed for that merge, pair or individual daemon) and a **%RARITY%** roll computed by the game: the share of designs at least this rare, for example `2.7% (epic, about 1 in 37)`. The roll uses the seed plus what the thing is made of. More sub-essences, rarer baked merges, later generations, rarer parents and prismatics all push it rarer. The roll, not the model, decides the tier. The tier sets the scope: how many effects a technique may carry, how strong an item is, how much a lineage passes on, and how many trait effects a daemon gets. The model designs within that budget, and `js/bridge.js` maps its answer onto mechanics with pure, deterministic functions (`abilityFrom`, `offspringFrom`, `traitFrom`).
+
+### Traits: evolving per daemon
+
+Every daemon you own has its own seed and its own trait, designed for that individual:
+
+- **Utilities while in the party:** forage (motes double), tutor (XP), binder (bind odds), smith (free forging), nurture (faster kernels), mender (heals while walking), fortune (prismatic odds), archive (motes from discoveries), lure / shroud (more or fewer encounters)
+- **Battle passives:** +% Logic, Firewall, Clock, HP, Flux or Coherence
+- **Actives from the Party menu, on a step cooldown:** pulse (heal the party), warp (back to the last terminal), repel (no encounters for a while), hasten (advance kernels), transmute (turn motes into its essence)
+
+Traits evolve. Recompiling asks for a new trait with the old one as its ancestor, and a spliced offspring's trait is designed from both parents' traits.
+
+### Splicing
+
+At the Nexus Forge, the **Splice** tab takes two daemons at level 10 or higher and some motes, and makes a kernel. The kernel compiles while you walk (60 steps) and boots as a new level 5 daemon of the next generation. The same two genomes always splice into the same lineage, which is saved in the database, but every offspring is its own individual with its own trait.
+
+### Discovery toasts
+
+When something rare or statistically unusual turns up, a large discovery toast appears with its rarity color, odds ("1 in 142") and why it stands out. Examples: an epic or legendary roll, the top few percent of the designed techniques you know by value per Flux, your strongest trait, or a trait type you've never had.
+
+### Nothing is lost offline
+
+Anything the database hasn't saved yet waits in an **outbox** kept in the browser across sessions. While the bridge is down, the game checks again every minute and sends the outbox when it's back. Things you do in play jump ahead of bulk jobs like "Design the whole lattice".
 
 ```
 start_bridge.bat                         (FriedrichBridge on 127.0.0.1:8765, with Ollama running)
@@ -95,7 +133,7 @@ set FRIEDRICH_BRIDGE_KEY=<your key>      (or copy bridge.example.json to bridge.
 python tools/serve.py                    -> open http://127.0.0.1:8090
 ```
 
-`tools/serve.py` serves the game and proxies `/bridge/*` to the bridge, adding the key server side, so the key never reaches the browser or git. Bridge status, "Test connection" and "Name discovered merges" are in **System > FriedrichBridge**.
+`tools/serve.py` serves the game and proxies `/bridge/*` to the bridge, adding the key server side, so the key never reaches the browser or git. **System > FriedrichBridge** shows status, designs and waiting requests by kind, *Sync now*, *Send everything I've met*, the database's newest recipes, and *Forget local designs* (which pulls them back from the database).
 
 ## Play
 
@@ -116,9 +154,10 @@ Open `index.html` over HTTP (for example `python3 -m http.server` in this folder
 | `js/engine.js` | Daemon model and battle engine (no DOM, runs in Node) |
 | `js/content.js` | Map, zones, operators, starters |
 | `js/sprites.js` | Procedural pixel sprites, a pure function of the genome |
-| `js/bridge.js` | FriedrichBridge client: request mapping, queue, retries, local cache |
+| `js/bridge.js` | Live baking: request mapping, seeds and the %RARITY% modulator, design-to-mechanics mappings (abilities, offspring, traits), priority queue, retries, persistent outbox, local cache |
 | `tools/serve.py` | Local server and `/bridge` proxy (keeps the API key server side) |
-| `js/game.js` | Overworld, battle UI, composer, menus, forge |
-| `tools/verify.js` | CI checks: bake is fresh and complete, records are sane, content keys exist, the map is connected, and 300 seeded headless battles finish |
+| `js/reveal.js` | Merge reveals: essences converge and fuse, the %RARITY% dial rolls and the tier stamps in, then the name, powers and stats appear |
+| `js/game.js` | Overworld, battle UI, composer, menus, forge, splicing, traits, discovery toasts |
+| `tools/verify.js` | CI checks: bake is fresh and complete, records are sane, content keys exist, the map is connected, 300 seeded headless battles finish, every live-bake request id is valid and distinct, lineage and trait designs map to sane mechanics, and the bridge client keeps its outbox against a fake bridge |
 
 No build step and no dependencies. After changing any rule in `essences.js` or `bake.js`, run `node tools/bake.js` and then `node tools/verify.js`.

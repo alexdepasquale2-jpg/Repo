@@ -1,7 +1,7 @@
 // Essence Protocol service worker: cache-first so the game (and its baked merge table) works offline.
-const CACHE = 'essence-protocol-v9';
+const CACHE = 'essence-protocol-v11';
 const ASSETS = ['./', 'index.html', 'style.css', 'manifest.json', 'icon.svg',
-  'js/essences.js', 'js/merges.baked.js', 'js/engine.js', 'js/content.js', 'js/sprites.js', 'js/bridge.js', 'js/game.js'];
+  'js/essences.js', 'js/merges.baked.js', 'js/engine.js', 'js/content.js', 'js/sprites.js', 'js/bridge.js', 'js/reveal.js', 'js/game.js'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));

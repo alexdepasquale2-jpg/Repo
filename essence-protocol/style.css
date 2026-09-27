@@ -41,6 +41,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .toast { background: #141a2bf2; border: 1px solid var(--line); border-left: 4px solid var(--acc); padding: 8px 12px; border-radius: 10px; font-size: 13px; animation: toast 3.2s forwards; width: 100%; }
 .toast.rare { border-left-color: var(--warn); } .toast.myth { border-left-color: #ff5cf0; } .toast.quest { border-left-color: var(--good); } .toast.tip { border-left-color: var(--warn); background: #1d1a0ff2; } .toast.tip b { color: var(--warn); margin-right: 4px; }
 @keyframes toast { 0% { opacity: 0; transform: translateY(-8px); } 8%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+/* discovery toast: a live-baked design that is rare or statistically unique */
+.toast.discovery { --rc: var(--acc); position: relative; overflow: hidden; pointer-events: auto; cursor: pointer; border: 1px solid var(--rc); border-left: 6px solid var(--rc); padding: 10px 14px 11px; background: linear-gradient(135deg, #1d1638f7, #121a2ef7); box-shadow: 0 0 24px -6px var(--rc); animation: toast 6.6s forwards; }
+.toast.discovery.r0 { --rc: #aab; } .toast.discovery.r1 { --rc: #9fe; } .toast.discovery.r2 { --rc: var(--warn); } .toast.discovery.r3 { --rc: #ff5cf0; }
+.toast.discovery.r4 { --rc: #46f3ff; background: linear-gradient(135deg, #2c1644f7, #0f2a3cf7); }
+.toast.discovery::after { content: ''; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, #ffffff26 50%, transparent 65%); transform: translateX(-100%); animation: shine 1.4s .15s 2; pointer-events: none; }
+@keyframes shine { to { transform: translateX(100%); } }
+.toast.discovery .dt-k { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--rc); }
+.toast.discovery .dt-n { font-family: var(--display); font-size: 18px; font-weight: 800; margin: 3px 0 2px; }
+.toast.discovery .dt-s { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.preview.trait .tfx-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 5px; }
+.preview.trait .tfx-row .btn { margin-left: auto; }
 
 /* Screens */
 .screen { position: fixed; inset: 0; z-index: 10; background: radial-gradient(ellipse at 50% 20%, #1a2340, var(--bg) 70%); overflow: auto; }
@@ -433,3 +444,46 @@ body.inbattle #toasts { top: auto; bottom: calc(50% + 20px); width: min(340px, c
 body.inbattle .toast { font-size: 11px; padding: 5px 9px; opacity: .92; }
 body.inbattle .toast:nth-last-child(n+4) { display: none; }
 body.inbattle .toast.tip { font-size: 12px; }
+body.inbattle .toast.discovery { font-size: 12px; opacity: 1; } body.inbattle .toast.discovery .dt-n { font-size: 15px; }
+
+/* merge reveal (js/reveal.js): converge -> fuse -> rarity roll -> powers */
+#reveal { position: fixed; inset: 0; z-index: 90; cursor: pointer; animation: rvIn .25s ease-out; }
+#reveal.out { opacity: 0; transition: opacity .25s; }
+@keyframes rvIn { from { opacity: 0; } }
+#reveal canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+#reveal .rv-card { --tc: var(--acc); position: absolute; left: 50%; top: calc(20% + 56px); bottom: 12px; transform: translateX(-50%); width: min(460px, calc(100% - 32px)); text-align: center; overflow-y: auto; scrollbar-width: thin; }
+#reveal .rv-kick { font-size: 11px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: var(--acc); }
+#reveal .rv-parts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 8px 0; }
+#reveal .rv-parts span { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 700; color: var(--c); background: #0008; border: 1px solid color-mix(in srgb, var(--c) 50%, transparent); padding: 2px 8px; border-radius: 99px; }
+#reveal .rv-parts i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 8px var(--c); }
+#reveal .rv-parts small { color: var(--dim); font-weight: 600; }
+#reveal .rv-status { color: var(--dim); font-size: 13px; animation: bob 1.2s infinite; }
+#reveal .rv-roll { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 6px 0; }
+#reveal .rv-dial { position: relative; width: 84px; height: 84px; }
+#reveal .rv-dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+#reveal .rv-dial circle { fill: none; stroke-width: 8; }
+#reveal .rv-dial .bg { stroke: #ffffff18; }
+#reveal .rv-dial .fg { stroke: var(--tc); stroke-dasharray: 264; stroke-dashoffset: 0; stroke-linecap: round; filter: drop-shadow(0 0 6px var(--tc)); }
+#reveal .rv-dial b { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--display); font-size: 15px; }
+#reveal .rv-tier { text-align: left; opacity: 0; }
+#reveal .rv-tier b { display: block; font-family: var(--display); font-size: 30px; font-weight: 800; color: var(--tc); text-shadow: 0 0 18px var(--tc); text-transform: uppercase; letter-spacing: .04em; }
+#reveal .rv-tier span { font-size: 12px; color: var(--dim); }
+#reveal .rv-tier.stamp { animation: stamp .45s cubic-bezier(.2, 1.6, .4, 1) forwards; }
+@keyframes stamp { 0% { opacity: 0; transform: scale(2.2) rotate(-6deg); } 100% { opacity: 1; transform: none; } }
+#reveal .rv-body { background: #0d1222e6; border: 1px solid var(--tc); box-shadow: 0 0 30px -8px var(--tc); border-radius: 14px; padding: 12px 14px; margin-top: 8px; animation: rvIn .3s; }
+#reveal .rv-sprite canvas { width: 96px; height: 96px; image-rendering: pixelated; margin: -4px auto 0; display: block; }
+#reveal .rv-name { font-family: var(--display); font-size: 22px; font-weight: 800; min-height: 28px; }
+#reveal .rv-desc { color: var(--dim); font-size: 13px; font-style: italic; margin: 4px 0 8px; }
+#reveal .rv-chips { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; }
+#reveal .rv-chip { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 6px; background: #ffffff10; border: 1px solid #ffffff22; animation: pop .3s cubic-bezier(.2, 1.6, .4, 1); }
+#reveal .rv-chip.good { color: var(--good); } #reveal .rv-chip.bad { color: var(--bad); } #reveal .rv-chip.inf { color: var(--acc); }
+#reveal .rv-chip.pas { color: var(--pas); border-color: currentColor; } #reveal .rv-chip.act { color: var(--act); border-color: currentColor; } #reveal .rv-chip.utl { color: var(--utl); border-color: currentColor; } #reveal .rv-chip.atk { color: var(--atk); border-color: currentColor; }
+@keyframes pop { from { opacity: 0; transform: scale(.4); } }
+#reveal .rv-bars { display: grid; gap: 4px; margin-top: 8px; }
+#reveal .rv-bar { display: grid; grid-template-columns: 90px 1fr 60px; gap: 8px; align-items: center; font-size: 12px; text-align: left; }
+#reveal .rv-bar span { color: var(--dim); } #reveal .rv-bar em { font-style: normal; font-weight: 700; text-align: right; }
+#reveal .rv-bar i { height: 6px; background: #ffffff14; border-radius: 99px; overflow: hidden; }
+#reveal .rv-bar b { display: block; height: 100%; background: var(--tc); transition: width .8s cubic-bezier(.2, .8, .2, 1); }
+#reveal .rv-note { font-size: 11px; color: var(--dim); margin-top: 6px; }
+#reveal .rv-skip { font-size: 11px; color: var(--dim); margin-top: 10px; opacity: .7; }
+#reveal .hidden { display: none; }
