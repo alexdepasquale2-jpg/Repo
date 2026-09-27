@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 runs/
 essence-protocol/bridge.local.json
+essence-protocol/host/

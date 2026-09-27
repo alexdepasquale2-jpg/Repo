@@ -17,7 +17,8 @@
  *   node tools/content.js find <text>            search spells, daemons, items and content
  *   node tools/content.js check                  validate data/ (schema, references, map)
  *   node tools/content.js preview [changes.json] what a change set (or data/ as it is) changes in db/
- *   node tools/content.js apply <changes.json>   apply a change set saved by the content editor
+ *   node tools/content.js apply <changes.json>   apply a change set from the content editor (an export, or
+ *                                                the hosted editor's draft documents saved as a JSON list)
  *   node tools/content.js format                 rewrite data/*.json in the canonical layout
  *
  * Flags: --dry (show, don't write)  --no-bake (skip the re-bake)  --force (apply stale edits)
@@ -275,7 +276,9 @@ function main() {
     let next = data, changes = null;
     if (args[1]) {
       changes = JSON.parse(fs.readFileSync(args[1], 'utf8'));
-      const ops = Array.isArray(changes) ? changes : changes.ops;
+      // a change set ({ ops }), or the hosted editor's draft documents as a list (in `seq` order)
+      let ops = Array.isArray(changes) ? changes : changes.ops;
+      if (Array.isArray(ops)) ops = ops.map(o => (o && o.data && !o.op ? o.data : o)).slice().sort((a, b) => (a.seq || 0) - (b.seq || 0));
       if (!Array.isArray(ops)) fail(`${args[1]} is not a change set (expected { "ops": [...] }).`);
       if (changes.base && changes.base !== SC.hashData(data)) out('Note: these edits were made on an older copy of the content; each one is checked against what is here now.');
       const res = SC.applyOps(data, ops, { force: flags.has('--force') });

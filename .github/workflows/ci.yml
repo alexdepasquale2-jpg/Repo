@@ -39,7 +39,7 @@ jobs:
       - name: node --check pyramid-current game
         run: node --check pyramid-current/game.js && node --check pyramid-current/sw.js && python3 -m json.tool pyramid-current/manifest.json > /dev/null
       - name: node --check essence-protocol
-        run: for f in essence-protocol/js/*.js essence-protocol/sw.js essence-protocol/tools/*.js essence-protocol/data/index.js; do node --check "$f" || exit 1; done && for f in essence-protocol/data/*.json; do python3 -m json.tool "$f" > /dev/null || exit 1; done && python3 -m json.tool essence-protocol/manifest.json > /dev/null && python3 -m json.tool essence-protocol/db/index.json > /dev/null && python3 -m py_compile essence-protocol/tools/serve.py && python3 -c "import xml.etree.ElementTree as E; E.parse('essence-protocol/icon.svg')"
+        run: for f in essence-protocol/js/*.js essence-protocol/sw.js essence-protocol/tools/*.js essence-protocol/data/index.js essence-protocol/editor/*.js; do node --check "$f" || exit 1; done && for f in essence-protocol/data/*.json; do python3 -m json.tool "$f" > /dev/null || exit 1; done && python3 -m json.tool essence-protocol/manifest.json > /dev/null && python3 -m json.tool essence-protocol/db/index.json > /dev/null && python3 -m py_compile essence-protocol/tools/serve.py essence-protocol/tools/build-host.py && python3 -c "import xml.etree.ElementTree as E; E.parse('essence-protocol/icon.svg')"
       - name: essence-protocol merge database is fresh, complete and battle-safe
         run: node essence-protocol/tools/bake.js --check && node essence-protocol/tools/content.js check && node essence-protocol/tools/verify.js
       - name: manifest.json is valid JSON

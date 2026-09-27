@@ -1,5 +1,5 @@
 // Essence Protocol service worker: cache-first so the game and its merge database work offline.
-const CACHE = 'essence-protocol-v14';
+const CACHE = 'essence-protocol-v15';
 const SHARDS = ['FF', 'FW', 'FE', 'FA', 'WF', 'WW', 'WE', 'WA', 'EF', 'EW', 'EE', 'EA', 'AF', 'AW', 'AE', 'AA'].map(p => `db/${p}.json`);
 const ASSETS = ['./', 'index.html', 'style.css', 'manifest.json', 'icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',
   'js/data.js', 'js/essences.js', 'js/db.js', 'js/designs.js', 'js/engine.js', 'js/content.js', 'js/sprites.js', 'js/reveal.js', 'js/game.js', 'db/index.json'].concat(SHARDS);
@@ -7,10 +7,15 @@ self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c =>
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
+// The content editor (editor/) and its save API (api/) always go to the network. On localhost,
+// where the editor saves new content into db/ and js/data.js, the game fetches fresh files first
+// and falls back to the cache offline; anywhere else it plays from the cache.
+const DEV = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+const keep = (req, res) => { if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); } return res; };
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request).then(res => {
-    if (res.ok && new URL(e.request.url).origin === location.origin) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
-    return res;
-  })));
+  const url = new URL(e.request.url);
+  if (url.origin !== location.origin || /\/(api|editor)\//.test(url.pathname)) return;
+  if (DEV) { e.respondWith(fetch(e.request).then(res => keep(e.request, res)).catch(() => caches.match(e.request, { ignoreSearch: true }).then(hit => hit || Response.error()))); return; }
+  e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(hit => hit || fetch(e.request).then(res => keep(e.request, res))));
 });
