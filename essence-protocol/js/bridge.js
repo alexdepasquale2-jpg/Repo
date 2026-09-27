@@ -33,7 +33,7 @@
   const CACHE_KEY = 'ep-bridge-cache-v1';
   const CONF_KEY = 'ep-bridge-conf';
   const OUTBOX_KEY = 'ep-bridge-outbox-v1';
-  const TIMEOUT_MS = 75000;
+  const TIMEOUT_MS = 180000; // longer than the bridge's merge_timeout (150 s), which includes queue time
   const BACKOFF = [2000, 5000, 10000];
   const RETRY_MS = 60000;
 

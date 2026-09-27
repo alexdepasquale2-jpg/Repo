@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TIMEOUT = 75  # seconds; the bridge's own merge_timeout is 60 and includes queue time
+TIMEOUT = 180  # seconds; the bridge's merge_timeout is 150 and includes queue time
 # Only what the game uses is proxied (the proxy adds the key, so everything else on the
 # bridge, like /db/* or /generate, stays unreachable). Paths are checked after URL-decoding,
 # so /merge/%72eset can't slip past as /merge/reset.

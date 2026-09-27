@@ -156,6 +156,7 @@ Open `index.html` over HTTP (for example `python3 -m http.server` in this folder
 | `js/sprites.js` | Procedural pixel sprites, a pure function of the genome |
 | `js/bridge.js` | Live baking: request mapping, seeds and the %RARITY% modulator, design-to-mechanics mappings (abilities, offspring, traits), priority queue, retries, persistent outbox, local cache |
 | `tools/serve.py` | Local server and `/bridge` proxy (keeps the API key server side) |
+| `js/reveal.js` | Merge reveals: essences converge and fuse, the %RARITY% dial rolls and the tier stamps in, then the name, powers and stats appear |
 | `js/game.js` | Overworld, battle UI, composer, menus, forge, splicing, traits, discovery toasts |
 | `tools/verify.js` | CI checks: bake is fresh and complete, records are sane, content keys exist, the map is connected, 300 seeded headless battles finish, every live-bake request id is valid and distinct, lineage and trait designs map to sane mechanics, and the bridge client keeps its outbox against a fake bridge |
 

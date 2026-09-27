@@ -209,7 +209,8 @@
 
   // ---- daemon traits: one design per individual (genome + seed), evolving with recompiles and splices
   const traitKeyOf = d => BR.traitKey(d.key, d.seed);
-  function requestTrait(d, pri) { if (!d.seed) d.seed = newSeed(); return flavorOf(traitKeyOf(d), 'trait', pri); }
+  // a trait asked for in play (not backlog) gets a full reveal when it arrives
+  function requestTrait(d, pri) { if (!d.seed) d.seed = newSeed(); if (pri == null || pri === 2) d.revealTrait = true; return flavorOf(traitKeyOf(d), 'trait', pri); }
   function applyTraitDesign(tkey, entry, quiet) {
     const [k, seed] = tkey.split('@');
     const d = ownedDaemons().find(x => x.seed === seed);
@@ -218,7 +219,8 @@
     const t = BR.traitFrom(entry, BR.modFor('trait', tkey, traitRec(d, k)), (d.ancestry || []).flatMap(a => a.codes || []));
     d.trait = Object.assign({ key: tkey }, t);
     const mx = ENG.calcStats(d).hp; if (d.hp > mx) d.hp = mx;
-    if (!quiet) celebrateTrait(d, prev);
+    const live = !!d.revealTrait; delete d.revealTrait;
+    if (!quiet) celebrateTrait(d, prev, live);
   }
   // Recompiling evolves the trait: the new genome asks for a design with the old trait as its ancestor.
   function evolveTrait(d) {
@@ -258,32 +260,66 @@
   const percentile = (v, vals) => (vals.length ? vals.filter(x => x < v).length / vals.length : 0);
   const topPct = p => Math.max(1, Math.round((1 - p) * 100));
   const techScore = r => ((r.damaging ? r.power * r.hits * Math.min(r.acc, 100) / 100 : 0) + r.fx.reduce((s, f) => s + (['heal', 'shield', 'drain'].includes(f.code) ? f.mag : f.chance * 0.3), 0)) / Math.max(3, r.flux);
-  function celebrate(id, o) { if (!S || S.specials.includes(id)) return false; S.specials.push(id); discoveryToast(o); return true; }
+  function celebrate(id, o) { if (!S || S.specials.includes(id)) return false; S.specials.push(id); if (o.reveal && canReveal()) RV.play(o.reveal); else discoveryToast(o); return true; }
+  const markCelebrated = id => { if (S && !S.specials.includes(id)) S.specials.push(id); return true; };
   // A technique is special when it rolled epic or better, or when it tops the designed techniques you know.
   function celebrateTech(key) {
     const r = ENG.rec(key);
     if (!S || !r.bridge || !r.mod || !discovered.has(key)) return false;
+    if (revealed.has('tech:' + key)) return markCelebrated('tech:' + key);
     const pool = [...discovered].filter(k => k !== key).map(k => ENG.rec(k)).filter(x => x.bridge);
     const p = percentile(techScore(r), pool.map(techScore)), outlier = pool.length >= 12 && p >= 0.95;
     if (r.mod.tier < 3 && !outlier) return false;
     return celebrate('tech:' + key, { kicker: r.mod.tier >= 3 ? `${TIER_WORD[r.mod.tier]} technique` : 'Statistically unique technique', name: r.name, tier: Math.max(r.mod.tier, 2), odds: r.mod.odds,
       lines: [`${r.cls}${r.damaging ? ` · power ${r.power}${r.hits > 1 ? '×' + r.hits : ''}` : ''} · Flux ${r.flux} · ${r.fx.map(f => esc(ENG.describeFx(f))).join(', ')}`,
-        outlier ? `Top ${topPct(p)}% of the ${pool.length + 1} designed techniques you know, by value per Flux` : `Rolled ${r.mod.pct}% on the rarity modulator`] });
+        outlier ? `Top ${topPct(p)}% of the ${pool.length + 1} designed techniques you know, by value per Flux` : `Rolled ${r.mod.pct}% on the rarity modulator`],
+      reveal: { kicker: r.mod.tier >= 3 ? `${TIER_WORD[r.mod.tier]} technique` : 'Statistically unique technique', parts: genomeParts(key),
+        design: Object.assign(techDesign(key), { note: outlier ? `Top ${topPct(p)}% of the ${pool.length + 1} designed techniques you know, by value per Flux` : '' }) } });
   }
-  function celebrateTrait(d, prev) {
+  function celebrateTrait(d, prev, live) {
     const t = d.trait, others = ownedDaemons().filter(x => x !== d && x.trait);
     const newCodes = t.fx.filter(f => !others.some(x => x.trait.fx.some(g => g.code === f.code)));
     const p = percentile(traitStrength(t), others.map(x => traitStrength(x.trait))), outlier = others.length >= 5 && p >= 0.9;
     const lines = [t.fx.map(f => esc(BR.describeTrait(f))).join(' · '), prev ? `Evolved from ${esc(prev.name)}` : '',
       outlier ? `Strongest trait of your ${others.length + 1} daemons (top ${topPct(p)}%)` : newCodes.length ? `New trait type: ${newCodes.map(f => f.code).join(', ')}` : `Rolled ${t.pct}% on the rarity modulator`];
-    if (t.tier >= 2 || outlier || newCodes.length) celebrate('trait:' + t.key, { kicker: `${TIER_WORD[t.tier]} trait · ${dName(d)}`, name: t.name, tier: Math.max(t.tier, outlier ? 3 : 1), odds: t.odds, lines });
+    const special = t.tier >= 2 || outlier || newCodes.length;
+    if (live && canReveal()) {
+      if (special) markCelebrated('trait:' + t.key);
+      RV.play({ kicker: `${prev ? 'Evolved trait' : 'Trait'} · ${dName(d)}`, parts: genomeParts(d.key), sprite: d.key, prism: d.prism, design: Object.assign(traitDesign(t), { note: lines.slice(1).filter(Boolean).join(' · ') }) });
+      return;
+    }
+    if (special) celebrate('trait:' + t.key, { kicker: `${TIER_WORD[t.tier]} trait · ${dName(d)}`, name: t.name, tier: Math.max(t.tier, outlier ? 3 : 1), odds: t.odds, lines });
     else toast(`✦ ${esc(dName(d))}'s trait: <b>${esc(t.name)}</b> · ${esc(BR.describeTrait(t.fx[0]))}`, 'rare');
   }
   function celebrateItem(key, t) {
     const it = ENG.rec(key).items && ENG.rec(key).items[t];
-    if (!it || it.mod.tier < 3) return false;
+    if (!it) return false;
+    if (revealed.has(`item.${t}:${key}`)) return it.mod.tier >= 3 ? markCelebrated(`item.${t}:${key}`) : true;
+    if (it.mod.tier < 3) return false;
     return celebrate(`item.${t}:${key}`, { kicker: `${TIER_WORD[it.mod.tier]} ${BR.ITEM_TYPES[t][0]}`, name: it.name, tier: it.mod.tier, odds: it.mod.odds, lines: [esc(it.desc), `Quality from rolling ${it.mod.pct}% on the rarity modulator`] });
   }
+
+  // ---- merge reveals (js/reveal.js): converge, fuse, rarity roll, powers. Never during battle.
+  const RV = window.REVEAL;
+  const revealed = new Set(); // designs a reveal is showing, so they don't also toast
+  window.REVEAL_SOUND = (what, n) => { if (what === 'tier') [523, 659, 784, 1047, 1319].slice(0, 2 + n).forEach((f, i) => setTimeout(() => beep(f, 0.12, 'triangle', 0.05), i * 90)); else beep(660 + n * 70, 0.05, 'sine', 0.03); };
+  const canReveal = () => !!RV && !!S && mode !== 'battle' && mode !== 'title' && mode !== 'starter';
+  const essPart = (code, role) => ({ color: E.MAIN[code] ? E.MAIN[code].color : SP.ACCENT[code], label: (E.MAIN[code] || E.SUB[code]).name, role });
+  function genomeParts(key) {
+    const p = E.parseKey(key);
+    return [essPart(p.a, p.a === p.b ? 'pure' : 'lead')].concat(p.a !== p.b ? [essPart(p.b, 'follow')] : [], p.subs.map(t => essPart(t.s, 'on ' + E.MAIN[E.hostMain(p, t.h)].name)));
+  }
+  const fxChip = f => ({ t: ENG.describeFx(f), c: E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf' });
+  function techDesign(key) {
+    const r = ENG.rec(key);
+    if (!r.bridge || !r.mod) return null;
+    return { name: r.name, desc: r.text, tier: r.mod.tier, pct: r.mod.pct, odds: r.mod.odds,
+      chips: [{ t: r.cls, c: ENG.isAttack(key) ? 'atk' : 'act' }].concat(r.fx.map(fxChip)),
+      bars: (r.damaging ? [{ label: 'Power', v: r.power * r.hits, max: 160, text: r.power + (r.hits > 1 ? '×' + r.hits : '') }] : []).concat([{ label: 'Flux cost', v: r.flux, max: 30 }, { label: 'Instability', v: r.instab, max: 60, text: r.instab + '%' }]) };
+  }
+  const traitDesign = t => ({ name: t.name, desc: t.desc, tier: t.tier, pct: t.pct, odds: t.odds,
+    chips: t.fx.map(f => ({ t: BR.describeTrait(f), c: f.cat === 'passive' ? 'pas' : f.cat === 'active' ? 'act' : 'utl' })),
+    bars: t.fx.filter(f => !['warp', 'transmute'].includes(f.code)).map(f => ({ label: f.code, v: f.mag, max: BR.TRAITS[f.code][2][4], text: f.mag })) });
 
   if (BR) {
     applyAllCached();
@@ -2134,7 +2170,18 @@
         S.stats.forged++; questEvent('forge');
         beep(440, 0.1, 'triangle'); setTimeout(() => beep(660, 0.12, 'triangle'), 90);
         toast(`Forged <b>${esc(it.name)}</b>.${free ? ' The smith trait saved your motes!' : ''}`);
-        flavorOf(k, 'item.' + it.kind).then(e => { if (e) celebrateItem(k, it.kind); });
+        const ik = 'item.' + it.kind;
+        if (canReveal()) { revealed.add(ik + ':' + k); revealed.add('tech:' + k); }
+        const design = flavorOf(k, ik).then(e => {
+          if (!e) return null;
+          const d = ENG.rec(k).items[it.kind], cur = S.bag[it.id] || it, tech = techDesign(k);
+          return { name: d.name, desc: d.desc, tier: d.mod.tier, pct: d.mod.pct, odds: d.mod.odds,
+            chips: [{ t: KIND_NAME[it.kind], c: 'inf' }, { t: itemDesc(cur), c: 'good' }].concat(tech ? tech.chips.slice(0, 4) : []),
+            bars: cur.mag ? [{ label: it.kind === 'patch' ? 'Heal' : 'Shield', v: cur.mag, max: 100, text: cur.mag + '%' }] : cur.power ? [{ label: 'Bind power', v: cur.power, max: 2.5, text: '×' + cur.power }] : [],
+            note: tech ? `Forged from ${tech.name}` : '' };
+        });
+        if (canReveal()) RV.play({ kicker: 'Nexus Forge · ' + KIND_NAME[it.kind], parts: genomeParts(k), design, fallbackName: it.name, fallbackChips: [{ t: itemDesc(it), c: 'good' }] });
+        else design.then(e => { if (e) celebrateItem(k, it.kind); });
         save(); renderSheet();
       } }],
     });
@@ -2209,7 +2256,15 @@
     const lines = [`${genomeText(d.key)} · inherits ${o.attune.map(s => E.SUB[s].name).join(', ') || 'no sub-essences'}`, d.pedigree ? `Pedigree ${pedigreeText(d.pedigree)}` : '', `Generation ${d.gen} · ${where}`];
     const peers = ownedDaemons().filter(x => x !== d && x.pedigree), sum = p => Object.values(p || {}).reduce((s, v) => s + v, 0);
     const p = percentile(sum(d.pedigree), peers.map(x => sum(x.pedigree))), outlier = peers.length >= 4 && p >= 0.9;
-    if (entry && (mod.tier >= 2 || outlier)) celebrate('line:' + kn.id, { kicker: outlier && mod.tier < 2 ? 'Statistically unique lineage' : `${TIER_WORD[mod.tier]} lineage${d.prism ? ' · prismatic' : ''}`, name: `${entry.name}: ${dName(d)}`, tier: Math.max(mod.tier, 2), odds: mod.odds, lines });
+    if (canReveal()) {
+      if (entry && (mod.tier >= 2 || outlier)) markCelebrated('line:' + kn.id);
+      const parents = kn.pair.split('~').map((k, i) => ({ color: MAINC(k[0]), label: kn.parents[i], role: 'parent' }));
+      RV.play({ kicker: `Splice · kernel booted${d.prism ? ' · prismatic' : ''}`, parts: parents.concat(o.attune.map(s => essPart(s, 'inherited'))), sprite: d.key, prism: d.prism,
+        design: entry ? { name: `${entry.name}: ${dName(d)}`, desc: entry.description, tier: mod.tier, pct: mod.pct, odds: mod.odds,
+          chips: [{ t: genomeText(d.key), c: 'inf' }].concat(o.attune.map(s => ({ t: 'Inherits ' + E.SUB[s].name, c: 'good' })), [{ t: 'Generation ' + d.gen, c: 'pas' }]),
+          bars: Object.entries(d.pedigree || {}).map(([k, v]) => ({ label: STAT_NAME[k], v, max: 15, text: '+' + v + '%' })), note: where[0].toUpperCase() + where.slice(1) + (outlier ? ' · the strongest pedigree you own' : '') } : null,
+        fallbackName: dName(d), fallbackChips: [{ t: genomeText(d.key), c: 'inf' }].concat(o.attune.map(s => ({ t: 'Inherits ' + E.SUB[s].name, c: 'good' }))) });
+    } else if (entry && (mod.tier >= 2 || outlier)) celebrate('line:' + kn.id, { kicker: outlier && mod.tier < 2 ? 'Statistically unique lineage' : `${TIER_WORD[mod.tier]} lineage${d.prism ? ' · prismatic' : ''}`, name: `${entry.name}: ${dName(d)}`, tier: Math.max(mod.tier, 2), odds: mod.odds, lines });
     else toast(`⬢ A kernel booted: <b>${esc(dName(d))}</b>${d.line.name ? ` of the <b>${esc(d.line.name)}</b> line` : ''}${d.prism ? ' ✦' : ''} ${where}.`, 'rare', 5000);
     beep(523, 0.1, 'triangle'); setTimeout(() => beep(784, 0.16, 'triangle'), 110);
     save();

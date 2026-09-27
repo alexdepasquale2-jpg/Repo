@@ -80,7 +80,7 @@ What the game does with the response (`abilityFrom`):
 Timing:
 - Calls are async and never block the game loop or combat.
 - Only one merge is in flight at a time (a single queue), and duplicate requests for the same key share one promise.
-- The client timeout is 75 s (the bridge's `merge_timeout` is 60 s, including queue time).
+- The client and proxy timeouts are 180 s (the bridge's `merge_timeout` is 150 s, including queue time). A local qwen3:8b needs 15-40 s per design once loaded; the bridge sends `keep_alive` and `think: false` so it stays loaded and skips thinking.
 - On load the game asks for everything the player has met (party forms and traits first, then kernels, lineages, techniques, forms, forged items) at backlog priority; anything unanswered waits in the outbox. "Design the whole lattice…" queues all 5,896 techniques at bulk priority.
 
 ## Other endpoints
