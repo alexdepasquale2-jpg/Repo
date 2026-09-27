@@ -26,7 +26,21 @@ Each merge identity (key like `FW-Em1Li2`) is sent as a two-item `POST /merge`:
 - The **role is part of the id** because lead/follow order matters here (Fire-led Scald is not Water-led Steam), while the bridge treats A+B as B+A.
 - Techniques use the prefix `ep.t.` and daemon forms use `ep.f.`, so each identity has two independent recipes.
 - `context` carries the baked class, reaction, power and effects so the name fits what the merge does.
-- All ids match `^[A-Za-z0-9_.:\-]{1,128}$` and never contain `+`. `tools/verify.js` checks every one of the 11,792 requests, and checks that no two merges collide as an unordered pair.
+- All ids match `^[A-Za-z0-9_.:\-]{1,128}$` and never contain `+`. `tools/verify.js` checks every technique, form and item request plus thousands of sampled lineages and traits, and checks that no two collide as an unordered pair.
+
+### Live baking: every merge and splice goes through the bridge database
+| Kind (cache key) | Ids (a + b) | Asked when |
+|---|---|---|
+| `tech:<key>` | `ep.t.lead…` + `ep.t.follow…` | a merge is discovered |
+| `form:<key>` | `ep.f.lead…` + `ep.f.follow…` | a form is seen, bound, recompiled into or booted |
+| `item.<type>:<key>` | `ep.i.<type>.lead…` + `ep.i.<type>.follow…` | an item is forged (patch, ward, lattice, catalyst, script, cell) |
+| `breed:<genomeA>~<genomeB>` | `ep.b.<genomeA>` + `ep.b.<genomeB>` (`.twin` on b if equal) | two daemons are spliced (sorted pair, so A×B = B×A) |
+| `trait:<genome>@<seed>` | `ep.d.<genome>` + `ep.s.<seed>` | a daemon joins the player, and again after each recompile |
+
+- Every context carries `SEED` and a `%RARITY%` modulator (`modFor` in `js/bridge.js`): a deterministic roll from the seed plus the merge's makeup. **The roll decides the tier** (common to legendary), not the model's `rarity` field. The tier sets the scope: technique effect count and power, item quality, lineage inheritance and pedigree, and the number of trait effects.
+- Pure mappings (keep them deterministic; `verify.js` fuzzes all three): `abilityFrom(item, baked, mod)`, `offspringFrom(item, pair, mod)` (the offspring's genome and attunements come only from the parents' essences) and `traitFrom(item, mod, ancestryCodes)` (codes from `TRAITS`: utilities, battle passives, menu actives).
+- Traits and pedigrees are plain data on the daemon (`d.trait.stats`, `d.pedigree`). `engine.js` applies them in `calcStats`, and party utilities reach battles as `Battle({ bonus: { xp, bind } })`.
+- **Outbox**: every request made during play (`record` defaults to true) is kept in `localStorage` (`ep-bridge-outbox-v1`) until the database has it. The game registers a resolver with `BRIDGE.init({ rec })` so waiting requests can be rebuilt. When `health()` comes back online the outbox replays, and while the bridge is down it is checked every 60 s. Priorities: 2 = play event, 1 = backlog, 0 = bulk (bulk requests are not recorded).
 
 The request's `context` asks the model to design a combat technique. Its `tags` should include one type from `strike, barrage, siphon, hex, ward, mend, field` and any effect words the engine knows (burn, freeze, chill, static, root, corrupt, lullaby, blind, soak, petrify, pierce, crit, echo, delay, drain, heal, shield, guard, overclock, haste, veil, regen, wash, cleanse, priority).
 
@@ -67,7 +81,7 @@ Timing:
 - Calls are async and never block the game loop or combat.
 - Only one merge is in flight at a time (a single queue), and duplicate requests for the same key share one promise.
 - The client timeout is 75 s (the bridge's `merge_timeout` is 60 s, including queue time).
-- On load, if the bridge is online, the game designs the party's forms and up to 40 undesigned discoveries. In System, "Design discovered merges" queues the rest, and "Design the whole lattice…" queues all 5,896. That takes hours on a local model and runs in the background.
+- On load the game asks for everything the player has met (party forms and traits first, then kernels, lineages, techniques, forms, forged items) at backlog priority; anything unanswered waits in the outbox. "Design the whole lattice…" queues all 5,896 techniques at bulk priority.
 
 ## Other endpoints
 - `GET /merge/recipes?limit=50`: available as `BRIDGE.recipes(limit)` for a recipe-book view.
@@ -85,4 +99,4 @@ Edit `merge_schema` and `merge_prompt` in `C:\Users\Albert\FriedrichBridge\confi
 
 ## Checks
 - `node essence-protocol/tools/bake.js --check`: the baked table is fresh
-- `node essence-protocol/tools/verify.js`: table sanity, bridge id mapping, map connectivity, 450 simulated battles
+- `node essence-protocol/tools/verify.js`: table sanity, live-bake id mapping for every kind, modulator, fuzzed ability/lineage/trait mappings, map connectivity, 490 simulated battles, and the bridge client (outbox, replay, priority) against a fake bridge. Both checks ignore CRLF line endings.

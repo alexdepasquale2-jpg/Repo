@@ -17,7 +17,7 @@ const C = require('../js/content.js');
 function mulberry(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
 // 1
-assert.strictEqual(fs.readFileSync(OUT, 'utf8'), render(bakeAll()), 'merges.baked.js is stale: run node tools/bake.js');
+assert.strictEqual(fs.readFileSync(OUT, 'utf8').replace(/\r\n/g, '\n'), render(bakeAll()), 'merges.baked.js is stale: run node tools/bake.js');
 // 2
 const all = E.enumerateAll();
 assert.strictEqual(all.length, 5896);
@@ -141,6 +141,124 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
   console.log(`ok: ${all.length} fuzzed bridge designs map to valid abilities; ${rtOk}/80 real-time battles on them finished`);
 }
 
+// 5c. Live baking: every design kind maps to valid, distinct bridge requests; seeds and the %RARITY%
+//     modulator are deterministic; lineage and trait designs always map to sane mechanics.
+{
+  const BR = require('../js/bridge.js');
+  const rng = mulberry(4242);
+  const pick = () => all[Math.floor(rng() * all.length)];
+  const hex = () => Math.floor(rng() * 4294967296).toString(16).padStart(8, '0');
+  const pairs = new Map(); // unordered id pair -> what asked for it
+  const check = (what, req) => {
+    assert(BR.validIds(req), 'bad bridge ids for ' + what + ' ' + JSON.stringify([req.a.id, req.b.id]));
+    assert(!req.a.id.includes('+') && !req.b.id.includes('+') && req.a.id !== req.b.id, what + ' ids');
+    assert(req.context.length <= 4000 && !/%[A-Z]+%/.test(req.context), what + ' context');
+    const pair = [req.a.id, req.b.id].sort().join('|');
+    assert(!pairs.has(pair), `bridge pair collision: ${what} and ${pairs.get(pair)}`);
+    pairs.set(pair, what);
+  };
+  const itemTypes = Object.keys(BR.ITEM_TYPES);
+  for (const k of all) {
+    for (const kind of ['tech', 'form'].concat(itemTypes.map(t => 'item.' + t))) check(kind + ':' + k, BR.request(k, kind, ENG.rec(k)));
+  }
+  let breeds = 0;
+  for (let i = 0; i < 4000; i++) {
+    const x = pick(), y = i % 50 === 0 ? x : pick(), pk = BR.breedKey(x, y);
+    assert.strictEqual(pk, BR.breedKey(y, x), 'breed key must be symmetric');
+    if (pairs.has(['ep.b.' + pk.split('~')[0], 'ep.b.' + pk.split('~')[1] + (x === y ? '.twin' : '')].sort().join('|'))) continue;
+    check('breed:' + pk, BR.request(pk, 'breed', { names: ['A', 'B'] })); breeds++;
+  }
+  for (let i = 0; i < 4000; i++) {
+    const tk = BR.traitKey(pick(), hex());
+    check('trait:' + tk, BR.request(tk, 'trait', { name: 'X', gen: i % 4, ancestry: [{ name: 'Old', codes: ['forage'] }] }));
+  }
+  console.log(`ok: ${pairs.size} live-bake requests (techniques, forms, 6 item types, ${breeds} lineages, 4000 traits) are valid and distinct`);
+
+  // seeds and the modulator
+  const tiers = [0, 0, 0, 0, 0];
+  for (const k of all) {
+    const m = BR.modFor('tech', k, ENG.rec(k)), m2 = BR.modFor('tech', k, ENG.rec(k));
+    assert.deepStrictEqual(m, m2, 'modulator must be deterministic');
+    assert(/^[0-9a-f]{8}$/.test(m.seed) && m.pct >= 0.01 && m.pct <= 100 && m.tier >= 0 && m.tier <= 4 && m.odds >= 1, k + ' modulator');
+    assert.strictEqual(BR.RARITY_NAMES[m.tier], m.rarity);
+    tiers[m.tier]++;
+  }
+  assert(tiers[4] > 0 && tiers[4] < all.length * 0.05 && tiers[0] > all.length * 0.25, 'modulator spread ' + tiers);
+  for (let i = 0; i < 200; i++) { const s = hex(); assert(BR.modulate(s, 0.9).pct <= BR.modulate(s, 0).pct, 'boost must only make designs rarer'); }
+
+  // abilities with the modulator: tier comes from the roll and scope caps the effects
+  const words = BR.TYPES.concat(BR.EFFECT_WORDS);
+  for (let i = 0; i < 3000; i++) {
+    const k = pick(), r = ENG.rec(k), mod = BR.modFor('tech', k, r);
+    const tags = Array.from({ length: Math.floor(rng() * 9) }, () => words[Math.floor(rng() * words.length)]);
+    const ab = BR.abilityFrom({ name: 'X', description: tags.join(' '), rarity: 'legendary', stats: { attack: rng() * 99, speed: rng() * 99 }, tags }, r, mod);
+    assert.strictEqual(ab.tier, mod.tier, 'the modulator sets the tier');
+    assert(ab.fx.length <= Math.min(7, 2 + mod.tier) && ab.power <= 160 && ab.flux <= 30, k + ' scoped ability');
+  }
+
+  // splice lineages -> offspring: symmetric, valid, and only from the parents' essences
+  const ess = E.MAINS.map(m => E.MAIN[m].name).concat(E.SUB_ORDER.map(s => E.SUB[s].name), ['nonsense', 'fire-water']);
+  for (let i = 0; i < 6000; i++) {
+    const x = pick(), y = pick(), pk = BR.breedKey(x, y), mod = BR.modFor('breed', pk);
+    const tags = Array.from({ length: Math.floor(rng() * 7) }, () => ess[Math.floor(rng() * ess.length)]);
+    const stats = {}; for (const s of ['hp', 'attack', 'defense', 'speed', 'flux', 'special', 'weird']) if (rng() < 0.5) stats[s] = Math.floor(rng() * 100);
+    const entry = i % 7 === 0 ? null : { name: 'Line', description: tags.slice(2).join(' '), rarity: 'epic', stats, tags };
+    const o = BR.offspringFrom(entry, pk, mod), px = E.parseKey(x), py = E.parseKey(y);
+    assert(M.table[o.key] && E.parseKey(o.key).subs.length === 0, pk + ' offspring must be a Seed genome');
+    const mains = new Set([px.a, px.b, py.a, py.b]), subs = new Set(px.subs.concat(py.subs).map(t => t.s));
+    assert(mains.has(o.lead) && mains.has(o.follow) && (o.lead !== o.follow || mains.size === 1), pk + ' offspring mains');
+    assert(o.attune.every(s => subs.has(s) && (E.eligible(s, o.lead) || E.eligible(s, o.follow))), pk + ' inherited subs');
+    assert(o.attune.length <= (entry ? BR.INHERIT[mod.tier] : 1), pk + ' inherit count');
+    if (entry) {
+      const sum = Object.values(o.pedigree).reduce((s, v) => s + v, 0);
+      assert(sum > 0 && sum <= BR.PEDIGREE[mod.tier] + 3 && Object.keys(o.pedigree).every(k => ['hp', 'atk', 'def', 'spd', 'flux', 'coh'].includes(k)), pk + ' pedigree');
+    } else assert.strictEqual(o.pedigree, null);
+    const d = ENG.createDaemon(o.key, 5, { attune: o.attune, extraAttune: 0 });
+    d.pedigree = o.pedigree;
+    assert(ENG.calcStats(d).hp >= ENG.calcStats(Object.assign({}, d, { pedigree: null })).hp, 'pedigree never lowers stats');
+  }
+
+  // traits: valid codes, scope and magnitudes, and a description the game can show
+  const tw = Object.keys(BR.TRAITS).concat(['utility', 'power', 'speed', 'mote', 'nothing', 'warp-drive']);
+  const caps = {}; for (const [c, t] of Object.entries(BR.TRAITS)) caps[c] = t[2];
+  for (let i = 0; i < 6000; i++) {
+    const tk = BR.traitKey(pick(), hex()), mod = BR.modFor('trait', tk, { gen: i % 5, parentTier: i % 3, prism: i % 11 === 0 });
+    const tags = Array.from({ length: Math.floor(rng() * 6) }, () => tw[Math.floor(rng() * tw.length)]);
+    const stats = {}; for (const w of tags) if (rng() < 0.5) stats[w] = Math.floor(rng() * 90);
+    const t = BR.traitFrom({ name: 'T', description: tags.join(' '), stats, tags }, mod, rng() < 0.5 ? ['forage', 'logic'] : []);
+    assert(t.fx.length >= 1 && t.fx.length <= BR.TRAIT_SCOPE[mod.tier] && t.tier === mod.tier, tk + ' trait scope');
+    for (const f of t.fx) {
+      assert(BR.TRAITS[f.code] && BR.describeTrait(f), tk + ' trait code ' + f.code);
+      const hi = Math.max(...caps[f.code]), lo = Math.min(...caps[f.code]);
+      if (f.code === 'warp' || f.code === 'transmute') assert(f.mag >= 2 && f.mag <= hi * 2.5, tk + ' ' + f.code + ' ' + f.mag);
+      else assert(f.mag >= 1 && f.mag <= hi && f.mag >= Math.floor(lo * 0.4), tk + ' ' + f.code + ' ' + f.mag);
+    }
+    assert(Object.keys(t.stats).every(k => ['hp', 'atk', 'def', 'spd', 'flux', 'coh'].includes(k) && t.stats[k] <= 15), tk + ' trait stats');
+  }
+
+  // battles with pedigrees, trait stats and party bonuses still finish
+  let ok = 0;
+  for (let seed = 1; seed <= 40; seed++) {
+    const rg = mulberry(seed * 31);
+    const team = n => Array.from({ length: n }, () => { const d = ENG.createDaemon(all[Math.floor(rg() * all.length)], 10 + Math.floor(rg() * 30), { rng: rg }); d.pedigree = { atk: 8, spd: 3 }; d.trait = { stats: { def: 11, hp: 4 } }; return d; });
+    const b = new ENG.Battle({ player: team(2), enemy: team(2), wild: true, rng: rg, bonus: { xp: 30, bind: 20 } });
+    b.startRealtime();
+    let t = 0;
+    while (!b.over && t < 400) {
+      if (b.needSwitch) { b.forceSwitch(b.sides[0].team.findIndex(d => d.hp > 0)); continue; }
+      const d = b.act(0);
+      b.rt[0].queued = d.memory.find(k => k && ENG.isAttack(k)) || null;
+      if (!b.rt[0].queued && b.rt[0].gcd <= 0) b.useUtility({ type: 'defrag' });
+      b.tick(0.1); t += 0.1;
+    }
+    if (b.over) ok++;
+  }
+  assert(ok >= 34, 'battles with live-baked bonuses stalled: ' + ok);
+  const t0 = ENG.createDaemon('WW', 20); const c = ENG.captureChance(t0, 10, 100, { power: 1 }, false, 0), cb = ENG.captureChance(t0, 10, 100, { power: 1 }, false, 22);
+  assert(cb > c && cb <= 0.97, 'bind bonus');
+  console.log(`ok: modulator tiers ${tiers.join('/')}, 6000 lineages and 6000 traits map to sane mechanics, ${ok}/40 battles with bonuses finished`);
+}
+
 // 6. Map: every room row is well-formed and every NPC, terminal and gate is reachable from spawn
 //    when gates are treated as open.
 {
@@ -162,3 +280,53 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
   for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) if ('HFR'.includes(map.tiles[y][x])) assert(adj(x, y), 'unreachable terminal at ' + x + ',' + y);
   console.log(`ok: map ${map.w}x${map.h}, ${map.npcs.length} npcs reachable, ${seen.size} walkable tiles`);
 }
+
+// 7. The bridge client against a fake bridge: nothing is lost while it is down (the outbox persists
+//    and replays), cached designs need no request, failures are sorted, play events jump the queue.
+(async () => {
+  const BR = require('../js/bridge.js');
+  const store = new Map();
+  global.localStorage = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
+  BR.load();
+  let up = false;
+  const sent = [];
+  const resp = (status, body) => ({ status, json: async () => body });
+  global.fetch = async (url, opts) => {
+    if (!up) throw new TypeError('fetch failed');
+    if (url.endsWith('/health')) return resp(200, { ok: true });
+    const req = JSON.parse(opts.body);
+    sent.push(req.a.id);
+    await new Promise(r => setTimeout(r, 2));
+    if (req.a.id.startsWith('ep.f.')) return resp(422, { detail: 'invalid JSON twice', retryable: false });
+    if (req.a.id.startsWith('ep.i.')) return resp(422, { detail: [{ loc: ['body', 'a', 'id'], msg: 'bad id' }] });
+    return resp(200, { key: [req.a.id, req.b.id].sort().join('+'), cached: false, item: { id: 'mx_0', name: 'Design ' + req.a.id, description: 'd', rarity: 'rare', stats: { attack: 5 }, tags: ['strike'] } });
+  };
+  const until = async f => { for (let i = 0; i < 500 && !f(); i++) await new Promise(r => setTimeout(r, 5)); assert(f(), 'timed out waiting'); };
+  BR.init({ rec: (key, kind) => (kind === 'breed' ? { names: ['A', 'B'] } : ENG.rec(key)) });
+  const errs = console.error; console.error = () => {}; // the malformed case logs on purpose
+  try {
+    const pk = BR.breedKey('FW', 'EA');
+    assert.strictEqual(await BR.flavor('FW', 'tech', ENG.rec('FW')), null);
+    assert.strictEqual(BR.status.state, 'offline');
+    await BR.flavor(pk, 'breed', { names: ['A', 'B'] });
+    assert.deepStrictEqual(BR.waiting().sort(), ['breed:' + pk, 'tech:FW'].sort(), 'requests wait in the outbox');
+    assert(JSON.parse(store.get('ep-bridge-outbox-v1'))['tech:FW'], 'the outbox is saved');
+    up = true;
+    await BR.health(); // online again: the outbox replays
+    await until(() => BR.pending() === 0 && BR.cached('FW', 'tech') && BR.cached(pk, 'breed'));
+    assert.strictEqual(BR.waiting().length, 0, 'the database has everything');
+    const n = sent.length;
+    await BR.flavor('FW', 'tech', ENG.rec('FW'));
+    assert.strictEqual(sent.length, n, 'a cached design needs no request');
+    await BR.flavor('WW', 'form', ENG.rec('WW'));
+    await BR.flavor('WW', 'item.patch', ENG.rec('WW'));
+    assert(BR.waiting().includes('form:WW') && !BR.waiting().includes('item.patch:WW'), 'model failures wait for next session; game bugs are dropped');
+    sent.length = 0;
+    const bulk = ['AA', 'AE', 'AF', 'AW'].map(k => BR.flavor(k, 'tech', ENG.rec(k), { pri: 0, record: false }));
+    const live = BR.flavor('EE', 'tech', ENG.rec('EE'));
+    await Promise.all(bulk.concat([live]));
+    assert.strictEqual(sent[1], 'ep.t.lead.E', 'a play event jumps ahead of bulk design: ' + sent.join(','));
+    assert(!BR.waiting().some(ck => ck.startsWith('tech:A')), 'bulk design is not kept in the outbox');
+    console.log('ok: bridge client keeps an outbox while the bridge is down, replays it, and orders play before bulk');
+  } finally { console.error = errs; }
+})().catch(e => { console.error(e); process.exit(1); });

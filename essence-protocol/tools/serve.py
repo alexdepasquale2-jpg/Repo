@@ -48,7 +48,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*a, directory=ROOT, **kw)
 
     def log_message(self, fmt, *args):
-        if '/bridge/' in (args[0] if args else ''):
+        if args and '/bridge/' in str(args[0]):  # args[0] is an HTTPStatus for error lines
             sys.stderr.write('[bridge] ' + (fmt % args) + '\n')
 
     def end_headers(self):

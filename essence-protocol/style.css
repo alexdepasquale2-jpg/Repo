@@ -41,6 +41,17 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .toast { background: #141a2bf2; border: 1px solid var(--line); border-left: 4px solid var(--acc); padding: 8px 12px; border-radius: 10px; font-size: 13px; animation: toast 3.2s forwards; width: 100%; }
 .toast.rare { border-left-color: var(--warn); } .toast.myth { border-left-color: #ff5cf0; } .toast.quest { border-left-color: var(--good); } .toast.tip { border-left-color: var(--warn); background: #1d1a0ff2; } .toast.tip b { color: var(--warn); margin-right: 4px; }
 @keyframes toast { 0% { opacity: 0; transform: translateY(-8px); } 8%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
+/* discovery toast: a live-baked design that is rare or statistically unique */
+.toast.discovery { --rc: var(--acc); position: relative; overflow: hidden; pointer-events: auto; cursor: pointer; border: 1px solid var(--rc); border-left: 6px solid var(--rc); padding: 10px 14px 11px; background: linear-gradient(135deg, #1d1638f7, #121a2ef7); box-shadow: 0 0 24px -6px var(--rc); animation: toast 6.6s forwards; }
+.toast.discovery.r0 { --rc: #aab; } .toast.discovery.r1 { --rc: #9fe; } .toast.discovery.r2 { --rc: var(--warn); } .toast.discovery.r3 { --rc: #ff5cf0; }
+.toast.discovery.r4 { --rc: #46f3ff; background: linear-gradient(135deg, #2c1644f7, #0f2a3cf7); }
+.toast.discovery::after { content: ''; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, #ffffff26 50%, transparent 65%); transform: translateX(-100%); animation: shine 1.4s .15s 2; pointer-events: none; }
+@keyframes shine { to { transform: translateX(100%); } }
+.toast.discovery .dt-k { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--rc); }
+.toast.discovery .dt-n { font-family: var(--display); font-size: 18px; font-weight: 800; margin: 3px 0 2px; }
+.toast.discovery .dt-s { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.preview.trait .tfx-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 5px; }
+.preview.trait .tfx-row .btn { margin-left: auto; }
 
 /* Screens */
 .screen { position: fixed; inset: 0; z-index: 10; background: radial-gradient(ellipse at 50% 20%, #1a2340, var(--bg) 70%); overflow: auto; }
@@ -433,3 +444,4 @@ body.inbattle #toasts { top: auto; bottom: calc(50% + 20px); width: min(340px, c
 body.inbattle .toast { font-size: 11px; padding: 5px 9px; opacity: .92; }
 body.inbattle .toast:nth-last-child(n+4) { display: none; }
 body.inbattle .toast.tip { font-size: 12px; }
+body.inbattle .toast.discovery { font-size: 12px; opacity: 1; } body.inbattle .toast.discovery .dt-n { font-size: 15px; }

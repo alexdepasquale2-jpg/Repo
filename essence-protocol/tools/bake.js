@@ -337,7 +337,8 @@ module.exports = { bakeAll, render, evaluate, OUT };
 if (require.main === module) {
   const text = render(bakeAll());
   if (process.argv.includes('--check')) {
-    const cur = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : '';
+    // line endings don't count (a Windows checkout with core.autocrlf has CRLF)
+    const cur = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8').replace(/\r\n/g, '\n') : '';
     if (cur !== text) { console.error('merges.baked.js is stale: run `node tools/bake.js`'); process.exit(1); }
     console.log('merges.baked.js is up to date');
   } else {
