@@ -85,6 +85,18 @@ Every third cast of the same attack in a row is a **COMBO** (×1.6). Each trigge
 - **Rogue and Prismatic daemons:** 7% of wild encounters are Rogue builds with an extra sub-essence. About 1 in 64 is Prismatic, with a hue-shifted sprite and +10% stats.
 - **Post-game:** Wardens and the Architect offer rematches with recompiled, higher-level teams. **The Rift**, a terminal in the Core, is an endless descent through random genomes from the whole table. Floors get harder, every fifth floor has a guardian, and you can leave with your rewards after any floor.
 
+## FriedrichBridge (AI-named merges)
+
+Battle mechanics always come from the baked table. When [FriedrichBridge](CLAUDE.md) is running on your PC, it names and describes each merge and daemon form the first time you meet it: technique names, form names, descriptions, rarity and tags. Results are cached in the browser. Without the bridge, the game uses the baked names. See `CLAUDE.md` for the contract and the id scheme.
+
+```
+start_bridge.bat                         (FriedrichBridge on 127.0.0.1:8765, with Ollama running)
+set FRIEDRICH_BRIDGE_KEY=<your key>      (or copy bridge.example.json to bridge.local.json)
+python tools/serve.py                    -> open http://127.0.0.1:8080
+```
+
+`tools/serve.py` serves the game and proxies `/bridge/*` to the bridge, adding the key server side, so the key never reaches the browser or git. Bridge status, "Test connection" and "Name discovered merges" are in **System > FriedrichBridge**.
+
 ## Play
 
 Open `index.html` over HTTP (for example `python3 -m http.server` in this folder). It is a PWA and works offline once loaded.
@@ -104,6 +116,8 @@ Open `index.html` over HTTP (for example `python3 -m http.server` in this folder
 | `js/engine.js` | Daemon model and battle engine (no DOM, runs in Node) |
 | `js/content.js` | Map, zones, operators, starters |
 | `js/sprites.js` | Procedural pixel sprites, a pure function of the genome |
+| `js/bridge.js` | FriedrichBridge client: request mapping, queue, retries, local cache |
+| `tools/serve.py` | Local server and `/bridge` proxy (keeps the API key server side) |
 | `js/game.js` | Overworld, battle UI, composer, menus, forge |
 | `tools/verify.js` | CI checks: bake is fresh and complete, records are sane, content keys exist, the map is connected, and 300 seeded headless battles finish |
 

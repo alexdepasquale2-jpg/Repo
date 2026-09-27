@@ -3,7 +3,7 @@
    this file only presents them. */
 (function () {
   'use strict';
-  const E = window.ESSENCE, ENG = window.ENGINE, C = window.CONTENT, SP = window.SPRITES, M = window.MERGES;
+  const E = window.ESSENCE, ENG = window.ENGINE, C = window.CONTENT, SP = window.SPRITES, M = window.MERGES, BR = window.BRIDGE;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -29,7 +29,7 @@
   const npcs = map.npcs.map(n => Object.assign({}, n));
 
   function defaults(s) {
-    s.settings = Object.assign({ speed: 'normal', tips: 'compact', auto: false }, s.settings || {});
+    s.settings = Object.assign({ speed: 'normal', tips: 'compact', auto: false, bridge: true }, s.settings || {});
     s.tips = s.tips || [];
     s.quests = s.quests || [];
     s.stats = Object.assign({ reacts: 0, wild: 0, forged: 0, binds: 0 }, s.stats || {});
@@ -66,6 +66,7 @@
     S = defaults(s);
     discovered = new Set(s.discovered); seen = new Set(s.seen); boundForms = new Set(s.bound);
     for (const list of [S.party, S.box]) for (const d of list) d.memory = d.memory.map(k => (k && M.table[k] ? k : null));
+    if (!S.settings.bridge) restoreBaked();
     player.x = player.px = s.pos.x; player.y = player.py = s.pos.y; player.dir = s.pos.dir || 'down';
     follower.x = follower.px = player.x; follower.y = follower.py = player.y;
     ensureQuests();
@@ -111,6 +112,7 @@
     let s = `${TIER[n]}-tier daemon. ${p.a === p.b ? `A pure ${A} kernel.` : `${an(A)} kernel braided with ${Bn}.`}`;
     if (n) s += ` It has grown ${p.subs.map(t => `${E.SUB[t.s].name} on its ${E.MAIN[E.hostMain(p, t.h)].name} ${p.a === p.b ? 'core' : t.h === 1 ? 'lead' : 'follow'}`).join(', ')}.`;
     const role = { Strike: 'breaking through', Barrage: 'overwhelming numbers', Siphon: 'outlasting its prey', Hex: 'crippling its foes', Ward: 'holding the line', Mend: 'self-repair', Field: 'reshaping the arena' }[r.cls];
+    if (r.dDesc) s = r.dDesc + ' ' + s;
     return s + ` Its signature merge, ${discovered.has(key) ? r.name : 'still undiscovered'}, is built for ${role}.`;
   }
   function resonancesFound() {
@@ -120,9 +122,38 @@
   }
   const countPair = pk => { let n = 0; for (const k of discovered) if (k[0] === pk[0] && k[1] === pk[1]) n++; return n; };
 
+  // ---- FriedrichBridge flavors (names/descriptions); numbers stay baked
+  function applyFlavor(kind, key, entry) {
+    const r = ENG.rec(key); if (!r || !entry) return;
+    if (!r.baked) r.baked = { name: r.name, text: r.text, dName: r.dName };
+    if (kind === 'tech') { r.name = entry.name; r.text = entry.description || r.baked.text; r.bridge = entry; }
+    else { r.dName = entry.name; r.dDesc = entry.description; r.dBridge = entry; }
+  }
+  function restoreBaked() {
+    for (const k of ALL_KEYS) { const r = ENG.rec(k); if (r.baked) { r.name = r.baked.name; r.text = r.baked.text; r.dName = r.baked.dName; delete r.bridge; delete r.dBridge; delete r.dDesc; } }
+  }
+  const bridgeOn = () => !!(BR && S && S.settings.bridge);
+  function flavorOf(key, kind) {
+    if (!bridgeOn() || !M.table[key]) return;
+    if (BR.cached(key, kind)) { applyFlavor(kind, key, BR.cached(key, kind)); return; }
+    BR.flavor(key, kind, ENG.rec(key));
+  }
+  if (BR) {
+    for (const [ck, entry] of Object.entries(BR.allCached())) { const i = ck.indexOf(':'); const kind = ck.slice(0, i), key = ck.slice(i + 1); if (M.table[key]) applyFlavor(kind, key, entry); }
+    BR.on(ev => {
+      if (ev.type === 'flavor' && bridgeOn()) {
+        applyFlavor(ev.kind, ev.key, ev.entry);
+        if (ev.fresh && (ev.kind === 'tech' ? discovered.has(ev.key) : seen.has(ev.key))) toast(`✦ FriedrichBridge named ${ev.kind === 'tech' ? 'a merge' : 'a form'}: <b>${esc(ev.entry.name)}</b>${ev.entry.rarity ? ` <span class="rar r2">${esc(ev.entry.rarity)}</span>` : ''}`, 'rare');
+        if (mode === 'battle' && B && !B.over && $('bpanel').classList.contains('hidden')) { buildControls(); if (ui) { ui[0].name = dName(B.act(0)); ui[1].name = dName(B.act(1)); renderCards(); } }
+        if (mode === 'sheet' && sheetTab === 'system') renderSheet();
+      } else if (ev.type === 'status' && mode === 'sheet' && sheetTab === 'system') renderSheet();
+    });
+  }
+
   function markDiscovered(key, silent) {
     if (discovered.has(key)) return;
     discovered.add(key);
+    flavorOf(key, 'tech');
     const r = ENG.rec(key);
     if (!silent) toast(`◈ New merge: <b>${esc(r.name)}</b> <span class="rar r${r.rarity}">${RARITY[r.rarity]}</span>`, r.rarity >= 3 ? 'myth' : r.rarity === 2 ? 'rare' : '');
     if (S) {
@@ -747,7 +778,7 @@
     $('hud').classList.add('hidden');
     B = new ENG.Battle({ player: S.party, enemy: o.enemy, wild: o.wild, trainer: o.trainer ? { name: o.trainer.name } : null, discovered: new Set(discovered) });
     bctx = o;
-    for (const d of o.enemy) seen.add(d.key);
+    for (const d of o.enemy) { seen.add(d.key); flavorOf(d.key, 'form'); }
     ui = [snapshot(0), snapshot(1)];
     $('battle').classList.remove('hidden'); document.body.classList.add('inbattle');
     $('blog').innerHTML = '';
@@ -1011,7 +1042,7 @@
         case 'switch': {
           ui[e.side] = snapshot(e.side);
           const el = spriteEl(e.side); el.classList.remove('faint', 'enter'); void el.offsetWidth; el.classList.add('enter');
-          paintSide(e.side); dirty = true; seen.add(e.key);
+          paintSide(e.side); dirty = true; seen.add(e.key); flavorOf(e.key, 'form');
           const [x, y] = centerOf(el); ring(x, y, 10, 90, MAINC(e.key[0]), 400);
           if (e.side === 0 && B.rt) { B.rt[0].queued = defaultAttack(); buildControls(); }
           break;
@@ -1461,9 +1492,9 @@
     });
   }
   // In-page replacement for prompt(): resolves the text, or null on cancel.
-  function askText(title, text, value, ok) {
+  function askText(title, text, value, ok, max) {
     return new Promise(res => {
-      const card = modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><input class="search" id="askInput" maxlength="16" value="${esc(value)}"><div class="btnrow"><button class="btn pri" data-ok>${esc(ok)}</button><button class="btn" data-cancel>Cancel</button></div>`);
+      const card = modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><input class="search" id="askInput" maxlength="${max || 200}" value="${esc(value)}"><div class="btnrow"><button class="btn pri" data-ok>${esc(ok)}</button><button class="btn" data-cancel>Cancel</button></div>`);
       const inp = card.querySelector('#askInput'); inp.focus(); inp.select();
       const done = v => { closeModal(); res(v); };
       card.querySelector('[data-ok]').onclick = () => done(inp.value);
@@ -1495,7 +1526,7 @@
         <button class="btn" data-no>Not now</button>`);
       card.querySelectorAll('[data-k]').forEach(b => { b.onclick = () => {
         const before = dName(d);
-        ENG.recompile(d, b.dataset.k); seen.add(d.key); boundForms.add(d.key);
+        ENG.recompile(d, b.dataset.k); seen.add(d.key); boundForms.add(d.key); flavorOf(d.key, 'form');
         closeModal();
         toast(`${esc(before)} recompiled into <b>${esc(ENG.rec(d.key).dName)}</b>!`, 'rare');
         res();
@@ -1688,7 +1719,7 @@
       d.memory = [...new Set(known.concat(ENG.autoMemory(d).filter(Boolean)))].slice(0, 4).concat([null, null, null, null]).slice(0, 4);
       toast('Memory filled.'); renderSheet();
     };
-    q('[data-nick]').onclick = async () => { const n = await askText('Rename daemon', 'Leave it empty to use the form name.', d.nick || '', 'Rename'); if (n !== null) { d.nick = n.trim().slice(0, 16) || null; renderSheet(); } };
+    q('[data-nick]').onclick = async () => { const n = await askText('Rename daemon', 'Leave it empty to use the form name.', d.nick || '', 'Rename', 16); if (n !== null) { d.nick = n.trim().slice(0, 16) || null; renderSheet(); } };
   }
 
   function itemDesc(it) {
@@ -1878,6 +1909,38 @@
     });
   }
 
+  function bridgeSection() {
+    if (!BR) return '<p class="fine">Bridge client not loaded.</p>';
+    const st = BR.status, conf = BR.conf, n = Object.keys(BR.allCached()).length;
+    const col = { online: 'good', offline: 'bad', error: 'bad', unknown: 'inf' }[st.state];
+    const missing = [...discovered].filter(k => !BR.cached(k, 'tech')).length;
+    return `<p class="fine">Battle numbers always come from the baked lattice. When FriedrichBridge is reachable, it names and describes merges and daemon forms the first time you meet them, and those names are cached here. Run the game with <b>tools/serve.py</b> so requests go through the local proxy (the API key stays on your PC).</p>
+      <div class="kv two"><span class="lab">Status</span><b><span class="st ${col}">${st.state}</span> ${esc(st.detail || '')}</b>
+      <span class="lab">Endpoint</span><b>${esc(conf.url)}${conf.key ? ' · direct key set' : ' · via proxy'}</b>
+      <span class="lab">Named locally</span><b>${n} (${missing} discovered merges still unnamed${BR.pending() ? `, ${BR.pending()} in progress` : ''})</b></div>
+      <div class="btnrow gap">
+        <button class="btn ${S.settings.bridge ? 'pri' : ''}" data-br="toggle">${S.settings.bridge ? 'Bridge names: on' : 'Bridge names: off'}</button>
+        <button class="btn" data-br="test">Test connection</button>
+        <button class="btn" data-br="fill" ${missing ? '' : 'disabled'}>Name discovered merges</button>
+        <button class="btn" data-br="conf">Endpoint…</button>
+        <button class="btn" data-br="clear">Forget local names</button>
+      </div>`;
+  }
+  function wireBridgeSection(body) {
+    const q = a => body.querySelector(`[data-br=${a}]`);
+    if (!q('toggle')) return;
+    q('toggle').onclick = () => { S.settings.bridge = !S.settings.bridge; if (!S.settings.bridge) restoreBaked(); else for (const [ck, en] of Object.entries(BR.allCached())) { const i = ck.indexOf(':'); if (M.table[ck.slice(i + 1)]) applyFlavor(ck.slice(0, i), ck.slice(i + 1), en); } save(); renderSheet(); };
+    q('test').onclick = async () => { await BR.health(); renderSheet(); toast(`Bridge: ${BR.status.state}${BR.status.detail ? ' · ' + esc(BR.status.detail) : ''}`); };
+    q('fill').onclick = async () => { await BR.health(); if (BR.status.state !== 'online') { renderSheet(); return toast('The bridge is not reachable.'); } for (const k of discovered) flavorOf(k, 'tech'); for (const k of seen) flavorOf(k, 'form'); toast('Asking FriedrichBridge to name your discoveries…'); renderSheet(); };
+    q('clear').onclick = async () => { if ((await choose('Forget local names?', 'Merges go back to their lattice names in this browser. The bridge keeps its own recipes.', ['Forget', 'Cancel'])) === 0) { BR.clearCache(); restoreBaked(); renderSheet(); } };
+    q('conf').onclick = async () => {
+      const url = await askText('Bridge endpoint', 'Use /bridge with tools/serve.py (recommended). A direct URL like http://127.0.0.1:8765 also needs the key below, and the bridge must allow cross-origin requests.', BR.conf.url, 'Next');
+      if (url === null) return;
+      const key = url.trim() === '/bridge' ? '' : await askText('Bridge API key', 'Stored only in this browser. Leave empty when using the proxy.', BR.conf.key || '', 'Save');
+      BR.setConf({ url: url.trim() || '/bridge', key: (key || '').trim() }); await BR.health(); renderSheet();
+    };
+  }
+
   function sheetSystem(body) {
     const mins = Math.round((Date.now() - S.started) / 60000);
     body.innerHTML = `<h3>Settings</h3><div class="btnrow">
@@ -1887,10 +1950,12 @@
       <div class="btnrow gap"><button class="btn ${S.settings.tips === 'compact' ? 'pri' : ''}" data-tips="compact">Tooltips: compact</button><button class="btn ${S.settings.tips === 'complex' ? 'pri' : ''}" data-tips="complex">Tooltips: complex</button><button class="btn ${S.settings.tips === 'off' ? 'pri' : ''}" data-tips="off">Tooltips: off</button></div>
       <p class="fine">Hover (or press and hold on touch) any merge, essence, status, item or daemon card for details. Press T or tap ⓘ in the top bar to switch compact and complex.</p>
       <p class="fine">Tap the battle text or press Space to fast-forward a turn. Keys 1–4 cast your memory merges.</p>
+      <h3>FriedrichBridge</h3>${bridgeSection()}
       <h3>Save</h3><div class="btnrow"><button class="btn pri" data-save>Save now</button><button class="btn" data-wipe>Delete save…</button></div>
       <p class="fine">Playing for ${mins} min · ${S.steps} steps · ${S.stats.wild} wild daemons defeated · ${S.stats.binds} bound · ${S.stats.forged} items forged.</p>
       <h3>About</h3><p class="fine">Essence Protocol. All ${M.count} merge outcomes were generated ahead of time by tools/bake.js from the rules in js/essences.js. Nothing is rolled when you compose a merge; the only randomness is in battle (accuracy, effect chances, instability).</p>`;
     body.querySelectorAll('[data-speed]').forEach(b => { b.onclick = () => { S.settings.speed = b.dataset.speed; save(); renderSheet(); }; });
+    wireBridgeSection(body);
     body.querySelectorAll('[data-tips]').forEach(b => { b.onclick = () => { S.settings.tips = b.dataset.tips; save(); renderSheet(); }; });
     body.querySelector('[data-save]').onclick = () => { save(); toast('Saved.'); };
     body.querySelector('[data-mute]').onclick = () => { muted = !muted; try { localStorage.setItem('ep-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } renderSheet(); };
@@ -1940,7 +2005,7 @@
       enterWorld();
       mode = 'busy'; setPad(false);
       await say('Archivist Lo', [`${ENG.rec(st.key).dName}, a fine first daemon. It already knows its four basic merges.`, 'Walk into static, the flickering tiles, to meet wild daemons. Weaken one, then tap Bind to capture it.', 'Head west to the Cirrus Array when you\'re ready. Its Warden holds the first key. Your Requests tab always has something to chase.']);
-      mode = 'world'; setPad(true); save();
+      mode = 'world'; setPad(true); save(); bridgeWarmup();
     }; });
   }
   function enterWorld() {
@@ -1977,6 +2042,7 @@
     h += row('Forges into', esc(forgeItem(k).name));
     h += `<p>${esc(rx.line + ' ' + r.text)}</p>`;
     if (r.anomaly) h += `<p class="bad">∆ ${esc(E.ANOMALY[r.anomaly])}</p>`;
+    if (r.bridge) h += row('Named by', `FriedrichBridge${r.bridge.rarity ? ' · ' + esc(r.bridge.rarity) : ''}${r.bridge.tags && r.bridge.tags.length ? ' · ' + esc(r.bridge.tags.slice(0, 4).join(', ')) : ''}`) + row('Lattice name', esc(r.baked.name));
     h += `<p class="fine">${esc(E.CLASSES[r.cls])} As a daemon genome: ${seen.has(k) ? esc(r.dName) : 'unseen form'}.</p>`;
     return h;
   }
@@ -2067,7 +2133,15 @@
   const existing = loadSave();
   if (existing) $('contBtn').classList.remove('hidden');
   $('newBtn').onclick = async () => { if (existing && (await choose('Start a new game?', 'Your current save is overwritten the next time the game saves.', ['Start over', 'Cancel'])) !== 0) return; showStarter(); };
-  $('contBtn').onclick = () => { adopt(existing); enterWorld(); if (S.won) toast('Welcome back. The Rift is waiting in the Core.'); };
+  function bridgeWarmup() {
+    if (!bridgeOn()) return;
+    BR.health().then(st => {
+      if (st.state !== 'online') return;
+      for (const d of S.party) flavorOf(d.key, 'form');
+      let n = 0; for (const k of discovered) { if (!BR.cached(k, 'tech') && n++ < 40) flavorOf(k, 'tech'); }
+    });
+  }
+  $('contBtn').onclick = () => { adopt(existing); enterWorld(); bridgeWarmup(); if (S.won) toast('Welcome back. The Rift is waiting in the Core.'); };
   requestAnimationFrame(frame);
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});

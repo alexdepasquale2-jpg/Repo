@@ -88,6 +88,23 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
   console.log(`ok: 150 real-time battles, avg ${(secs / 150).toFixed(1)}s`, rtRes);
 }
 
+// 5b. FriedrichBridge mapping: every merge and form maps to valid, distinct bridge requests.
+{
+  const BR = require('../js/bridge.js');
+  const seenPairs = new Map();
+  for (const k of all) for (const kind of ['tech', 'form']) {
+    const req = BR.request(k, kind, ENG.rec(k));
+    assert(BR.validIds(req), 'bad bridge ids for ' + k + ' ' + JSON.stringify([req.a.id, req.b.id]));
+    assert(!req.a.id.includes('+') && !req.b.id.includes('+'));
+    assert(req.context.length <= 4000);
+    // the bridge treats A+B as B+A, so the unordered pair must still identify exactly one merge
+    const pair = kind + '|' + [req.a.id, req.b.id].sort().join('|');
+    assert(!seenPairs.has(pair), `bridge pair collision: ${k} and ${seenPairs.get(pair)}`);
+    seenPairs.set(pair, k);
+  }
+  console.log(`ok: ${seenPairs.size} bridge requests map 1:1 onto merges and forms`);
+}
+
 // 6. Map: every room row is well-formed and every NPC, terminal and gate is reachable from spawn
 //    when gates are treated as open.
 {
