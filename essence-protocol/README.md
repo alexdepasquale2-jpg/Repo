@@ -92,7 +92,7 @@ When [FriedrichBridge](CLAUDE.md) is running on your PC, it **designs every spel
 ```
 start_bridge.bat                         (FriedrichBridge on 127.0.0.1:8765, with Ollama running)
 set FRIEDRICH_BRIDGE_KEY=<your key>      (or copy bridge.example.json to bridge.local.json)
-python tools/serve.py                    -> open http://127.0.0.1:8080
+python tools/serve.py                    -> open http://127.0.0.1:8090
 ```
 
 `tools/serve.py` serves the game and proxies `/bridge/*` to the bridge, adding the key server side, so the key never reaches the browser or git. Bridge status, "Test connection" and "Name discovered merges" are in **System > FriedrichBridge**.

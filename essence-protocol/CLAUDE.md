@@ -41,10 +41,10 @@ What the game does with the response (`abilityFrom`):
 - A 200 with `cached: false` shows a "FriedrichBridge named…" discovery toast.
 
 ## Connection
-- **Run the game through the proxy**: `python essence-protocol/tools/serve.py` serves the game on `http://127.0.0.1:8080` and forwards `/bridge/*` to the bridge.
+- **Run the game through the proxy**: `python essence-protocol/tools/serve.py` serves the game on `http://127.0.0.1:8090` and forwards `/bridge/*` to the bridge.
   - The browser only talks to its own origin (no CORS), and the proxy adds the key server side, so the key never reaches the browser.
   - The proxy refuses `/merge/reset`.
-- Bridge base URL: `http://127.0.0.1:8765`. The port is `port` in `C:\Users\Albert\FriedrichBridge\config.json`. The game must **not** use 8765 itself, so serve it on 8080.
+- Bridge base URL: `http://127.0.0.1:8765`. The port is `port` in `C:\Users\Albert\FriedrichBridge\config.json`. The game must **not** use 8765 itself, nor 8080 (FriedrichAI's engine listens on 127.0.0.1:8080), so serve it on 8090.
 - Auth: the proxy reads the key from the `FRIEDRICH_BRIDGE_KEY` env var, or from `essence-protocol/bridge.local.json` (gitignored; copy `bridge.example.json`). **Never commit the key.**
 - Start the bridge with `C:\Users\Albert\FriedrichBridge\start_bridge.bat`. Ollama must be running (`ollama serve` or the tray app).
 - Liveness: `GET /health` (the game calls it on load and from System > FriedrichBridge > Test connection).
