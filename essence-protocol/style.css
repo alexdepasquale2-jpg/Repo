@@ -38,7 +38,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* Toasts */
 #toasts { position: fixed; top: calc(56px + var(--safe-t)); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 60; pointer-events: none; width: min(460px, calc(100% - 24px)); }
-.toast { background: #141a2bf2; border: 1px solid var(--line); border-left: 4px solid var(--acc); padding: 8px 12px; border-radius: 10px; font-size: 13px; animation: toast 3.2s forwards; width: 100%; }
+.toast { background: #141a2bf2; border: 1px solid var(--line); border-left: 4px solid var(--acc); padding: 8px 12px; border-radius: 10px; font-size: 13px; animation: toast 3.2s forwards; width: 100%; pointer-events: auto; cursor: pointer; } /* tap to dismiss */
 .toast.rare { border-left-color: var(--warn); } .toast.myth { border-left-color: #ff5cf0; } .toast.quest { border-left-color: var(--good); } .toast.tip { border-left-color: var(--warn); background: #1d1a0ff2; } .toast.tip b { color: var(--warn); margin-right: 4px; }
 @keyframes toast { 0% { opacity: 0; transform: translateY(-8px); } 8%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
 /* discovery toast: a live-baked design that is rare or statistically unique */
@@ -442,7 +442,6 @@ button[data-tip] { cursor: pointer; }
 .hudrow .ub#bindBtn.on { background: #46f3ff33; border-color: var(--utl); box-shadow: 0 0 14px #46f3ffaa; }
 body.inbattle #toasts { top: auto; bottom: calc(50% + 20px); width: min(340px, calc(100% - 24px)); left: auto; right: 12px; transform: none; gap: 4px; }
 body.inbattle .toast { font-size: 11px; padding: 5px 9px; opacity: .92; }
-body.inbattle .toast:nth-last-child(n+4) { display: none; }
 body.inbattle .toast.tip { font-size: 12px; }
 body.inbattle .toast.discovery { font-size: 12px; opacity: 1; } body.inbattle .toast.discovery .dt-n { font-size: 15px; }
 
@@ -523,4 +522,13 @@ input, textarea { -webkit-user-select: text; user-select: text; font-size: 16px 
   .legend { display: none; }
   #dialog { bottom: calc(12px + var(--safe-b)); width: min(480px, calc(100% - 300px)); }
   .title-card { padding-top: 12px; }
+}
+
+/* holding a touch anywhere never selects text, magnifies, or opens the long-press menu */
+*, *::before, *::after { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+canvas, img { -webkit-user-drag: none; }
+#world, .arena, .hotbar, .hudrow, .castbar { touch-action: none; }
+/* landscape battles: toasts sit over the arena, not over the controls */
+@media (orientation: landscape) and (max-height: 540px) {
+  body.inbattle #toasts { right: auto; left: calc(12px + var(--safe-l)); width: min(320px, calc(56vw - 24px)); bottom: 50%; }
 }

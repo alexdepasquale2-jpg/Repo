@@ -102,11 +102,28 @@
     return h + '</span>';
   }
   const dName = d => d.nick || ENG.rec(d.key).dName;
-  function toast(html, cls, ms) {
-    const t = document.createElement('div'); t.className = 'toast ' + (cls || ''); t.innerHTML = html;
-    t.style.animationDuration = (ms || 3200) + 'ms';
-    $('toasts').appendChild(t); setTimeout(() => t.remove(), (ms || 3200) + 100);
+  // Toasts: at most three on screen (the oldest goes, it is never just hidden), a repeated message
+  // replaces its earlier copy instead of stacking, a tap dismisses one, and each is removed when
+  // its fade ends, with an expiry sweep as the backstop, so none can outlive its time.
+  const TOAST_MAX = 3;
+  const dropToast = t => { if (t && t.parentNode) t.remove(); };
+  function showToast(t, ms) {
+    const box = $('toasts');
+    t.dataset.until = Date.now() + ms;
+    t.style.animationDuration = ms + 'ms';
+    t.addEventListener('animationend', e => { if (e.animationName === 'toast') dropToast(t); });
+    t.addEventListener('click', () => dropToast(t));
+    box.appendChild(t);
+    while (box.children.length > TOAST_MAX) dropToast([...box.children].find(x => !x.classList.contains('discovery')) || box.firstElementChild);
   }
+  function toast(html, cls, ms) {
+    for (const old of [...$('toasts').children]) if (old.dataset.msg === html) dropToast(old);
+    const t = document.createElement('div'); t.className = 'toast ' + (cls || ''); t.innerHTML = html; t.dataset.msg = html;
+    showToast(t, ms || 3200);
+  }
+  // entering a battle clears passing messages; rare finds and completed requests stay up
+  const clearToasts = () => { for (const t of [...$('toasts').children]) if (!t.classList.contains('discovery') && !t.classList.contains('quest')) dropToast(t); };
+  setInterval(() => { const now = Date.now(); for (const t of [...$('toasts').children]) if (now > +t.dataset.until + 300) dropToast(t); }, 500);
   function tip(id, text) {
     if (!S || S.tips.includes(id)) return;
     S.tips.push(id);
@@ -196,10 +213,8 @@
     const t = document.createElement('div');
     t.className = `toast discovery r${o.tier}`;
     t.innerHTML = `<div class="dt-k"><span>${esc(o.kicker)}</span><b>${o.odds > 1 ? '1 in ' + o.odds.toLocaleString() : ''}</b></div><div class="dt-n">${esc(o.name)}</div>${o.lines.filter(Boolean).map(l => `<div class="dt-s">${l}</div>`).join('')}`;
-    t.onclick = () => t.remove();
-    $('toasts').appendChild(t);
+    showToast(t, 6600);
     [523, 659, 784, 1047, 1319].slice(0, 2 + o.tier).forEach((f, i) => setTimeout(() => beep(f, 0.12, 'triangle', 0.05), i * 90));
-    setTimeout(() => t.remove(), 6700);
     setTimeout(nextDiscovery, 1500);
   }
   // share of `vals` strictly below v
@@ -381,12 +396,22 @@
     } catch (e) { /* no audio */ }
   }
   // Short vibrations on phones that support them (Android); a setting turns them off.
-  function buzz(ms) { if (S && S.settings.haptics === false) return; try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* ignore */ } }
-  // iOS only lets audio start inside a user gesture: unlock it on the first touch.
-  addEventListener('pointerdown', function unlock() {
+  // (Browsers block vibration inside a frame from another site, such as a hosted preview.)
+  const canBuzz = (() => { try { return !!navigator.vibrate && window.self === window.top; } catch (e) { return false; } })();
+  function buzz(ms) { if (!canBuzz || (S && S.settings.haptics === false)) return; try { navigator.vibrate(ms); } catch (e) { /* ignore */ } }
+  // Phones only let audio start from a gesture, and a touch counts once the finger lifts: unlock on
+  // the first release (or key) that gets the audio context running.
+  function unlockAudio() {
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { /* no audio */ }
-    removeEventListener('pointerdown', unlock);
-  });
+    if (actx && actx.state === 'running') { removeEventListener('pointerup', unlockAudio); removeEventListener('keydown', unlockAudio); }
+  }
+  addEventListener('pointerup', unlockAudio); addEventListener('keydown', unlockAudio);
+  // Holding a touch never opens the browser's long-press menu (on Android a canvas counts as an
+  // image for it) or starts a text selection; text fields keep both.
+  const inField = e => !!(e.target && e.target.closest && e.target.closest('input, textarea'));
+  document.addEventListener('contextmenu', e => { if (!inField(e)) e.preventDefault(); });
+  document.addEventListener('selectstart', e => { if (!inField(e)) e.preventDefault(); });
+  document.addEventListener('dragstart', e => { if (!inField(e)) e.preventDefault(); });
   // Phones background and kill apps without warning: save and pause whenever the page is hidden.
   function onHide() { if (mode === 'battle' && B && B.rt && !B.over) setPaused(true); if (S && mode !== 'title' && mode !== 'starter') save(); }
   document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); });
@@ -854,11 +879,13 @@
     const aim = e => {
       const r = pad.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
       const dir = Math.hypot(dx, dy) < r.width * 0.12 ? null : Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'up' : 'down');
-      if (dir !== held && dir) buzz(6);
       held = dir;
       pad.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.dir === dir));
     };
     const end = e => { if (e.pointerId !== pid) return; pid = null; held = null; pad.querySelectorAll('button').forEach(b => b.classList.remove('on')); };
+    // The controls you hold (the D-pad, A and the map itself) swallow the raw touch, so no long-press
+    // gesture, magnifier or haptic can start on them. They run on pointer events, which still fire.
+    for (const el of [pad, $('aBtn'), cv]) el.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
     pad.addEventListener('pointerdown', e => { e.preventDefault(); pid = e.pointerId; pad.setPointerCapture(pid); aim(e); });
     pad.addEventListener('pointermove', e => { if (e.pointerId === pid) aim(e); });
     pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', end);
@@ -935,6 +962,7 @@
 
   async function startBattle(o) {
     mode = 'battle'; setPad(false); held = null;
+    clearToasts();
     await transition();
     $('hud').classList.add('hidden');
     B = new ENG.Battle({ player: S.party, enemy: o.enemy, wild: o.wild, trainer: o.trainer ? { name: o.trainer.name } : null, discovered: new Set(discovered), bonus: { xp: partyTrait('tutor'), bind: partyTrait('binder') } });
@@ -2275,7 +2303,7 @@
         <button class="btn ${S.settings.speed === 'normal' ? 'pri' : ''}" data-speed="normal">Battle speed: normal</button>
         <button class="btn ${S.settings.speed === 'fast' ? 'pri' : ''}" data-speed="fast">Battle speed: fast</button>
         <button class="btn" data-mute>${muted ? 'Unmute' : 'Mute'} sound</button>
-        <button class="btn ${S.settings.haptics !== false ? 'pri' : ''}" data-haptics>Vibration: ${S.settings.haptics !== false ? 'on' : 'off'}</button></div>
+        ${canBuzz ? `<button class="btn ${S.settings.haptics !== false ? 'pri' : ''}" data-haptics>Vibration: ${S.settings.haptics !== false ? 'on' : 'off'}</button>` : ''}</div>
       <div class="btnrow gap"><button class="btn ${S.settings.tips === 'compact' ? 'pri' : ''}" data-tips="compact">Tooltips: compact</button><button class="btn ${S.settings.tips === 'complex' ? 'pri' : ''}" data-tips="complex">Tooltips: complex</button><button class="btn ${S.settings.tips === 'off' ? 'pri' : ''}" data-tips="off">Tooltips: off</button></div>
       <p class="fine">Hover (or press and hold on touch) any merge, essence, status, item or daemon card for details. Press T or tap ⓘ in the top bar to switch compact and complex.</p>
       <p class="fine">Tap the battle text or press Space to fast-forward a turn. Keys 1–4 cast your memory merges.</p>
@@ -2285,7 +2313,7 @@
       <h3>About</h3><p class="fine">Essence Protocol. All ${DB.count} merge outcomes and their designs were pre-baked by tools/bake.js from the rules in js/essences.js. Nothing is rolled when you compose a merge: a design's rarity comes from its seed, so the same merge is always the same. The randomness is in battle (accuracy, effect chances, instability), in encounters, and in each new daemon's seed.</p>`;
     body.querySelectorAll('[data-speed]').forEach(b => { b.onclick = () => { S.settings.speed = b.dataset.speed; save(); renderSheet(); }; });
     body.querySelectorAll('[data-tips]').forEach(b => { b.onclick = () => { S.settings.tips = b.dataset.tips; save(); renderSheet(); }; });
-    body.querySelector('[data-haptics]').onclick = () => { S.settings.haptics = S.settings.haptics === false; save(); renderSheet(); buzz(20); };
+    if (body.querySelector('[data-haptics]')) body.querySelector('[data-haptics]').onclick = () => { S.settings.haptics = S.settings.haptics === false; save(); renderSheet(); buzz(20); };
     body.querySelector('[data-save]').onclick = () => { save(); toast('Saved.'); };
     body.querySelector('[data-mute]').onclick = () => { muted = !muted; try { localStorage.setItem('ep-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } renderSheet(); };
     body.querySelector('[data-wipe]').onclick = async () => {
@@ -2425,36 +2453,64 @@
     if (kind === 'r') { const r = E.RESONANCE.concat(E.TRINITY).find(x => x.name === id); if (r) return `<div class="th">${esc(r.name)}</div><span class="genome">${r.subs.map(x => essChip(x)).join('')}</span>` + (full ? row('Adds', Object.entries(r.traits).map(([t, v]) => `${t} +${v}`).join(', ') + (r.fx.length ? ' · ' + r.fx.map(f => `${E.EFFECTS[f[0]]} ${f[1]}%`).join(', ') : '')) : ''); }
     return '';
   }
-  let tipTarget = null, pressTimer = null;
-  function showTip(el, x, y) {
-    if (!S || S.settings.tips === 'off') return;
+  // Tooltips follow a real hover: a mouse, or a pen hovering over the screen. A tap on a phone also
+  // fires emulated mouse events, so only pointer events are used here and a tap never opens one.
+  // On touch, hold still on an element to peek at its tooltip; lifting the finger hides it.
+  let tipTarget = null;
+  function showTip(el, x, y, touch) {
+    if (!S || S.settings.tips === 'off') return false;
     const html = tipHTML(el.dataset.tip, S.settings.tips === 'complex');
-    if (!html) return;
+    if (!html) return false;
     tipTarget = el;
     tipEl.innerHTML = html + `<div class="tmode">${S.settings.tips === 'complex' ? 'Complex' : 'Compact'} · T or ⓘ to switch</div>`;
     tipEl.className = S.settings.tips;
+    placeTip(x, y, touch);
+    return true;
+  }
+  function placeTip(x, y, touch) {
     const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
-    tipEl.style.left = clamp(x + 14, 8, innerWidth - w - 8) + 'px';
-    tipEl.style.top = (y + 16 + h > innerHeight - 8 ? Math.max(8, y - h - 12) : y + 16) + 'px';
+    if (touch) { // centered above the finger so it isn't covered, or below it when there's no room
+      tipEl.style.left = clamp(x - w / 2, 8, innerWidth - w - 8) + 'px';
+      tipEl.style.top = (y - h - 36 >= 8 ? y - h - 36 : Math.min(innerHeight - h - 8, y + 36)) + 'px';
+    } else {
+      tipEl.style.left = clamp(x + 14, 8, innerWidth - w - 8) + 'px';
+      tipEl.style.top = (y + 16 + h > innerHeight - 8 ? Math.max(8, y - h - 12) : y + 16) + 'px';
+    }
   }
   function hideTip() { tipTarget = null; tipEl.className = 'hidden'; }
-  document.addEventListener('mouseover', e => {
+  const hovering = e => e.pointerType === 'mouse' || (e.pointerType === 'pen' && !e.buttons);
+  document.addEventListener('pointerover', e => {
+    if (!hovering(e)) return;
     const el = e.target.closest && e.target.closest('[data-tip]');
     if (!el) { if (tipTarget) hideTip(); return; }
     if (el !== tipTarget) showTip(el, e.clientX, e.clientY);
   });
-  document.addEventListener('mousemove', e => { if (tipTarget) { const w = tipEl.offsetWidth, h = tipEl.offsetHeight; tipEl.style.left = clamp(e.clientX + 14, 8, innerWidth - w - 8) + 'px'; tipEl.style.top = (e.clientY + 16 + h > innerHeight - 8 ? Math.max(8, e.clientY - h - 12) : e.clientY + 16) + 'px'; } });
-  document.addEventListener('pointerdown', e => {
-    if (e.pointerType === 'mouse') return;
-    hideTip();
-    const el = e.target.closest && e.target.closest('[data-tip]');
-    if (!el) return;
-    pressTimer = setTimeout(() => { showTip(el, e.clientX, e.clientY - 60); el.dataset.held = '1'; }, 450);
+  document.addEventListener('pointerout', e => { if (hovering(e) && tipTarget && !e.relatedTarget) hideTip(); }); // left the window
+  let press = null, swallow = null;
+  document.addEventListener('pointermove', e => {
+    if (hovering(e)) { if (tipTarget) placeTip(e.clientX, e.clientY); return; }
+    if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) endPress(e); // a drag, not a hold
   });
-  document.addEventListener('pointerup', () => clearTimeout(pressTimer));
-  document.addEventListener('pointercancel', () => clearTimeout(pressTimer));
-  // a long-press that opened a tooltip shouldn't also fire the button
-  document.addEventListener('click', e => { const el = e.target.closest && e.target.closest('[data-held]'); if (el) { delete el.dataset.held; e.stopPropagation(); e.preventDefault(); } }, true);
+  document.addEventListener('pointerdown', e => {
+    hideTip();
+    if (e.pointerType === 'mouse') return;
+    if (press) clearTimeout(press.timer);
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    press = el ? { id: e.pointerId, x: e.clientX, y: e.clientY, el } : null;
+    if (press) { const p = press; p.timer = setTimeout(() => { p.shown = showTip(p.el, p.x, p.y, true); }, 450); }
+  });
+  function endPress(e) {
+    if (!press || e.pointerId !== press.id) return;
+    clearTimeout(press.timer);
+    if (press.shown) { hideTip(); swallow = { el: press.el, until: performance.now() + 600 }; } // lifting after a peek is not a tap
+    press = null;
+  }
+  document.addEventListener('pointerup', endPress);
+  document.addEventListener('pointercancel', endPress);
+  document.addEventListener('click', e => {
+    if (!swallow || performance.now() > swallow.until || !swallow.el.contains(e.target)) return;
+    swallow = null; e.stopPropagation(); e.preventDefault();
+  }, true);
   document.addEventListener('scroll', hideTip, true);
 
   // ------------------------------------------------------------------ boot
@@ -2483,6 +2539,6 @@
 
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
-  window.EP = { get state() { return S; }, get battle() { return B; }, get mode() { return mode; }, get discovered() { return discovered; }, forgeItem,
+  window.EP = { get state() { return S; }, get battle() { return B; }, get mode() { return mode; }, get discovered() { return discovered; }, forgeItem, toast,
     teleport(x, y, dir) { player.x = player.px = follower.x = follower.px = x; player.y = player.py = follower.y = follower.py = y; if (dir) player.dir = dir; updateHud(); } };
 })();

@@ -32,6 +32,8 @@ Rules:
 ## Mobile
 - The overworld renders at 1 canvas px per CSS px (pixel art scaled with `image-rendering: pixelated`), light glows are cached sprites and the vignette is a CSS layer. Keep per-frame work allocation-free.
 - The D-pad is one pointer surface (sliding between directions works). The game saves and pauses on `visibilitychange`/`pagehide`, unlocks audio on the first touch, and vibrates on hits (setting in System).
+- Touch rules: tooltips open on a real hover only (mouse or hovering pen, via pointer events, never the emulated mouse events a tap fires); on touch, holding still on an element peeks at its tooltip and lifting hides it without pressing the element. The long-press menu, text selection and dragging are cancelled outside text fields, and the D-pad, A button and map swallow the raw touch (`touchstart` preventDefault) so no long-press gesture or haptic can start. Don't add vibration to held controls.
+- Toasts go through `toast()` / `showToast()`: at most three on screen, a repeated message replaces itself, a tap dismisses one, and an expiry sweep removes any toast whose fade never ended.
 - Landscape phones get a side-by-side battle layout. Inputs are 16px and selectable (no iOS zoom). PNG icons live in `icons/`.
 - Bump `CACHE` in `sw.js` on every release; it precaches the code, icons and all of `db/`.
 

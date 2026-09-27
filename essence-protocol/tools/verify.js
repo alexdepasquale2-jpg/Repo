@@ -160,6 +160,14 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
   console.log(`ok: ${shipped.length} shipped files make no bridge or model requests`);
 }
 
+// 5d. Reveal tier colors are full #rrggbb: the reveal appends alpha digits to them, and a 3-digit
+//     color turned into an invalid one that froze every Uncommon reveal on screen.
+{
+  const { REVEAL } = require('../js/reveal.js');
+  assert(REVEAL.TC.length === 5 && REVEAL.TC.every(c => /^#[0-9a-f]{6}$/i.test(c)), 'reveal tier colors must be #rrggbb: ' + REVEAL.TC);
+  console.log('ok: reveal tier colors are valid for every rarity');
+}
+
 // 6. Map: every room row is well-formed and every NPC, terminal and gate is reachable from spawn
 //    when gates are treated as open.
 {
