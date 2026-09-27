@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e18">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Essence Protocol</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="world"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="zoneName">Nexus</div>
+  <div class="hud-r">
+    <span class="chip" id="keysChip" title="Warden keys">⌬ <b id="keysText">0/4</b></span>
+    <span class="chip" id="codexChip" title="Merges discovered">◈ <b id="codexText">0</b></span>
+    <button class="icon-btn" id="tipBtn" aria-label="Switch tooltip detail" title="Tooltips: compact / complex (T)">ⓘ</button>
+    <button class="icon-btn" id="menuBtn" aria-label="Menu">☰</button>
+  </div>
+</div>
+
+<div id="pad" class="hidden">
+  <div class="dpad">
+    <button data-dir="up" aria-label="Up">▲</button>
+    <button data-dir="left" aria-label="Left">◀</button>
+    <button data-dir="right" aria-label="Right">▶</button>
+    <button data-dir="down" aria-label="Down">▼</button>
+  </div>
+  <button id="aBtn" aria-label="Interact">A</button>
+</div>
+
+<div id="dialog" class="hidden"><div class="who"></div><div class="text"></div><div class="more">▼</div></div>
+<div id="toasts"></div>
+
+<!-- Title -->
+<section id="title" class="screen">
+  <div class="title-card">
+    <canvas id="titleArt" width="320" height="120"></canvas>
+    <p class="kicker">A turn-based daemon-merging RPG</p>
+    <h1>Essence<br><span>Protocol</span></h1>
+    <p class="story">Every thing in this world is merged from four essences, <b class="t-F">Fire</b>, <b class="t-W">Water</b>, <b class="t-E">Earth</b> and <b class="t-A">Air</b>, and sixteen sub-essences that bind to them. The daemons, artificial minds made of essence, can shape those merges. Every possible outcome has already been decided and is waiting for someone to find it. Bind daemons, compose merges, and take the four Warden keys to the Core.</p>
+    <div class="title-btns">
+      <button class="big" id="newBtn">New game</button>
+      <button class="big ghost hidden" id="contBtn">Continue</button>
+    </div>
+    <p class="fine" id="bakeInfo"></p>
+  </div>
+</section>
+
+<!-- Starter -->
+<section id="starter" class="screen hidden">
+  <div class="panel-wrap">
+    <h2>Choose your first daemon</h2>
+    <p class="sub">Each one is a Seed-tier merge of two main essences. It will grow sub-essences as it levels up and eventually recompile into new forms.</p>
+    <div id="starterList" class="starter-list"></div>
+  </div>
+</section>
+
+<!-- Battle -->
+<section id="battle" class="screen hidden">
+  <div class="arena" id="arena">
+    <canvas id="bbg"></canvas>
+    <canvas class="bsprite foe" id="foeSprite" width="192" height="192"></canvas>
+    <canvas class="bsprite ally" id="allySprite" width="192" height="192"></canvas>
+    <button class="bcard foe" id="foeCard" aria-label="Foe details"></button>
+    <button class="bcard ally" id="allyCard" aria-label="Your daemon's details"></button>
+    <div class="residue" id="residue"></div>
+    <canvas id="fx"></canvas>
+    <div id="fieldFlash"></div>
+  </div>
+  <div class="ticker" id="blog" aria-live="polite"></div>
+  <div class="bctrl" id="bctrl">
+    <button class="bind hidden" id="bindBtn"></button>
+    <div class="moves" id="moves"></div>
+    <div class="utils" id="utils"></div>
+  </div>
+  <div class="bpanel hidden" id="bpanel"></div>
+</section>
+<div id="flash"></div>
+
+<!-- Menu sheet -->
+<section id="sheet" class="hidden">
+  <header><div class="tabs" id="sheetTabs"></div><button class="icon-btn" id="sheetClose" aria-label="Close">✕</button></header>
+  <div class="sheet-body" id="sheetBody"></div>
+</section>
+
+<div id="modal" class="hidden"><div class="modal-card" id="modalCard"></div></div>
+
+<script src="js/essences.js"></script>
+<script src="js/merges.baked.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/content.js"></script>
+<script src="js/sprites.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>
