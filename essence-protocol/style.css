@@ -412,3 +412,15 @@ button[data-tip] { cursor: pointer; }
 .hudrow .ub#bindBtn small { font-size: 11px; color: var(--ink); }
 .hudrow .ub#bindBtn.hot { border-color: var(--acc); box-shadow: 0 0 12px #46f3ff88; animation: pulse 1.6s infinite; }
 .hudrow .ub:disabled { opacity: .45; }
+
+/* Signature-mechanic callouts */
+.callout { position: absolute; z-index: 7; pointer-events: none; transform: translate(-50%, -50%); white-space: nowrap; font-family: var(--display); font-weight: 700; font-size: 20px; letter-spacing: .06em; color: var(--cc); text-shadow: 0 0 12px var(--cc), 0 2px 0 #000, 0 0 3px #000; animation: callout 1.25s cubic-bezier(.2, 1.3, .4, 1) forwards; }
+.callout.overdrive, .callout.combo { font-size: 30px; }
+.callout.field { font-size: 14px; }
+@keyframes callout { 0% { opacity: 0; transform: translate(-50%, -30%) scale(.4); } 18% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); } 70% { opacity: 1; transform: translate(-50%, -70%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -110%) scale(.95); } }
+.bf.chg { color: #ff9cf5; border-color: #ff5cf088; background: #2a0d2a; }
+.bf.chg.full { animation: readyPulse 1s infinite; box-shadow: 0 0 10px #ff5cf0; }
+.bf.cmb { color: var(--pas); border-color: #ffd23d88; background: #2a230a; }
+.hb .cost.disc { color: var(--good); }
+#tooltip .sig { color: var(--ink); font-size: 11px; border-left: 3px solid; padding-left: 6px; }
+#tooltip .sig.atk { border-color: var(--atk); } #tooltip .sig.act { border-color: var(--act); }

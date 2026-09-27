@@ -53,6 +53,22 @@ The battle HUD is an action bar. A cast bar shows your global cooldown, and a ho
 
 Flux regenerates continuously, and statuses, regen, echoes and delayed hits tick every 2 seconds. The foe's card has a wind-up bar that shows when it will act next. Opening Compose, Items, Swap or Info pauses the fight. Keys: 1–4 use memory slots, Space pauses, R rests.
 
+### Signature mechanics
+
+On top of its baked stats, every ability class has a signature mechanic. These are tuned to feel big rather than perfectly balanced:
+
+| Class | Signature |
+|---|---|
+| Strike | **Stagger** pushes the foe's next action back (twice as far on a crit), and Strike crits hit ×2 |
+| Barrage | Each hit adds **Charge**; at 6, your next attack is an **OVERDRIVE** (×1.8, guaranteed crit) |
+| Siphon | **Theft** steals Flux on top of its drain |
+| Hex | **Curse** slows the foe (Clock −1, next action delayed), doubles status chances and extends them |
+| Ward | **Riposte** reflects 35% of what the shield absorbs, then bursts on the attacker when it breaks |
+| Mend | **Reboot** purges statuses and stat drops, grants haste and trims your cooldown |
+| Field | **Domain** damages the foe every pulse; your merges of that element cost 40% less Flux |
+
+Every third cast of the same attack in a row is a **COMBO** (×1.6). Each trigger shows a big callout in the arena. Battles run at about 60% speed at level 5 and ramp up to full speed by level 30.
+
 ### Battle depth
 
 - Type cycle: Water > Fire > Air > Earth > Water. It's weighted 65/35 on both the merge and the defender, so multipliers are graded rather than binary.

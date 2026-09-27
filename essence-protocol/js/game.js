@@ -1015,15 +1015,39 @@
         case 'shake': { const el = spriteEl(1); setTimeout(() => { el.classList.add('wobble'); beep(300 + e.n * 100, 0.08); setTimeout(() => el.classList.remove('wobble'), 420); }, (e.n - 1) * 480); break; }
         case 'unbind': { const [x, y] = centerOf(spriteEl(1)); setTimeout(() => burstAt(x, y, ['#46f3ff'], 24), 1000); break; }
         case 'xp': pendingXp.push(e); break;
+        case 'callout': bigCallout(e); break;
         default: break;
       }
     }
     if (dirty) renderCards();
   }
 
+  // Big impact text for signature mechanics.
+  const CALLOUT_COL = { combo: '#ffd23d', overdrive: '#ff5cf0', stagger: '#ff5a4e', siphon: '#5dff9a', hex: '#b48cff', ward: '#cfe8ff', mend: '#5dff9a', field: '#ffb13d' };
+  function bigCallout(e) {
+    const [x, y] = centerOf(spriteEl(e.side));
+    const d = document.createElement('div');
+    d.className = 'callout ' + e.kind; d.textContent = e.text;
+    d.style.top = (y - 70) + 'px'; d.style.setProperty('--cc', CALLOUT_COL[e.kind] || '#fff');
+    $('arena').appendChild(d);
+    const aw = $('arena').clientWidth, half = d.offsetWidth / 2 + 8;
+    d.style.left = clamp(x, half, Math.max(half, aw - half)) + 'px'; setTimeout(() => d.remove(), 1300);
+    const col = CALLOUT_COL[e.kind] || '#fff';
+    if (e.kind === 'overdrive') { burstAt(x, y, [col, '#fff', '#46f3ff'], 70, 2); ring(x, y, 10, 150, col, 600); shakeArena(); beep(1200, 0.2, 'sawtooth', 0.05); }
+    else if (e.kind === 'combo') { ring(x, y, 20, 110, col, 450); beep(880, 0.08, 'square', 0.04); setTimeout(() => beep(1320, 0.1, 'square', 0.04), 70); }
+    else if (e.kind === 'stagger') { flashSprite(e.side, 'hit', 360); ring(x, y, 60, 15, col, 300); }
+    else if (e.kind === 'ward') ring(x, y, 30, 100, col, 450, 0, { hex: true, w: 4 });
+    else if (e.kind === 'hex') ring(x, y, 100, 10, col, 500, 0, { hex: true, w: 3 });
+    else if (e.kind === 'siphon') stream(x, y, ...centerOf(spriteEl(1 - e.side)), col, 18);
+    else if (e.kind === 'mend') sparkles(x, y, col, 26);
+    else if (e.kind === 'field') burstAt(x, y, [col], 12, 0.6);
+  }
+
   // ---- the real-time loop
   let loopOn = false, paused = false, lastT = 0, uiT = 0, autoT = 0;
-  const pace = () => (S.settings.speed === 'fast' ? 1.15 : 0.85);
+  // Slower at low levels so new players can read the fight; full pace from ~Lv30.
+  const levelPace = () => { const L = B ? B.act(0).level : 5; return 0.6 + 0.4 * clamp((L - 5) / 25, 0, 1); };
+  const pace = () => (S.settings.speed === 'fast' ? 1.15 : 0.85) * levelPace();
   function startLoop() { if (loopOn) return; loopOn = true; lastT = performance.now(); requestAnimationFrame(loop); }
   function loop(t) {
     if (!loopOn || !B) { loopOn = false; return; }
@@ -1131,6 +1155,7 @@
     return true;
   }
 
+  const isAtk = k => !!k && ENG.isAttack(k);
   // Buff / debuff icons with live timers, drawn under each card.
   const STATUS_ICO = { burn: '♨', frozen: '❄', static: 'ϟ', rooted: '⚘', corrupt: '☣', dormant: 'z' };
   function renderBuffs(i) {
@@ -1146,6 +1171,10 @@
     if (v.phase > 0) out.push('<span class="bf up" title="Phased: dodges everything"><b>◌</b></span>');
     if (v.mirror) out.push('<span class="bf up" title="Mirror: reflects half the next hit"><b>◐</b></span>');
     if (v.echo) out.push('<span class="bf up" title="An echo is about to ring out"><b>)))</b></span>');
+    if (v.charge) out.push(`<span class="bf chg ${v.charge >= ENG.CHARGE_MAX ? 'full' : ''}" title="Barrage charge: at ${ENG.CHARGE_MAX}, the next attack is an OVERDRIVE"><b>⚡</b><i>${v.charge}/${ENG.CHARGE_MAX}</i></span>`);
+    if (v.combo.n >= 2 && isAtk(v.combo.key)) out.push(`<span class="bf cmb" title="Combo: every 3rd cast in a row hits ×1.6"><b>×${v.combo.n}</b><i>${3 - (v.combo.n % 3) === 3 ? 'next!' : 3 - (v.combo.n % 3)}</i></span>`);
+    if (v.ward && v.shield > 0) out.push('<span class="bf up" title="Riposte armed: attackers take 35% of absorbed damage, and the shield bursts on them when it breaks"><b>⟲</b><i>riposte</i></span>');
+    if (B.field && B.field.side === i) out.push(`<span class="bf up" title="Your ${E.MAIN[B.field.el].name} field: damages the foe each pulse, and ${E.MAIN[B.field.el].name} merges cost 40% less"><b>◎</b><i>${B.field.turns * P}s</i></span>`);
     if (v.delayed.length) out.push(`<span class="bf up" title="Delayed hit incoming"><b>⌛</b><i>${v.delayed.length}</i></span>`);
     const nm = { atk: 'LOG', def: 'FWL', spd: 'CLK', acc: 'ACC', eva: 'EVA' };
     for (const k in v.stages) if (v.stages[k]) out.push(`<span class="bf ${v.stages[k] > 0 ? 'up' : 'dn'} st" title="${nm[k]} ${v.stages[k] > 0 ? '+' : ''}${v.stages[k]}"><b>${nm[k]}</b><i>${v.stages[k] > 0 ? '▲' : '▼'}${Math.abs(v.stages[k])}</i></span>`);
@@ -1163,13 +1192,14 @@
       fill.style.width = (clamp(1 - rt.gcd / full, 0, 1) * 100) + '%';
       $('castbar').classList.toggle('ready', rt.gcd <= 0);
       $('castbar').classList.toggle('starved', !!rt.starved);
-      $('gcdText').textContent = paused ? 'Paused' : !q ? 'Tap a red tile to set your auto-attack' : rt.starved ? `${mergeLabel(q)} · needs ${qr.flux} Flux` : `${S.settings.auto ? 'Auto · ' : ''}${mergeLabel(q)}`;
-      $('gcdTime').textContent = paused ? 'Space to resume' : rt.gcd > 0 ? rt.gcd.toFixed(1) + 's' : rt.starved ? `${Math.floor(flux)}/${qr.flux}` : 'now';
+      $('gcdText').textContent = paused ? 'Paused' : !q ? 'Tap a red tile to set your auto-attack' : rt.starved ? `${mergeLabel(q)} · needs ${B.costFor(0, qr)} Flux` : `${S.settings.auto ? 'Auto · ' : ''}${mergeLabel(q)}`;
+      $('gcdTime').textContent = paused ? 'Space to resume' : rt.gcd > 0 ? rt.gcd.toFixed(1) + 's' : rt.starved ? `${Math.floor(flux)}/${B.costFor(0, qr)}` : 'now';
       if (rt.starved) tip('flux', 'Your auto-attack needs more Flux. Rest (↻) refills a big chunk, or pick a cheaper attack.');
     }
     document.querySelectorAll('#bctrl .hb[data-key]').forEach(b => {
       const k = b.dataset.key, r = ENG.rec(k), cdEl = b.querySelector('.cdo');
-      const short = r.flux > flux;
+      const cost = B.costFor(0, r), short = cost > flux;
+      const cEl = b.querySelector('.cost'); if (cEl) { cEl.textContent = cost; cEl.classList.toggle('disc', cost < r.flux); }
       b.classList.toggle('short', short);
       if (ENG.isAttack(k)) {
         b.classList.toggle('q', k === q);
@@ -1223,7 +1253,7 @@
     const p = panel(`Compose · up to ${w} sub${w > 1 ? 's' : ''}`, '<div id="cmp"></div>');
     const remember = k => { if (!d.memory.includes(k)) { const i = d.memory.indexOf(null); if (i >= 0) { d.memory[i] = k; toast(`Saved to memory slot ${i + 1}.`); } } };
     composer(p.querySelector('#cmp'), {
-      mains: ENG.mainsOf(d.key), subs: d.attuned, width: w, extra: k => `<div class="row">${kindBadge(k)}</div>`,
+      mains: ENG.mainsOf(d.key), subs: d.attuned, width: w, extra: k => `<div class="row">${kindBadge(k)}<span class="fine">${discovered.has(k) ? esc(ENG.SIGNATURE[ENG.rec(k).cls]) : ''}</span></div>`,
       actions: [
         { label: 'Use now', pri: true, ok: k => ENG.rec(k).flux <= B.sides[0].v.flux, fn: k => {
           remember(k); closePanel();
@@ -1746,7 +1776,8 @@
     body.innerHTML = `<h3>How combat works</h3><div class="lex">
         <div class="lexc kc atk"><div class="hd"><span class="kb atk">Attack</span></div><p>Strike, Barrage and Siphon merges. Queue one and it repeats every global cooldown (GCD). The GCD is shorter with more Clock and longer for heavy merges.</p></div>
         <div class="lexc kc act"><div class="hd"><span class="kb act">Active</span></div><p>Hex, Ward, Mend and Field merges. They fire instantly, off the GCD, then go on their own cooldown (5s + 0.7s per Flux).</p></div>
-        <div class="lexc kc pas"><div class="hd"><span class="kb pas">Passive</span></div><p>Always on. One per daemon, from its genome's lead sub-essence or main essence.</p></div>
+        <div class="lexc kc pas"><div class="hd"><span class="kb pas">Passive</span></div><p>Always on. One per daemon, from its genome's lead sub-essence or main essence. Battles run slower at low levels and reach full speed around level 30.</p></div>
+        <div class="lexc kc atk"><div class="hd"><span class="kb atk">Signatures</span></div><p>${Object.entries(ENG.SIGNATURE).map(([c, t]) => `<b>${c}</b>: ${esc(t)}`).join('<br>')}<br>${esc(ENG.COMBO)}</p></div>
         <div class="lexc kc utl"><div class="hd"><span class="kb utl">Utility</span></div><p>Rest (14s cooldown, big Flux refill), Swap (uses the GCD), Items (6s shared cooldown), Bind and Run. Statuses tick every 2 seconds. Opening a menu pauses the fight.</p></div></div>
       <h3>How merges work</h3><p class="fine">A merge has a lead Main, a second Main (the same one makes a pure merge), and up to three sub-essences, each bound to one of the two. The lead carries more weight in the merge and in combat typing (65/35).</p>
       <h3>Type chart</h3>${chart}
@@ -1898,6 +1929,7 @@
     h += row('Accuracy', r.acc > 100 ? 'never misses' : r.acc + '%') + row('Flux cost', r.flux);
     if (B && ui && r.damaging) { const eff = ENG.effectiveness(k, ui[1].key); h += row('Vs. current foe', `×${eff}`); }
     h += `<div class="tfx">${r.fx.map(f => `<span class="st ${E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf'}">${esc(ENG.describeFx(f))}</span>`).join('')}</div>`;
+    h += `<p class="sig ${ENG.isAttack(k) ? 'atk' : 'act'}"><b>${r.cls}</b> · ${esc(ENG.SIGNATURE[r.cls])}</p>`;
     if (!full) return h;
     h += row('Priority', r.prio > 0 ? '+' + r.prio + ' (acts first)' : r.prio < 0 ? r.prio + ' (acts last)' : '0') + row('Instability', r.instab + '% (may backfire or mutate)');
     h += row('Typing', p.a === p.b ? `${E.MAIN[p.a].name} 100%` : `${E.MAIN[p.a].name} 65% · ${E.MAIN[p.b].name} 35%`);
