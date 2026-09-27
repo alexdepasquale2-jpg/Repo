@@ -50,7 +50,7 @@
     <canvas id="titleArt" width="320" height="120"></canvas>
     <p class="kicker">A turn-based daemon-merging RPG</p>
     <h1>Essence<br><span>Protocol</span></h1>
-    <p class="story">Every thing in this world is merged from four essences, <b class="t-F">Fire</b>, <b class="t-W">Water</b>, <b class="t-E">Earth</b> and <b class="t-A">Air</b>, and sixteen sub-essences that bind to them. The daemons, artificial minds made of essence, can shape those merges. Every possible outcome has already been decided and is waiting for someone to find it. Bind daemons, compose merges, and take the four Warden keys to the Core.</p>
+    <p class="story">Every thing in this world is merged from four essences, <b class="t-F">Fire</b>, <b class="t-W">Water</b>, <b class="t-E">Earth</b> and <b class="t-A">Air</b>, and <span id="subCount">sixteen</span> sub-essences that bind to them. The daemons, artificial minds made of essence, can shape those merges. Every possible outcome has already been decided and is waiting for someone to find it. Bind daemons, compose merges, and take the four Warden keys to the Core.</p>
     <div class="title-btns">
       <button class="big" id="newBtn">New game</button>
       <button class="big ghost hidden" id="contBtn">Continue</button>
@@ -99,6 +99,7 @@
 
 <div id="modal" class="hidden"><div class="modal-card" id="modalCard"></div></div>
 
+<script src="js/data.js"></script>
 <script src="js/essences.js"></script>
 <script src="js/db.js"></script>
 <script src="js/designs.js"></script>

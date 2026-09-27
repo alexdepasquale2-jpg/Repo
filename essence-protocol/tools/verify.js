@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* Essence Protocol: consistency checks for CI.
- *  1. The committed merge database (db/) matches a fresh bake (deterministic, not stale).
+ *  0. The content in data/ passes its schema (js/schema.js).
+ *  1. The committed merge database (db/) and js/data.js match a fresh bake of data/ (not stale).
  *  2. Every legal merge identity is present, and nothing else is.
  *  3. Every record is sane (ranges, known effects, unique names).
  *  4. A few hundred seeded headless battles run to completion without throwing.
@@ -13,16 +14,25 @@ const DB = require('../js/db.js');
 const ENG = require('../js/engine.js');
 const D = require('../js/designs.js');
 const path = require('path');
-const { bakeAll, render, OUT } = require('./bake.js');
+const { bakeFiles, staleFiles } = require('./bake.js');
 const C = require('../js/content.js');
 
 function mulberry(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
 // 1
-for (const [f, text] of Object.entries(render(bakeAll()))) assert.strictEqual(fs.readFileSync(path.join(OUT, f), 'utf8').replace(/\r\n/g, '\n'), text, `db/${f} is stale: run node tools/bake.js`);
+{
+  const stale = staleFiles(bakeFiles());
+  assert(!stale.length, 'stale: ' + stale.map(s => s.file).join(', ') + ' (run node tools/bake.js)');
+}
 // 2
 const all = E.enumerateAll();
-assert.strictEqual(all.length, 5896);
+{
+  // the count from the grammar alone: per ordered pair of mains, every way to pick up to 3 legal slots
+  const choose = (n, k) => { let r = 1; for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1); return r; };
+  let expect = 0;
+  for (const a of E.MAINS) for (const b of E.MAINS) { const n = E.slotsFor(a, b).length; for (let k = 0; k <= E.MAX_SUBS; k++) expect += choose(n, k); }
+  assert.strictEqual(all.length, expect);
+}
 assert.strictEqual(DB.count, all.length);
 assert.deepStrictEqual(DB.keys(), all, 'the database holds every merge, in enumeration order');
 // 3

@@ -1,8 +1,8 @@
 // Essence Protocol service worker: cache-first so the game and its merge database work offline.
-const CACHE = 'essence-protocol-v13';
+const CACHE = 'essence-protocol-v14';
 const SHARDS = ['FF', 'FW', 'FE', 'FA', 'WF', 'WW', 'WE', 'WA', 'EF', 'EW', 'EE', 'EA', 'AF', 'AW', 'AE', 'AA'].map(p => `db/${p}.json`);
 const ASSETS = ['./', 'index.html', 'style.css', 'manifest.json', 'icon.svg', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png',
-  'js/essences.js', 'js/db.js', 'js/designs.js', 'js/engine.js', 'js/content.js', 'js/sprites.js', 'js/reveal.js', 'js/game.js', 'db/index.json'].concat(SHARDS);
+  'js/data.js', 'js/essences.js', 'js/db.js', 'js/designs.js', 'js/engine.js', 'js/content.js', 'js/sprites.js', 'js/reveal.js', 'js/game.js', 'db/index.json'].concat(SHARDS);
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(a => new Request(a, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));

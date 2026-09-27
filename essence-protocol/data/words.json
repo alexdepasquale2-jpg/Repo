@@ -1,0 +1,29 @@
+{
+  "daemonSuffixes": [
+    ["bit", "let", "o", "ling", "ix", "kin"],
+    ["on", "ex", "ar", "us", "ite", "ode"],
+    ["ion", "ara", "ius", "ant", "orn", "yx"],
+    ["arch", "prime", "os", "eon", "ax", "ault"]
+  ],
+  "temperaments": {
+    "pow": "It hits first.",
+    "grd": "It outlasts fights.",
+    "mnd": "It repairs itself.",
+    "spd": "It moves between clock cycles.",
+    "prc": "Nothing it does is wasted.",
+    "hex": "It cripples its foes.",
+    "drn": "It feeds on what it touches.",
+    "spr": "It fights like a swarm.",
+    "per": "Its effects linger.",
+    "cha": "It thrives on instability."
+  },
+  "templates": {
+    "rides": "{sub} rides the {host} {role}.",
+    "facet": "{sub} on the {host} {role} turns {facet}.",
+    "resonance": "{subs} resonate: {name}.",
+    "trinity": "All three align into {name}.",
+    "anomaly": "Something in the lattice is wrong here. {desc}",
+    "unstable": "It barely holds together.",
+    "formAnomaly": "Its code is wrong somehow."
+  }
+}

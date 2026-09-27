@@ -1,0 +1,498 @@
+{
+  "mains": [
+    {
+      "code": "F",
+      "name": "Fire",
+      "color": "#ff6b3d",
+      "deep": "#8f2a12",
+      "light": "#ffc27a",
+      "beats": "A",
+      "traits": { "pow": 3, "spd": 1, "per": 1, "cha": 1 },
+      "base": { "hp": 45, "atk": 68, "def": 44, "spd": 62, "flux": 42, "coh": 40 },
+      "passive": {
+        "name": "Kindling",
+        "desc": "Fire-led merges hit 25% harder below one-third HP.",
+        "mechanic": "kindling"
+      },
+      "traitNameAdjectives": ["Blazing", "Kindled", "Searing"],
+      "traitLean": { "smith": 2 },
+      "nameRoots": ["Pyr", "Cind", "Ign", "Scor", "Blaz", "Char", "Flam", "Kiln"],
+      "nameMids": ["ra", "ex", "ash", "or"],
+      "bodies": [
+        "A flickering flame body", "A tongue of living fire", "A restless teardrop of heat"
+      ],
+      "belly": "embers in its belly",
+      "lineWords": ["Ash", "Cinder", "Pyre", "Blaze"]
+    },
+    {
+      "code": "W",
+      "name": "Water",
+      "color": "#3aa6ff",
+      "deep": "#123f7a",
+      "light": "#aadcff",
+      "beats": "F",
+      "traits": { "mnd": 2, "spr": 1, "grd": 1, "per": 1 },
+      "base": { "hp": 62, "atk": 50, "def": 52, "spd": 46, "flux": 62, "coh": 48 },
+      "passive": {
+        "name": "Flow",
+        "desc": "Restores 1/20 of max HP at the end of each turn.",
+        "mechanic": "flow"
+      },
+      "traitNameAdjectives": ["Tidal", "Deep", "Flowing"],
+      "traitLean": { "mender": 1.5 },
+      "nameRoots": ["Aqu", "Hydr", "Mar", "Ner", "Tid", "Brin", "Rill", "Nav"],
+      "nameMids": ["ul", "ae", "il", "ris"],
+      "bodies": [
+        "A rippling droplet body", "A smooth bead of water", "A body that flows and reshapes"
+      ],
+      "belly": "water fins",
+      "lineWords": ["Tide", "Brine", "Deep", "Rill"]
+    },
+    {
+      "code": "E",
+      "name": "Earth",
+      "color": "#c9913d",
+      "deep": "#553814",
+      "light": "#efd49c",
+      "beats": "W",
+      "traits": { "grd": 3, "pow": 1, "hex": 1 },
+      "base": { "hp": 66, "atk": 56, "def": 70, "spd": 34, "flux": 40, "coh": 52 },
+      "passive": {
+        "name": "Bedrock",
+        "desc": "Takes 20% less damage from super-effective merges.",
+        "mechanic": "bedrock"
+      },
+      "traitNameAdjectives": ["Stone", "Rooted", "Iron"],
+      "traitLean": { "nurture": 1.5 },
+      "nameRoots": ["Terr", "Gran", "Lith", "Mag", "Or", "Bould", "Grav", "Petr"],
+      "nameMids": ["ak", "on", "um", "dor"],
+      "bodies": [
+        "A blocky golem", "A squat, stone-built body", "A slab of a body that plants itself"
+      ],
+      "belly": "rubble at its base",
+      "lineWords": ["Stone", "Loam", "Crag", "Ore"]
+    },
+    {
+      "code": "A",
+      "name": "Air",
+      "color": "#8fe6d4",
+      "deep": "#236e66",
+      "light": "#e2fff8",
+      "beats": "E",
+      "traits": { "spd": 3, "prc": 1, "spr": 1 },
+      "base": { "hp": 46, "atk": 56, "def": 40, "spd": 72, "flux": 50, "coh": 56 },
+      "passive": { "name": "Tailwind", "desc": "Clock +15%.", "mechanic": "tailwind" },
+      "traitNameAdjectives": ["Gale", "Soaring", "Cirrus"],
+      "traitLean": { "warp": 1.5 },
+      "nameRoots": ["Aer", "Zeph", "Cirr", "Gust", "Vent", "Strat", "Hal", "Syl"],
+      "nameMids": ["is", "ai", "yl", "ew"],
+      "bodies": ["A winged wisp", "A flickering wisp with swept wings", "A gust with a visor"],
+      "belly": "wind wings",
+      "lineWords": ["Gale", "Cirrus", "Zephyr", "Squall"]
+    }
+  ],
+  "subs": [
+    {
+      "code": "Em",
+      "name": "Ember",
+      "host": "F",
+      "desc": "Heat that clings and keeps on burning.",
+      "color": "#ff9a2e",
+      "traits": { "per": 2, "pow": 1 },
+      "effect": "burn",
+      "adjectives": ["Smoldering", "Kindled", "Emberlit"],
+      "passive": {
+        "name": "Afterburn",
+        "desc": "Burns it inflicts deal double damage.",
+        "mechanic": "afterburn"
+      },
+      "traitLean": { "smith": 0.5 },
+      "nameSyllables": ["emb", "em"],
+      "organ": "ember sparks",
+      "sprite": "embers",
+      "lineWords": ["Ember"]
+    },
+    {
+      "code": "Pl",
+      "name": "Plasma",
+      "host": "F",
+      "desc": "Raw, unbound energy that cuts through defenses.",
+      "color": "#ff5cf0",
+      "traits": { "pow": 3, "cha": 1 },
+      "effect": "pierce",
+      "adjectives": ["Plasma", "Ionized", "Searing"],
+      "passive": {
+        "name": "Overcharge",
+        "desc": "Merges hit 15% harder while Flux is above half.",
+        "mechanic": "overcharge"
+      },
+      "traitLean": { "logic": 1 },
+      "nameSyllables": ["plax", "pla"],
+      "organ": "a plasma core",
+      "sprite": "core",
+      "lineWords": ["Arc"]
+    },
+    {
+      "code": "As",
+      "name": "Ash",
+      "host": "F",
+      "desc": "What fire leaves behind. It blinds and chokes.",
+      "color": "#8a8a94",
+      "traits": { "hex": 2, "per": 1 },
+      "effect": "blind",
+      "adjectives": ["Ashen", "Sooted", "Cindered"],
+      "passive": { "name": "Smog", "desc": "Foes' accuracy -10%.", "mechanic": "smog" },
+      "traitLean": { "repel": 1 },
+      "nameSyllables": ["sin", "as"],
+      "organ": "a haze of ash",
+      "sprite": "ash",
+      "lineWords": ["Soot"]
+    },
+    {
+      "code": "Ti",
+      "name": "Tide",
+      "host": "W",
+      "desc": "A wave that knocks away whatever the target built up.",
+      "color": "#2f7dff",
+      "traits": { "spr": 2, "pow": 1 },
+      "effect": "wash",
+      "adjectives": ["Tidal", "Surging", "Rolling"],
+      "passive": {
+        "name": "Undertow",
+        "desc": "Barrage merges hit one extra time.",
+        "mechanic": "undertow"
+      },
+      "traitLean": { "forage": 1 },
+      "nameSyllables": ["tid", "ti"],
+      "organ": "tidal fins",
+      "sprite": "fins",
+      "lineWords": ["Surge"]
+    },
+    {
+      "code": "Fr",
+      "name": "Frost",
+      "host": "W",
+      "desc": "Cold that slows the target down, and sometimes stops it.",
+      "color": "#dff8ff",
+      "traits": { "hex": 2, "grd": 1 },
+      "effect": "chill",
+      "adjectives": ["Rime", "Glacial", "Frozen"],
+      "passive": {
+        "name": "Rime Skin",
+        "desc": "Attackers that hit it may be chilled (20%).",
+        "mechanic": "rimeSkin"
+      },
+      "traitLean": { "repel": 0.5, "firewall": 0.5 },
+      "nameSyllables": ["rim", "ri"],
+      "organ": "a frost crown",
+      "sprite": "crown",
+      "lineWords": ["Rime"]
+    },
+    {
+      "code": "Mi",
+      "name": "Mist",
+      "host": "W",
+      "desc": "A shroud that makes the caster hard to hit.",
+      "color": "#bfe3ff",
+      "traits": { "grd": 1, "hex": 1, "spd": 1 },
+      "effect": "veil",
+      "adjectives": ["Misted", "Veiled", "Hazy"],
+      "passive": { "name": "Haze", "desc": "Evasion +10%.", "mechanic": "haze" },
+      "traitLean": { "shroud": 1 },
+      "nameSyllables": ["mis", "mi"],
+      "organ": "a bead of mist",
+      "sprite": "mist",
+      "lineWords": ["Veil"]
+    },
+    {
+      "code": "St",
+      "name": "Stone",
+      "host": "E",
+      "desc": "Mass and armor.",
+      "color": "#8b7b68",
+      "traits": { "grd": 3, "pow": 1 },
+      "effect": "guard",
+      "adjectives": ["Stone", "Bastion", "Granite"],
+      "passive": { "name": "Plated", "desc": "Firewall +15%.", "mechanic": "plated" },
+      "traitLean": { "firewall": 1 },
+      "nameSyllables": ["stan", "sta"],
+      "organ": "stone plates",
+      "sprite": "plates",
+      "lineWords": ["Slate"]
+    },
+    {
+      "code": "Me",
+      "name": "Metal",
+      "host": "E",
+      "desc": "A keen edge that finds weak points.",
+      "color": "#d8dde6",
+      "traits": { "prc": 2, "pow": 1 },
+      "effect": "crit",
+      "adjectives": ["Iron", "Steel", "Forged"],
+      "passive": {
+        "name": "Keen",
+        "desc": "Critical hits are twice as likely.",
+        "mechanic": "keen"
+      },
+      "traitLean": { "smith": 1 },
+      "nameSyllables": ["fer", "fe"],
+      "organ": "a metal band",
+      "sprite": "band",
+      "lineWords": ["Steel"]
+    },
+    {
+      "code": "Ro",
+      "name": "Root",
+      "host": "E",
+      "desc": "Roots that hold the target in place and feed on it.",
+      "color": "#5fbf4a",
+      "traits": { "drn": 2, "hex": 1 },
+      "effect": "root",
+      "adjectives": ["Rooted", "Thorned", "Grasping"],
+      "passive": {
+        "name": "Anchor",
+        "desc": "Restores 1/16 of max HP at the end of each turn.",
+        "mechanic": "anchor"
+      },
+      "traitLean": { "nurture": 1 },
+      "nameSyllables": ["rad", "ro"],
+      "organ": "trailing roots",
+      "sprite": "roots",
+      "lineWords": ["Thorn"]
+    },
+    {
+      "code": "Sp",
+      "name": "Spark",
+      "host": "A",
+      "desc": "Charge that locks up the target's circuits.",
+      "color": "#ffe23d",
+      "traits": { "spd": 1, "hex": 1, "pow": 1 },
+      "effect": "static",
+      "adjectives": ["Voltaic", "Sparking", "Arcing"],
+      "passive": {
+        "name": "Static Skin",
+        "desc": "Attackers that hit it may get static (15%).",
+        "mechanic": "staticSkin"
+      },
+      "traitLean": { "capacity": 1 },
+      "nameSyllables": ["volt", "vo"],
+      "organ": "a spark antenna",
+      "sprite": "antenna",
+      "lineWords": ["Volt"]
+    },
+    {
+      "code": "Ga",
+      "name": "Gale",
+      "host": "A",
+      "desc": "Pure speed.",
+      "color": "#f2fffb",
+      "traits": { "spd": 3 },
+      "effect": "haste",
+      "adjectives": ["Gale", "Howling", "Swift"],
+      "passive": { "name": "Swift", "desc": "Clock +15%.", "mechanic": "swift" },
+      "traitLean": { "clock": 1 },
+      "nameSyllables": ["gal", "ga"],
+      "organ": "gale wings",
+      "sprite": "wings",
+      "lineWords": ["Gust"]
+    },
+    {
+      "code": "Ec",
+      "name": "Echo",
+      "host": "A",
+      "desc": "The merge rings out again on the next turn.",
+      "color": "#c7a6ff",
+      "traits": { "spr": 2, "per": 1 },
+      "effect": "echo",
+      "adjectives": ["Echoing", "Resonant", "Ringing"],
+      "passive": {
+        "name": "Reverb",
+        "desc": "Damaging merges have a 20% chance to echo.",
+        "mechanic": "reverb"
+      },
+      "traitLean": { "lure": 1 },
+      "nameSyllables": ["eko", "ek"],
+      "organ": "echo rings",
+      "sprite": "rings",
+      "lineWords": ["Echo"]
+    },
+    {
+      "code": "Li",
+      "name": "Light",
+      "host": null,
+      "desc": "Clarity. Its effect changes with the host it is bound to.",
+      "color": "#ffe9a0",
+      "traits": { "mnd": 2, "prc": 1 },
+      "effect": "cleanse",
+      "adjectives": ["Luminous", "Bright", "Haloed"],
+      "facets": {
+        "F": { "name": "Radiant", "traits": { "pow": 1 }, "effect": "blind" },
+        "W": { "name": "Prismatic", "traits": { "mnd": 1 }, "effect": "heal" },
+        "E": { "name": "Crystal", "traits": { "grd": 1 }, "effect": "shield" },
+        "A": { "name": "Auroral", "traits": { "prc": 1 }, "effect": "focus" }
+      },
+      "passive": {
+        "name": "Radiance",
+        "desc": "Immune to Blind. Status effects on it expire faster.",
+        "mechanic": "radiance"
+      },
+      "traitLean": { "fortune": 1, "pulse": 1 },
+      "nameSyllables": ["lux", "lu"],
+      "organ": "a halo",
+      "sprite": "halo",
+      "lineWords": ["Lux"]
+    },
+    {
+      "code": "Vo",
+      "name": "Void",
+      "host": null,
+      "desc": "Absence. It corrupts Flux and makes merges unstable.",
+      "color": "#6b2fa8",
+      "traits": { "drn": 2, "cha": 2 },
+      "effect": "corrupt",
+      "adjectives": ["Void", "Hollow", "Null"],
+      "facets": {
+        "F": { "name": "Blackflame", "traits": { "hex": 1 }, "effect": "burn" },
+        "W": { "name": "Abyssal", "traits": { "drn": 1 }, "effect": "drain" },
+        "E": { "name": "Sinking", "traits": { "hex": 1 }, "effect": "root" },
+        "A": { "name": "Vacuum", "traits": { "hex": 1 }, "effect": "chill" }
+      },
+      "passive": {
+        "name": "Hunger",
+        "desc": "Damaging hits drain 3 Flux from the target.",
+        "mechanic": "hunger"
+      },
+      "traitLean": { "transmute": 1.5 },
+      "nameSyllables": ["nul", "nu"],
+      "organ": "a void core",
+      "sprite": "voidcore",
+      "lineWords": ["Null"],
+      "eyes": true
+    },
+    {
+      "code": "Si",
+      "name": "Signal",
+      "host": null,
+      "desc": "Pure information, the native tongue of every daemon.",
+      "color": "#46f3ff",
+      "traits": { "prc": 1, "spd": 1, "hex": 1 },
+      "effect": "overclock",
+      "adjectives": ["Signal", "Encoded", "Pinging"],
+      "facets": {
+        "F": { "name": "Overclocked", "traits": { "pow": 1 }, "effect": "overclock" },
+        "W": { "name": "Streaming", "traits": { "mnd": 1 }, "effect": "regen" },
+        "E": { "name": "Firmware", "traits": { "grd": 1 }, "effect": "guard" },
+        "A": { "name": "Broadcast", "traits": { "spr": 1 }, "effect": "haste" }
+      },
+      "passive": {
+        "name": "Adaptive",
+        "desc": "Deals 5% more damage for each turn on the field (max +25%).",
+        "mechanic": "adaptive"
+      },
+      "traitLean": { "archive": 1.5, "tutor": 1 },
+      "nameSyllables": ["sig", "si"],
+      "organ": "a signal mast",
+      "sprite": "mast",
+      "lineWords": ["Pulse"],
+      "eyes": true
+    },
+    {
+      "code": "Tm",
+      "name": "Time",
+      "host": null,
+      "desc": "Moves part of the effect to a later turn.",
+      "color": "#d1a15a",
+      "traits": { "per": 2, "spd": 1 },
+      "effect": "delay",
+      "adjectives": ["Chrono", "Latent", "Lingering"],
+      "facets": {
+        "F": { "name": "Flashpoint", "traits": { "pow": 1 }, "effect": "delay" },
+        "W": { "name": "Eroding", "traits": { "per": 1 }, "effect": "echo" },
+        "E": { "name": "Fossil", "traits": { "grd": 1 }, "effect": "petrify" },
+        "A": { "name": "Jetstream", "traits": { "spd": 1 }, "effect": "priority" }
+      },
+      "passive": {
+        "name": "Foresight",
+        "desc": "Its merges are half as likely to destabilize.",
+        "mechanic": "foresight"
+      },
+      "traitLean": { "hasten": 1.5 },
+      "nameSyllables": ["kron", "kro"],
+      "organ": "a time gear",
+      "sprite": "gear",
+      "lineWords": ["Chron"]
+    }
+  ],
+  "reactions": {
+    "FF": {
+      "names": { "F": "Inferno" },
+      "volatile": false,
+      "traits": { "pow": 2, "cha": 1 },
+      "effects": [{ "effect": "burn", "chance": 15 }],
+      "line": "A flame folded into itself until it burns white."
+    },
+    "WW": {
+      "names": { "W": "Deluge" },
+      "volatile": false,
+      "traits": { "mnd": 1, "spr": 1, "grd": 1 },
+      "effects": [{ "effect": "soak", "chance": 30 }],
+      "line": "Water poured into water: the whole weight of a sea."
+    },
+    "EE": {
+      "names": { "E": "Tectonic" },
+      "volatile": false,
+      "traits": { "grd": 2, "pow": 1 },
+      "effects": [{ "effect": "guard", "chance": 20 }],
+      "line": "Plates of stone grind until the ground itself answers."
+    },
+    "AA": {
+      "names": { "A": "Tempest" },
+      "volatile": false,
+      "traits": { "spd": 2, "spr": 1 },
+      "effects": [{ "effect": "haste", "chance": 20 }],
+      "line": "Wind chasing wind, faster every lap."
+    },
+    "FW": {
+      "names": { "F": "Scald", "W": "Steam" },
+      "volatile": true,
+      "traits": { "cha": 3, "pow": 2, "hex": 1 },
+      "effects": [{ "effect": "blind", "chance": 15 }, { "effect": "burn", "chance": 10 }],
+      "line": "Opposites forced together. The pressure has to go somewhere."
+    },
+    "FE": {
+      "names": { "F": "Magma", "E": "Obsidian" },
+      "volatile": false,
+      "traits": { "pow": 2, "per": 2 },
+      "effects": [{ "effect": "burn", "chance": 20 }],
+      "line": "Stone remembers the heat long after the flame is gone."
+    },
+    "FA": {
+      "names": { "F": "Wildfire", "A": "Firestorm" },
+      "volatile": false,
+      "traits": { "spd": 2, "spr": 2 },
+      "effects": [{ "effect": "burn", "chance": 15 }],
+      "line": "Air feeds the fire, and the fire runs with it."
+    },
+    "WE": {
+      "names": { "W": "Mire", "E": "Clay" },
+      "volatile": false,
+      "traits": { "hex": 2, "grd": 1, "drn": 1 },
+      "effects": [{ "effect": "chill", "chance": 20 }],
+      "line": "Earth drinks the water and becomes something that holds."
+    },
+    "WA": {
+      "names": { "W": "Squall", "A": "Thunderhead" },
+      "volatile": false,
+      "traits": { "spr": 2, "hex": 1, "prc": 1 },
+      "effects": [{ "effect": "soak", "chance": 20 }],
+      "line": "Rain thrown sideways, charged by the climb."
+    },
+    "EA": {
+      "names": { "E": "Dune", "A": "Sandstorm" },
+      "volatile": true,
+      "traits": { "cha": 2, "hex": 2 },
+      "effects": [{ "effect": "blind", "chance": 20 }],
+      "line": "The ground is torn loose and thrown at the sky."
+    }
+  }
+}

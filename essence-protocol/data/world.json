@@ -1,0 +1,456 @@
+{
+  "starters": [
+    {
+      "key": "FA",
+      "attune": ["Em"],
+      "blurb": "A Fire kernel that feeds on moving air. Fast and aggressive."
+    },
+    {
+      "key": "WE",
+      "attune": ["Fr"],
+      "blurb": "A Water kernel set in Earth. It wears enemies down."
+    },
+    {
+      "key": "EF",
+      "attune": ["St"],
+      "blurb": "An Earth kernel with a molten heart. Hard to break."
+    },
+    {
+      "key": "AW",
+      "attune": ["Sp"],
+      "blurb": "An Air kernel that carries rain. Its charge locks foes up."
+    }
+  ],
+  "zones": [
+    {
+      "id": "fringe",
+      "name": "Nexus Fringe",
+      "element": null,
+      "wild": [
+        { "key": "AF", "min": 2, "max": 4, "weight": 3 },
+        { "key": "WA", "min": 2, "max": 4, "weight": 3 },
+        { "key": "EW", "min": 2, "max": 4, "weight": 3 },
+        { "key": "FE", "min": 2, "max": 4, "weight": 3 },
+        { "key": "AA", "min": 3, "max": 4, "weight": 1 }
+      ]
+    },
+    {
+      "id": "air",
+      "name": "Cirrus Array",
+      "element": "A",
+      "wild": [
+        { "key": "AA", "min": 4, "max": 7, "weight": 4 },
+        { "key": "AW", "min": 4, "max": 7, "weight": 3 },
+        { "key": "AE", "min": 5, "max": 8, "weight": 3 },
+        { "key": "AF", "min": 5, "max": 8, "weight": 3 },
+        { "key": "AA-Ga1", "min": 7, "max": 9, "weight": 1 },
+        { "key": "AW-Sp1", "min": 7, "max": 9, "weight": 1 },
+        { "key": "EA-Ga2", "min": 7, "max": 9, "weight": 1 }
+      ]
+    },
+    {
+      "id": "fire",
+      "name": "Cinder Foundry",
+      "element": "F",
+      "wild": [
+        { "key": "FF", "min": 9, "max": 12, "weight": 4 },
+        { "key": "FA", "min": 9, "max": 12, "weight": 3 },
+        { "key": "FE", "min": 9, "max": 12, "weight": 3 },
+        { "key": "FW", "min": 10, "max": 13, "weight": 2 },
+        { "key": "FF-Em1", "min": 11, "max": 14, "weight": 1 },
+        { "key": "FE-Pl1", "min": 11, "max": 14, "weight": 1 },
+        { "key": "FA-As1", "min": 11, "max": 14, "weight": 1 },
+        { "key": "EF-Em2", "min": 12, "max": 14, "weight": 1 }
+      ]
+    },
+    {
+      "id": "water",
+      "name": "Tidal Archive",
+      "element": "W",
+      "wild": [
+        { "key": "WW", "min": 14, "max": 17, "weight": 3 },
+        { "key": "WF", "min": 14, "max": 17, "weight": 3 },
+        { "key": "WA", "min": 14, "max": 17, "weight": 3 },
+        { "key": "WE", "min": 14, "max": 17, "weight": 3 },
+        { "key": "WW-Ti1", "min": 16, "max": 19, "weight": 1 },
+        { "key": "WA-Fr1", "min": 16, "max": 19, "weight": 1 },
+        { "key": "WE-Mi1", "min": 16, "max": 19, "weight": 1 },
+        { "key": "AW-Ti2", "min": 16, "max": 19, "weight": 1 },
+        { "key": "WF-Li1", "min": 17, "max": 20, "weight": 1 }
+      ]
+    },
+    {
+      "id": "earth",
+      "name": "Bedrock Vault",
+      "element": "E",
+      "wild": [
+        { "key": "EE", "min": 20, "max": 23, "weight": 3 },
+        { "key": "EW", "min": 20, "max": 23, "weight": 3 },
+        { "key": "EA", "min": 20, "max": 23, "weight": 3 },
+        { "key": "EF", "min": 20, "max": 23, "weight": 3 },
+        { "key": "EE-St1", "min": 22, "max": 25, "weight": 1 },
+        { "key": "EW-Ro1", "min": 22, "max": 25, "weight": 1 },
+        { "key": "EA-Me1", "min": 22, "max": 25, "weight": 1 },
+        { "key": "EF-Pl2St1", "min": 24, "max": 26, "weight": 1 },
+        { "key": "EE-Ro1Li1", "min": 24, "max": 26, "weight": 1 }
+      ]
+    }
+  ],
+  "trainers": [
+    {
+      "id": "air-a",
+      "zone": "air",
+      "slot": "a",
+      "name": "Operator Wren",
+      "facing": "down",
+      "sight": 3,
+      "team": [{ "key": "AA", "level": 5 }, { "key": "AE", "level": 6 }],
+      "intro": "Your daemon looks freshly compiled. Let's stress-test it.",
+      "outro": "Clean run. You've got good instincts."
+    },
+    {
+      "id": "air-b",
+      "zone": "air",
+      "slot": "b",
+      "name": "Operator Juno",
+      "facing": "left",
+      "sight": 3,
+      "team": [{ "key": "AW", "level": 6 }, { "key": "AF", "level": 7 }],
+      "intro": "Wind carries everything, even your defeat!",
+      "outro": "Guess the wind changed."
+    },
+    {
+      "id": "air-c",
+      "zone": "air",
+      "slot": "c",
+      "name": "Operator Pim",
+      "facing": "right",
+      "sight": 4,
+      "team": [{ "key": "AA-Ga1", "level": 8 }],
+      "intro": "Gale bound to Air. Fastest merge you'll ever see!",
+      "outro": "Speed isn't everything, huh."
+    },
+    {
+      "id": "air-W",
+      "zone": "air",
+      "slot": "W",
+      "name": "Warden Sylph",
+      "facing": "down",
+      "sight": 0,
+      "warden": true,
+      "badge": "Cirrus Key",
+      "team": [
+        { "key": "AW-Sp1", "level": 8 },
+        { "key": "AE", "level": 8 },
+        { "key": "AA-Ec1", "level": 10 }
+      ],
+      "intro": "The Cirrus Array answers to me. Show me you understand that a merge is more than its lead essence.",
+      "outro": "You bind subs like you mean it. Take the Cirrus Key. The Foundry gate will open for you."
+    },
+    {
+      "id": "fire-a",
+      "zone": "fire",
+      "slot": "a",
+      "name": "Operator Cole",
+      "facing": "down",
+      "sight": 3,
+      "team": [{ "key": "FF", "level": 10 }, { "key": "FE", "level": 11 }],
+      "intro": "The Foundry runs hot. Hope your firewall does too.",
+      "outro": "Melted. Me, not you."
+    },
+    {
+      "id": "fire-b",
+      "zone": "fire",
+      "slot": "b",
+      "name": "Operator Ashe",
+      "facing": "left",
+      "sight": 3,
+      "team": [{ "key": "FA-Em1", "level": 12 }, { "key": "FW", "level": 12 }],
+      "intro": "Ever seen Scald go unstable? You're about to.",
+      "outro": "Instability cuts both ways..."
+    },
+    {
+      "id": "fire-c",
+      "zone": "fire",
+      "slot": "c",
+      "name": "Operator Vex",
+      "facing": "right",
+      "sight": 4,
+      "team": [{ "key": "FE-Pl1", "level": 13 }],
+      "intro": "Plasma pierces shields. Try to block it.",
+      "outro": "You didn't block. You dodged. Smart."
+    },
+    {
+      "id": "fire-W",
+      "zone": "fire",
+      "slot": "W",
+      "name": "Warden Pyra",
+      "facing": "down",
+      "sight": 0,
+      "warden": true,
+      "badge": "Cinder Key",
+      "team": [
+        { "key": "FF-Em1", "level": 12 },
+        { "key": "FA", "level": 12 },
+        { "key": "FE-Pl1", "level": 14 }
+      ],
+      "intro": "Fire is the first essence any daemon learns and the last it masters. Burn bright or burn out.",
+      "outro": "Bright enough. The Cinder Key is yours. The Archive awaits."
+    },
+    {
+      "id": "water-a",
+      "zone": "water",
+      "slot": "a",
+      "name": "Operator Rill",
+      "facing": "right",
+      "sight": 3,
+      "team": [{ "key": "WW", "level": 16 }, { "key": "WA-Sp2", "level": 17 }],
+      "intro": "Soaked daemons take Air hits hard. Just so you know.",
+      "outro": "Well. You knew."
+    },
+    {
+      "id": "water-b",
+      "zone": "water",
+      "slot": "b",
+      "name": "Operator Moss",
+      "facing": "right",
+      "sight": 3,
+      "team": [{ "key": "WE-Fr1", "level": 18 }, { "key": "WF-Ti1", "level": 18 }],
+      "intro": "Residue! Watch the residue! Everyone forgets the residue.",
+      "outro": "You watched the residue."
+    },
+    {
+      "id": "water-c",
+      "zone": "water",
+      "slot": "c",
+      "name": "Operator Nami",
+      "facing": "left",
+      "sight": 4,
+      "team": [{ "key": "WA-Mi1", "level": 19 }, { "key": "WW-Ti1", "level": 19 }],
+      "intro": "Can you hit what you can't see?",
+      "outro": "Apparently yes."
+    },
+    {
+      "id": "water-W",
+      "zone": "water",
+      "slot": "W",
+      "name": "Warden Mareth",
+      "facing": "left",
+      "sight": 0,
+      "warden": true,
+      "badge": "Tidal Key",
+      "team": [
+        { "key": "WW-Ti1", "level": 16 },
+        { "key": "WA-Fr1", "level": 17 },
+        { "key": "WE-Mi1", "level": 17 },
+        { "key": "WW-Fr1Mi1", "level": 19 }
+      ],
+      "intro": "Water takes the shape of whatever holds it. So does a daemon. Let me see what holds yours.",
+      "outro": "Deep enough. Take the Tidal Key, and mind the Vault. Earth does not forgive."
+    },
+    {
+      "id": "earth-a",
+      "zone": "earth",
+      "slot": "a",
+      "name": "Operator Flint",
+      "facing": "left",
+      "sight": 3,
+      "team": [{ "key": "EE-St1", "level": 22 }, { "key": "EA-Me1", "level": 23 }],
+      "intro": "Stone on Earth. You'll need Plasma to crack it.",
+      "outro": "Cracked."
+    },
+    {
+      "id": "earth-b",
+      "zone": "earth",
+      "slot": "b",
+      "name": "Operator Bram",
+      "facing": "right",
+      "sight": 3,
+      "team": [{ "key": "EW-Ro1", "level": 24 }, { "key": "EF-Me1", "level": 24 }],
+      "intro": "Once the roots take hold, you're not going anywhere.",
+      "outro": "You tore free. Respect."
+    },
+    {
+      "id": "earth-c",
+      "zone": "earth",
+      "slot": "c",
+      "name": "Operator Ore",
+      "facing": "left",
+      "sight": 4,
+      "team": [{ "key": "EE-Ro1", "level": 25 }, { "key": "EA-St1Sp2", "level": 25 }],
+      "intro": "Earth grounds Spark. No static on my watch.",
+      "outro": "Grounded... but beaten."
+    },
+    {
+      "id": "earth-W",
+      "zone": "earth",
+      "slot": "W",
+      "name": "Warden Gault",
+      "facing": "right",
+      "sight": 0,
+      "warden": true,
+      "badge": "Bedrock Key",
+      "team": [
+        { "key": "EE-St1", "level": 23 },
+        { "key": "EF-Ro1", "level": 23 },
+        { "key": "EW-St1", "level": 24 },
+        { "key": "EE-St1Me1", "level": 26 }
+      ],
+      "intro": "Everything in this world was merged from four essences. I am the one that holds them down.",
+      "outro": "The Bedrock Key. With all four, the Core will open. The Architect is waiting."
+    },
+    {
+      "id": "core-A",
+      "zone": "core",
+      "slot": "A",
+      "name": "The Architect",
+      "facing": "down",
+      "sight": 0,
+      "warden": true,
+      "final": true,
+      "badge": "Prime Key",
+      "team": [
+        { "key": "FW-Li1Vo2", "level": 28 },
+        { "key": "AE-Me2Sp1Si1", "level": 28 },
+        { "key": "WW-Ti1Fr1Mi1", "level": 29 },
+        { "key": "FF-Em1Pl1As1", "level": 29 },
+        { "key": "AA-Sp1Ga1Ec1", "level": 30 },
+        { "key": "EW-Li1Vo2Tm1", "level": 31 }
+      ],
+      "intro": "I baked every merge this world will ever know: {merges} of them. Each one waiting. Let's see how many you found.",
+      "outro": "You didn't just find merges. You understood them. The lattice is yours now."
+    }
+  ],
+  "npcs": [
+    {
+      "id": "guide",
+      "name": "Archivist Lo",
+      "x": 27,
+      "y": 22,
+      "facing": "down",
+      "lines": [
+        "Every thing in this world is a merge: a lead essence, a second essence, and up to three sub-essences bound to either one.",
+        "Every combination already exists, baked into the lattice. You just have to find them. Compose a merge in battle and you'll learn what it does.",
+        "Sub-essences like Light, Void, Signal and Time change depending on which main you bind them to. Try the same sub on each host.",
+        "The terminal on the left heals your daemons. The Forge on the right merges motes into items. Tap Menu to check your Codex."
+      ]
+    },
+    {
+      "id": "tech",
+      "name": "Tech Ira",
+      "x": 32,
+      "y": 25,
+      "facing": "left",
+      "lines": [
+        "Casting a merge leaves residue in the arena. Cast a different essence into enough residue and they react: Steam Burst, Quench, Mudslide...",
+        "Unstable merges can backfire or mutate into a neighboring merge. High Coherence daemons keep them together.",
+        "When two particular sub-essences meet in one merge they resonate. Three can form a Trinity. Nobody has found them all."
+      ]
+    }
+  ],
+  "rooms": [
+    {
+      "zone": "air",
+      "x": 3,
+      "y": 3,
+      "rows": [
+        "##################",
+        "#W.,,,,..*...,,,,#",
+        "#...,,,..*..,,,,,#",
+        "#**.....a....,,,.#",
+        "#,,,,.......**...#",
+        "#,,,,..**.......b#",
+        "#.,,,..**..,,,...#",
+        "#......,,,,,,,..*#",
+        "#.c....,,,,,,,...#",
+        "#**.............*#",
+        "#,,,..H....,,,,,,#",
+        "#,,,,.......,,,,,#",
+        "#########..#######"
+      ]
+    },
+    {
+      "zone": "fire",
+      "x": 39,
+      "y": 3,
+      "rows": [
+        "##################",
+        "#,,,...^^^...,,,W#",
+        "#,,,...^^^...,,,.#",
+        "#......a.........#",
+        "#^^..,,,,,,..^^..#",
+        "#^^..,,,,,,..^^.b#",
+        "#....,,,,,,......#",
+        "#.c..........,,,.#",
+        "#^^^.....^^..,,,.#",
+        "#,,,.....^^......#",
+        "#,,,..H..........#",
+        "#,,,.............#",
+        "########..########"
+      ]
+    },
+    {
+      "zone": "water",
+      "x": 39,
+      "y": 30,
+      "rows": [
+        "########..########",
+        "#.....H..........#",
+        "#,,,.........,,,.#",
+        "#,,,..~~~~..,,,,.#",
+        "#.a...~~~~..,,,,.#",
+        "#.....~~~~.......#",
+        "#,,,,.......~~~..#",
+        "#,,,,..b....~~~..#",
+        "#~~.....,,,,.....#",
+        "#~~.....,,,,..c..#",
+        "#...,,,.,,,,.....#",
+        "#...,,,.......~~W#",
+        "##################"
+      ]
+    },
+    {
+      "zone": "earth",
+      "x": 3,
+      "y": 30,
+      "rows": [
+        "#########..#######",
+        "#......H.........#",
+        "#.,,,,.....,,,,..#",
+        "#.,,,,..oo.,,,,..#",
+        "#.......oo....a..#",
+        "#oo..,,,,,,......#",
+        "#oo..,,,,,,..oo..#",
+        "#..b.........oo..#",
+        "#.....,,,,,......#",
+        "#.oo..,,,,,..c...#",
+        "#.oo.........,,,.#",
+        "#W.....,,,,..,,,.#",
+        "##################"
+      ]
+    },
+    {
+      "zone": "core",
+      "x": 25,
+      "y": 4,
+      "rows": [
+        "##########",
+        "#...A....#",
+        "#........#",
+        "#.x....x.#",
+        "#........#",
+        "#.x....x.#",
+        "#R.......#",
+        "#........#",
+        "####..####"
+      ]
+    }
+  ],
+  "text": {
+    "tutorial": [
+      "{daemon}, a fine first daemon. It already knows its four basic merges.",
+      "Walk into static, the flickering tiles, to meet wild daemons. Weaken one, then tap Bind to capture it.",
+      "Head west to the Cirrus Array when you're ready. Its Warden holds the first key. Your Requests tab always has something to chase."
+    ]
+  }
+}

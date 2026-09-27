@@ -15,7 +15,9 @@
   const TIER = ['Seed', 'Build', 'Release', 'Prime'];
   const ALL_KEYS = E.enumerateAll(); // the database holds exactly these, in this order
   const BY_TIER = [0, 1, 2, 3].map(t => ALL_KEYS.filter(k => E.parseKey(k).subs.length === t));
-  const pairTotal = pk => (pk[0] === pk[1] ? 64 : 470);
+  const PAIR_TOTAL = {};
+  for (const k of ALL_KEYS) PAIR_TOTAL[k.slice(0, 2)] = (PAIR_TOTAL[k.slice(0, 2)] || 0) + 1;
+  const pairTotal = pk => PAIR_TOTAL[pk] || 0;
 
   // ------------------------------------------------------------------ state
   let S = null;
@@ -191,7 +193,8 @@
   }
 
   // Party-wide trait utilities (daemons in storage don't count), capped per trait.
-  const TRAIT_CAP = { forage: 80, tutor: 50, binder: 40, smith: 60, nurture: 70, mender: 12, fortune: 200, archive: 80, lure: 60, shroud: 60 };
+  const TRAIT_CAP = {};
+  for (const t of E.data.traits.traits) if (t.cap != null) TRAIT_CAP[t.code] = t.cap;
   function partyTrait(code) {
     if (!S) return 0;
     let v = 0;
@@ -299,7 +302,7 @@
       if (m > S.milestone) {
         S.milestone = m;
         const rw = { lattices: 2, motes: {} };
-        for (let i = 0; i < 3; i++) { const s = E.SUB_ORDER[rnd(16)]; rw.motes[s] = (rw.motes[s] || 0) + 1; }
+        for (let i = 0; i < 3; i++) { const s = E.SUB_ORDER[rnd(E.SUB_ORDER.length)]; rw.motes[s] = (rw.motes[s] || 0) + 1; }
         grant(rw);
         toast(`★ Codex milestone: ${m * 50} merges! Reward: ${rewardText(rw)}`, 'quest', 5500);
       }
@@ -323,8 +326,8 @@
   function makeReward() {
     const roll = rnd(4);
     if (roll === 0) return { lattices: 3 };
-    if (roll === 1) { const a = E.SUB_ORDER[rnd(16)], b = E.SUB_ORDER[rnd(16)]; const m = {}; m[a] = 2; m[b] = (m[b] || 0) + 2; return { motes: m }; }
-    if (roll === 2) { const m = {}; m[E.MAINS[rnd(4)]] = 6; return { motes: m }; }
+    if (roll === 1) { const a = E.SUB_ORDER[rnd(E.SUB_ORDER.length)], b = E.SUB_ORDER[rnd(E.SUB_ORDER.length)]; const m = {}; m[a] = 2; m[b] = (m[b] || 0) + 2; return { motes: m }; }
+    if (roll === 2) { const m = {}; m[E.MAINS[rnd(E.MAINS.length)]] = 6; return { motes: m }; }
     return { cells: 1, lattices: 1 };
   }
   function makeQuest(type) {
@@ -1176,7 +1179,8 @@
     me.classList.remove('cast');
   }
 
-  const STATUS_COL = { burn: '#ff7a2e', frozen: '#bff3ff', static: '#ffe23d', rooted: '#5fbf4a', corrupt: '#9b4dff', dormant: '#9aa6c8', soak: '#3aa6ff', petrify: '#c9913d' };
+  const STATUS_COL = {}; // statuses, then effects with their own flash (soak, petrify)
+  for (const x of E.data.battle.statuses.concat(E.data.battle.effects)) if (x.color) STATUS_COL[x.id || x.code] = x.color;
 
   // ---- ticker
   function print(text) {
@@ -1332,7 +1336,8 @@
   }
   const defaultAttack = () => { const d = B.act(0); return d.memory.find(k => k && ENG.isAttack(k)) || null; };
   function kindBadge(k) { return ENG.isAttack(k) ? '<span class="kb atk">Attack · auto-repeats</span>' : `<span class="kb act">Active · ${ENG.cooldownFor(ENG.rec(k))}s CD</span>`; }
-  const CLASS_ICON = { Strike: '⚔', Barrage: '⁂', Siphon: '☍', Hex: '✴', Ward: '⛨', Mend: '✚', Field: '◎' };
+  const CLASS_ICON = {};
+  for (const c of E.data.battle.classes) CLASS_ICON[c.id] = c.icon;
 
   function hotTile(k, i) {
     const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k), atk = ENG.isAttack(k);
@@ -1411,7 +1416,8 @@
 
   const isAtk = k => !!k && ENG.isAttack(k);
   // Buff / debuff icons with live timers, drawn under each card.
-  const STATUS_ICO = { burn: '♨', frozen: '❄', static: 'ϟ', rooted: '⚘', corrupt: '☣', dormant: 'z' };
+  const STATUS_ICO = {};
+  for (const st of E.data.battle.statuses) STATUS_ICO[st.id] = st.icon;
   function renderBuffs(i) {
     const el = $('buffs' + i); if (!el) return;
     const v = B.sides[i].v, P = ENG.PULSE, pulseLeft = B.rt ? B.rt[i].pulse : P;
@@ -1663,11 +1669,11 @@
   async function riftCleared(n) {
     S.rift.best = Math.max(S.rift.best, n);
     const rw = { motes: {} };
-    for (let i = 0; i < 2 + Math.floor(n / 2); i++) { const k = rnd(3) ? E.SUB_ORDER[rnd(16)] : E.MAINS[rnd(4)]; rw.motes[k] = (rw.motes[k] || 0) + 1; }
+    for (let i = 0; i < 2 + Math.floor(n / 2); i++) { const k = rnd(3) ? E.SUB_ORDER[rnd(E.SUB_ORDER.length)] : E.MAINS[rnd(E.MAINS.length)]; rw.motes[k] = (rw.motes[k] || 0) + 1; }
     let script = '';
     if (n % 5 === 0) {
       rw.lattices = 2;
-      const s = E.SUB_ORDER[rnd(16)], id = 'script:rift-' + s;
+      const s = E.SUB_ORDER[rnd(E.SUB_ORDER.length)], id = 'script:rift-' + s;
       if (S.bag[id]) S.bag[id].count++; else S.bag[id] = { id, kind: 'script', name: `${E.SUB[s].name} Attune Script`, subs: [s], count: 1 };
       script = `, and a ${E.SUB[s].name} Attune Script`;
     }
@@ -2140,7 +2146,8 @@
     if (it.power) it.power = +(it.power + 0.05 * d.tier).toFixed(2);
     return it;
   }
-  const KIND_NAME = { patch: 'Patch', ward: 'Module', lattice: 'Lattice', catalyst: 'Catalyst', script: 'Script', cell: 'Flux Cell' };
+  const KIND_NAME = {};
+  for (const [k, [name]] of Object.entries(DZ.ITEM_TYPES)) KIND_NAME[k] = name;
   function sheetForge(body) {
     const have = S.motes;
     const subs = E.SUB_ORDER.filter(s => (have[s] || 0) > 0);
@@ -2362,7 +2369,7 @@
       $('starter').classList.add('hidden');
       enterWorld();
       mode = 'busy'; setPad(false);
-      await say('Archivist Lo', [`${ENG.rec(st.key).dName}, a fine first daemon. It already knows its four basic merges.`, 'Walk into static, the flickering tiles, to meet wild daemons. Weaken one, then tap Bind to capture it.', 'Head west to the Cirrus Array when you\'re ready. Its Warden holds the first key. Your Requests tab always has something to chase.']);
+      await say('Archivist Lo', C.TEXT.tutorial.map(l => l.replace(/\{daemon\}/g, ENG.rec(st.key).dName)));
       await celebrateTrait(S.party[0], null, true);
       mode = 'world'; setPad(true); save();
     }; });
@@ -2409,7 +2416,7 @@
     if (E.MAIN[c]) {
       const m = E.MAIN[c], pv = ENG.PASSIVES[c];
       const weak = E.MAINS.find(x => E.BEATS[x] === c);
-      let h = `<div class="th" style="color:${m.color}">${m.name}</div>` + row('Strong against', E.MAIN[E.BEATS[c]].name) + row('Weak to', E.MAIN[weak].name) + row('Merging with', `${E.MAIN[E.OPPOSITE[c]].name} is volatile`);
+      let h = `<div class="th" style="color:${m.color}">${m.name}</div>` + row('Strong against', E.MAIN[E.BEATS[c]].name) + row('Weak to', E.MAIN[weak].name) + (E.OPPOSITE[c] ? row('Merging with', `${E.MAIN[E.OPPOSITE[c]].name} is volatile`) : '');
       if (!full) return h;
       h += row('Passive (no subs)', `${pv[0]}: ${esc(pv[1])}`);
       h += `<div class="tr"><span>Reactions</span><b>${E.MAINS.map(o => { const rx = E.REACTION[E.pairId(c, o)]; return `${rx.names[c] || rx.names[o]}`; }).join(', ')}</b></div>`;
@@ -2428,7 +2435,8 @@
     h += row('Resonances', res.map(r => (found.has(r.name) ? r.name : '???')).join(', '));
     return h;
   }
-  const STATUS_TXT = { burn: 'Loses 1/16 HP each turn and deals 15% less damage. Fire leads are immune.', frozen: 'Can\'t act for 1–2 turns. Thawed by Fire-led hits. Water leads are immune.', static: '25% chance to lock up each turn and Clock ×0.75. Earth leads are immune.', rooted: 'Can\'t switch or run; loses 1/16 HP to the foe each turn. Air leads are immune.', corrupt: 'Loses 3 Flux per turn and merges are 15% more unstable.', dormant: 'Can\'t act until hit, up to 3 turns.' };
+  const STATUS_TXT = {};
+  for (const st of E.data.battle.statuses) STATUS_TXT[st.id] = st.text;
   function tipSide(i, full) {
     if (!B) return '';
     const d = B.act(i), r = ENG.rec(d.key), pv = ENG.PASSIVES[r.dPassive], v = B.sides[i].v;
@@ -2524,10 +2532,11 @@
   // The title is up while the merge database streams in; the buttons wait for it.
   function openDatabase() {
     $('newBtn').disabled = $('contBtn').disabled = true;
+    if ($('subCount')) $('subCount').textContent = C.numberWords(E.SUB_ORDER.length);
     DB.open({ onProgress: (n, of) => { $('bakeInfo').textContent = `Loading the merge database… ${n}/${of}`; $('dbBar').style.width = (of ? n / of * 100 : 0) + '%'; } }).then(() => {
       $('newBtn').disabled = $('contBtn').disabled = false;
       $('dbBar').parentNode.classList.add('done');
-      $('bakeInfo').textContent = `${DB.count.toLocaleString()} merges pre-baked · 4 main essences · 16 sub-essences · ${E.RESONANCE.length} resonances · ${E.TRINITY.length} trinities`;
+      $('bakeInfo').textContent = `${DB.count.toLocaleString()} merges pre-baked · ${E.MAINS.length} main essences · ${E.SUB_ORDER.length} sub-essences · ${E.RESONANCE.length} resonances · ${E.TRINITY.length} trinities`;
     }, err => {
       console.error(err);
       $('bakeInfo').innerHTML = 'The merge database could not be loaded. <button class="btn small" id="dbRetry">Retry</button>';
