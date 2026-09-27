@@ -103,6 +103,42 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
     seenPairs.set(pair, k);
   }
   console.log(`ok: ${seenPairs.size} bridge requests map 1:1 onto merges and forms`);
+
+  // Bridge-designed abilities: random items must always map to sane mechanics the engine can run.
+  const rng = mulberry(99);
+  const words = BR.TYPES.concat(BR.EFFECT_WORDS, ['sword', 'storm', 'heal', 'shield', 'curse', 'drain', 'aura', 'barrage', 'rage', 'nothing']);
+  const rar = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', undefined];
+  for (const k of all) {
+    const tags = Array.from({ length: Math.floor(rng() * 6) }, () => words[Math.floor(rng() * words.length)]);
+    const stats = {}; for (const s of ['attack', 'defense', 'special', 'speed', 'weird']) if (rng() < 0.7) stats[s] = Math.floor(rng() * 200);
+    const r = ENG.rec(k);
+    const ab = BR.abilityFrom({ name: 'X ' + tags.join(' '), description: tags.slice(1).join(' '), rarity: rar[Math.floor(rng() * rar.length)], stats, tags }, r);
+    assert(E.CLASSES[ab.cls], k + ' bridge class');
+    assert(ab.power >= 0 && ab.power <= 160 && ab.hits >= 1 && ab.hits <= 5, k + ' bridge power');
+    assert(ab.acc >= 55 && ab.acc <= 101 && ab.flux >= 3 && ab.flux <= 30 && ab.instab >= 0 && ab.instab <= 65, k + ' bridge numbers');
+    for (const f of ab.fx) assert(E.EFFECTS[f.code] && f.chance >= 1 && f.chance <= 100, k + ' bridge fx ' + f.code);
+    if (['Ward', 'Mend'].includes(ab.cls)) assert(ab.power === 0);
+    Object.assign(r, ab, { damaging: ab.power > 0, self: ab.cls === 'Mend' || ab.cls === 'Ward' });
+  }
+  let rtOk = 0;
+  for (let seed = 1; seed <= 80; seed++) {
+    const rg = mulberry(seed * 13);
+    const team = n => Array.from({ length: n }, () => ENG.createDaemon(all[Math.floor(rg() * all.length)], 5 + Math.floor(rg() * 40), { rng: rg }));
+    const b = new ENG.Battle({ player: team(2), enemy: team(2), wild: false, trainer: { name: 'T' }, rng: rg });
+    b.startRealtime();
+    let t = 0;
+    while (!b.over && t < 400) {
+      if (b.needSwitch) { b.forceSwitch(b.sides[0].team.findIndex(d => d.hp > 0)); continue; }
+      const d = b.act(0);
+      b.rt[0].queued = d.memory.find(k => k && ENG.isAttack(k)) || null;
+      for (const k of d.memory) if (k && !ENG.isAttack(k)) b.useActive(k);
+      if (!b.rt[0].queued && b.rt[0].gcd <= 0) b.useUtility({ type: 'defrag' });
+      b.tick(0.1); t += 0.1;
+    }
+    if (b.over) rtOk++;
+  }
+  assert(rtOk >= 70, 'bridge-designed battles stalled: ' + rtOk);
+  console.log(`ok: ${all.length} fuzzed bridge designs map to valid abilities; ${rtOk}/80 real-time battles on them finished`);
 }
 
 // 6. Map: every room row is well-formed and every NPC, terminal and gate is reachable from spawn

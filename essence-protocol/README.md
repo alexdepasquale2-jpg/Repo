@@ -87,7 +87,7 @@ Every third cast of the same attack in a row is a **COMBO** (×1.6). Each trigge
 
 ## FriedrichBridge (AI-named merges)
 
-Battle mechanics always come from the baked table. When [FriedrichBridge](CLAUDE.md) is running on your PC, it names and describes each merge and daemon form the first time you meet it: technique names, form names, descriptions, rarity and tags. Results are cached in the browser. Without the bridge, the game uses the baked names. See `CLAUDE.md` for the contract and the id scheme.
+When [FriedrichBridge](CLAUDE.md) is running on your PC, it **designs every spell and ability**: the bridge's item for a merge decides its name, description, class, power, hits, Flux cost, accuracy, instability and effects. It also names daemon forms. Element typing, base stats and passives stay tied to the essences. Designs are cached in the browser. Without the bridge, the game uses the baked lattice. See `CLAUDE.md` for the contract and the id scheme.
 
 ```
 start_bridge.bat                         (FriedrichBridge on 127.0.0.1:8765, with Ollama running)

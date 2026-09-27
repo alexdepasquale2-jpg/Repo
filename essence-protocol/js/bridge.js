@@ -56,13 +56,126 @@
         `The name should be one invented word of 2 to 4 syllables, like a creature species.`;
     } else {
       const fx = rec.fx.map(f => f.code).join(', ');
-      context = `Essence Protocol, a creature RPG where daemons (artificial minds) merge essences into techniques. ` +
-        `This merge is a ${rec.cls} technique. The two mains react as "${rx.names[p.a]}"${rx.volatile ? ' (volatile)' : ''}. ` +
-        `Power ${rec.power}${rec.hits > 1 ? ' x' + rec.hits : ''}, effects: ${fx || 'none'}${rec.tags.length ? ', resonance: ' + rec.tags.join(', ') : ''}. ` +
-        `Name the TECHNIQUE in 2 to 4 words and describe what it looks like when cast, in one or two sentences.`;
+      context = `Essence Protocol, a creature RPG where daemons (artificial minds) merge essences into combat techniques. ` +
+        `Design the TECHNIQUE created by merging these. The two mains react as "${rx.names[p.a]}"${rx.volatile ? ' (volatile, so risky and powerful)' : ''}. ` +
+        `Name it in 2 to 4 words and describe what it does when cast in one or two sentences. ` +
+        `In tags, include exactly one type from [${TYPES.join(', ')}] and any effects from [${EFFECT_WORDS.join(', ')}]. ` +
+        `Use stats attack (damage), defense (shielding/healing strength), special (effect strength) and speed. Higher rarity means a stronger, riskier technique. ` +
+        `For reference, the lattice's own reading is a ${rec.cls} with effects: ${fx || 'none'}.`;
     }
     return { a, b, context: context.slice(0, 4000) };
   }
+  // ---- bridge item -> ability mechanics (pure, deterministic) ----
+  const TYPES = ['strike', 'barrage', 'siphon', 'hex', 'ward', 'mend', 'field'];
+  const CLASS_OF = { strike: 'Strike', barrage: 'Barrage', siphon: 'Siphon', hex: 'Hex', ward: 'Ward', mend: 'Mend', field: 'Field' };
+  const CLASS_WORDS = {
+    Strike: ['strike', 'blade', 'sword', 'lance', 'slash', 'spear', 'fang', 'punch', 'smash', 'hammer', 'bolt', 'edge', 'cleave', 'impale'],
+    Barrage: ['barrage', 'volley', 'swarm', 'rain', 'hail', 'shards', 'flurry', 'salvo', 'scatter', 'multi', 'storm', 'torrent'],
+    Siphon: ['siphon', 'drain', 'leech', 'vampir', 'absorb', 'devour', 'steal', 'feast'],
+    Hex: ['hex', 'curse', 'poison', 'venom', 'stun', 'slow', 'fear', 'bind', 'snare', 'toxic', 'jinx', 'debuff'],
+    Ward: ['ward', 'shield', 'barrier', 'armor', 'armour', 'guard', 'wall', 'aegis', 'protect', 'deflect'],
+    Mend: ['mend', 'heal', 'restore', 'regen', 'cure', 'repair', 'renew', 'soothe', 'recover'],
+    Field: ['field', 'aura', 'zone', 'domain', 'weather', 'terrain', 'realm', 'area', 'surround'],
+  };
+  const EFFECT_MAP = {
+    burn: ['burn', 'fire', 'flame', 'blaze', 'ember', 'scorch', 'magma', 'lava', 'inferno'],
+    freeze: ['freeze', 'frozen', 'ice', 'frost', 'glacial', 'cryo'],
+    chill: ['chill', 'cold', 'slow', 'sluggish'],
+    static: ['static', 'shock', 'lightning', 'spark', 'thunder', 'electric', 'paraly', 'stun'],
+    root: ['root', 'vine', 'entangle', 'thorn', 'snare', 'bind'],
+    corrupt: ['corrupt', 'poison', 'venom', 'void', 'shadow', 'toxic', 'decay', 'rot'],
+    lullaby: ['sleep', 'dream', 'lullaby', 'dormant', 'trance'],
+    blind: ['blind', 'smoke', 'ash', 'dazzle', 'glare', 'fog'],
+    soak: ['soak', 'wet', 'drench', 'water', 'tide', 'flood'],
+    petrify: ['petrify', 'stone', 'fossil', 'calcify'],
+    pierce: ['pierce', 'piercing', 'penetrat', 'armor-break', 'sunder'],
+    crit: ['crit', 'precise', 'sharp', 'lethal', 'keen', 'assassin'],
+    echo: ['echo', 'resonat', 'reverb', 'sound', 'repeat'],
+    delay: ['delay', 'time', 'delayed', 'temporal', 'chrono'],
+    drain: ['drain', 'leech', 'lifesteal', 'vampir', 'siphon'],
+    heal: ['heal', 'restore', 'mend', 'cure'],
+    shield: ['shield', 'barrier', 'ward', 'protect'],
+    guard: ['guard', 'fortify', 'harden', 'armor'],
+    overclock: ['overclock', 'empower', 'strength', 'rage', 'boost'],
+    haste: ['haste', 'speed', 'swift', 'quick', 'wind', 'gale'],
+    veil: ['veil', 'evasion', 'mist', 'invisible', 'phase'],
+    regen: ['regen', 'regenerat', 'renew', 'bloom'],
+    wash: ['wash', 'dispel', 'cleanse-foe', 'purge-foe'],
+    cleanse: ['cleanse', 'purify', 'purge'],
+    priority: ['priority', 'first-strike', 'instant', 'quickdraw'],
+  };
+  const EFFECT_WORDS = Object.keys(EFFECT_MAP).concat(['recoil']);
+  const SELF = new Set(['heal', 'cleanse', 'shield', 'guard', 'overclock', 'haste', 'veil', 'regen']);
+  const RARITY_TIER = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 };
+  const lc = x => String(x || '').toLowerCase();
+  // Word-prefix matching ("burning" matches "burn"; "barrage" does not match "rage").
+  const tokens = text => text.split(/[^a-z0-9-]+/).filter(Boolean);
+  const hasWord = (toks, words) => words.some(w => toks.some(t => t.startsWith(w)));
+  function statOf(stats, keys) { let v = 0; for (const [k, n] of Object.entries(stats || {})) if (typeof n === 'number' && isFinite(n) && keys.some(w => lc(k).includes(w))) v += Math.max(0, n); return v; }
+  const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+  // Turns a bridge item into the ability mechanics the engine understands.
+  // `baked` is the lattice record for the same merge; its element typing and
+  // anything the item doesn't speak to are kept.
+  function abilityFrom(entry, baked) {
+    const tags = (entry.tags || []).map(lc);
+    const text = tokens([lc(entry.name), lc(entry.description)].concat(tags).join(' '));
+    const tier = RARITY_TIER[lc(entry.rarity)] != null ? RARITY_TIER[lc(entry.rarity)] : 1;
+    // class: an explicit type tag wins, then keywords in name/description/tags, then the lattice's own class
+    let cls = null;
+    for (const t of tags) if (CLASS_OF[t]) { cls = CLASS_OF[t]; break; }
+    if (!cls) {
+      let best = 0;
+      for (const [c, words] of Object.entries(CLASS_WORDS)) { const n = words.filter(w => text.some(t => t.startsWith(w))).length; if (n > best) { best = n; cls = c; } }
+    }
+    cls = cls || baked.cls;
+    const atk = statOf(entry.stats, ['attack', 'atk', 'power', 'damage', 'offen', 'strength', 'magic', 'might']);
+    const def = statOf(entry.stats, ['defen', 'def', 'armor', 'armour', 'guard', 'resist', 'toughness', 'heal']);
+    const spc = statOf(entry.stats, ['special', 'spell', 'effect', 'mana', 'intellig', 'wisdom', 'control']);
+    const spd = statOf(entry.stats, ['speed', 'agility', 'haste', 'quick']);
+    const total = atk + def + spc + spd || 1;
+    const aS = atk / total, dS = def / total, sS = spc / total, vS = spd / total;
+    const damaging = !['Ward', 'Mend'].includes(cls);
+    const base = [60, 75, 90, 108, 130][tier];
+    let power = 0, hits = 1;
+    if (damaging) {
+      power = base * (0.6 + aS * 1.1);
+      if (cls === 'Barrage') { hits = clampN(2 + Math.floor(tier / 2) + (vS > 0.25 ? 1 : 0), 2, 5); power = power * 1.15 / hits; }
+      else if (cls === 'Siphon') power *= 0.85;
+      else if (cls === 'Hex') power *= 0.4;
+      else if (cls === 'Field') power *= 0.5;
+      power = clampN(Math.round(power / 5) * 5, 15, 160);
+    }
+    const acc = ['Ward', 'Mend'].includes(cls) ? 101 : clampN(Math.round((96 - tier * 3 + vS * 10) / 5) * 5, 60, 100);
+    const flux = clampN(Math.round(4 + tier * 3 + (damaging ? power * hits / 30 : 4) + ((baked.subs || []).length)), 3, 30);
+    const instab = clampN(Math.round(3 + tier * 5 + (baked.instab || 0) * 0.3 - vS * 10), 0, 60);
+    const prio = hasWord(text, EFFECT_MAP.priority) || vS > 0.4 ? 1 : (aS > 0.6 && vS < 0.05 ? -1 : 0);
+    // effects: every effect word the item uses, with strength from rarity and its special stat
+    const fx = [];
+    const chance = clampN(Math.round(25 + tier * 10 + sS * 40 + (cls === 'Hex' ? 25 : 0)), 10, 100);
+    for (const [code, words] of Object.entries(EFFECT_MAP)) {
+      if (code === 'priority') continue;
+      if (!hasWord(text, words)) continue;
+      if (!damaging && !SELF.has(code)) continue;
+      if (['pierce', 'crit'].includes(code)) fx.push({ code, chance: 100, mag: 1 });
+      else if (code === 'drain') fx.push({ code, chance: 100, mag: clampN(Math.round(35 + tier * 8 + dS * 20), 30, 85) });
+      else if (code === 'heal') fx.push({ code, chance: 100, mag: clampN(Math.round(20 + tier * 8 + dS * 30), 15, 75) });
+      else if (code === 'shield') fx.push({ code, chance: 100, mag: clampN(Math.round(15 + tier * 6 + dS * 30), 12, 60) });
+      else if (code === 'regen') fx.push({ code, chance: 100, mag: 5 + tier });
+      else if (code === 'delay' || code === 'echo') fx.push({ code, chance: chance, mag: 50 + tier * 5 });
+      else fx.push({ code, chance: SELF.has(code) ? clampN(chance + 20, 10, 100) : chance, mag: 0 });
+    }
+    // every class keeps its core so a sparse item still does something
+    const has = c => fx.some(f => f.code === c);
+    if (cls === 'Siphon' && !has('drain')) fx.push({ code: 'drain', chance: 100, mag: clampN(Math.round(35 + tier * 8), 30, 85) });
+    if (cls === 'Mend' && !has('heal')) fx.push({ code: 'heal', chance: 100, mag: clampN(Math.round(25 + tier * 8 + dS * 30), 15, 75) });
+    if (cls === 'Ward' && !has('shield')) fx.push({ code: 'shield', chance: 100, mag: clampN(Math.round(18 + tier * 6 + dS * 30), 12, 60) });
+    if (cls === 'Hex' && !fx.some(f => !SELF.has(f.code) && !['pierce', 'crit', 'drain', 'delay', 'echo'].includes(f.code))) fx.push({ code: (baked.fx.find(f => ['burn', 'freeze', 'static', 'root', 'corrupt', 'blind', 'chill', 'soak'].includes(f.code)) || { code: 'chill' }).code, chance: clampN(chance + 20, 10, 100), mag: 0 });
+    if (tier >= 3 && damaging && (baked.fx || []).some(f => f.code === 'recoil')) fx.push({ code: 'recoil', chance: 100, mag: 15 });
+    fx.sort((x, y) => y.chance - x.chance || (x.code < y.code ? -1 : 1));
+    return { cls, power, hits, acc, flux, instab, prio, fx: fx.slice(0, 7), tier };
+  }
+
   function validIds(req) { return ID_RE.test(req.a.id) && ID_RE.test(req.b.id); }
 
   // ---- browser client ----
@@ -180,7 +293,7 @@
   if (typeof window !== 'undefined') loadLocal();
 
   return {
-    request, validIds, ID_RE,
+    request, validIds, ID_RE, abilityFrom, TYPES, EFFECT_WORDS,
     health, flavor, cached, allCached, clearCache, pending, recipes, on, setConf,
     get conf() { return Object.assign({}, conf); }, get status() { return status; },
   };

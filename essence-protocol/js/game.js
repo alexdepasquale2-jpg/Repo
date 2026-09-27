@@ -123,14 +123,23 @@
   const countPair = pk => { let n = 0; for (const k of discovered) if (k[0] === pk[0] && k[1] === pk[1]) n++; return n; };
 
   // ---- FriedrichBridge flavors (names/descriptions); numbers stay baked
+  const MECH = ['cls', 'power', 'hits', 'acc', 'flux', 'instab', 'prio', 'fx', 'damaging', 'self'];
   function applyFlavor(kind, key, entry) {
     const r = ENG.rec(key); if (!r || !entry) return;
-    if (!r.baked) r.baked = { name: r.name, text: r.text, dName: r.dName };
-    if (kind === 'tech') { r.name = entry.name; r.text = entry.description || r.baked.text; r.bridge = entry; }
+    if (!r.baked) { r.baked = { name: r.name, text: r.text, dName: r.dName }; for (const f of MECH) r.baked[f] = r[f]; }
+    if (kind === 'tech') {
+      r.name = entry.name; r.text = entry.description || r.baked.text; r.bridge = entry;
+      // The bridge's item replaces the ability itself; element typing stays with the essences.
+      const base = Object.assign({}, r, r.baked);
+      const ab = BR.abilityFrom(entry, base);
+      Object.assign(r, { cls: ab.cls, power: ab.power, hits: ab.hits, acc: ab.acc, flux: ab.flux, instab: ab.instab, prio: ab.prio, fx: ab.fx });
+      r.damaging = r.power > 0; r.self = r.cls === 'Mend' || r.cls === 'Ward';
+      r.bridgeTier = ab.tier;
+    }
     else { r.dName = entry.name; r.dDesc = entry.description; r.dBridge = entry; }
   }
   function restoreBaked() {
-    for (const k of ALL_KEYS) { const r = ENG.rec(k); if (r.baked) { r.name = r.baked.name; r.text = r.baked.text; r.dName = r.baked.dName; delete r.bridge; delete r.dBridge; delete r.dDesc; } }
+    for (const k of ALL_KEYS) { const r = ENG.rec(k); if (r.baked) { r.name = r.baked.name; r.text = r.baked.text; r.dName = r.baked.dName; for (const f of MECH) r[f] = r.baked[f]; delete r.bridge; delete r.dBridge; delete r.dDesc; delete r.bridgeTier; } }
   }
   const bridgeOn = () => !!(BR && S && S.settings.bridge);
   function flavorOf(key, kind) {
@@ -143,7 +152,7 @@
     BR.on(ev => {
       if (ev.type === 'flavor' && bridgeOn()) {
         applyFlavor(ev.kind, ev.key, ev.entry);
-        if (ev.fresh && (ev.kind === 'tech' ? discovered.has(ev.key) : seen.has(ev.key))) toast(`✦ FriedrichBridge named ${ev.kind === 'tech' ? 'a merge' : 'a form'}: <b>${esc(ev.entry.name)}</b>${ev.entry.rarity ? ` <span class="rar r2">${esc(ev.entry.rarity)}</span>` : ''}`, 'rare');
+        if (ev.fresh && (ev.kind === 'tech' ? discovered.has(ev.key) : seen.has(ev.key))) toast(`✦ FriedrichBridge ${ev.kind === 'tech' ? `designed <b>${esc(ev.entry.name)}</b> · ${ENG.rec(ev.key).cls}` : `named a form: <b>${esc(ev.entry.name)}</b>`}${ev.entry.rarity ? ` <span class="rar r2">${esc(ev.entry.rarity)}</span>` : ''}`, 'rare');
         if (mode === 'battle' && B && !B.over && $('bpanel').classList.contains('hidden')) { buildControls(); if (ui) { ui[0].name = dName(B.act(0)); ui[1].name = dName(B.act(1)); renderCards(); } }
         if (mode === 'sheet' && sheetTab === 'system') renderSheet();
       } else if (ev.type === 'status' && mode === 'sheet' && sheetTab === 'system') renderSheet();
@@ -1914,16 +1923,19 @@
     const st = BR.status, conf = BR.conf, n = Object.keys(BR.allCached()).length;
     const col = { online: 'good', offline: 'bad', error: 'bad', unknown: 'inf' }[st.state];
     const missing = [...discovered].filter(k => !BR.cached(k, 'tech')).length;
-    return `<p class="fine">Battle numbers always come from the baked lattice. When FriedrichBridge is reachable, it names and describes merges and daemon forms the first time you meet them, and those names are cached here. Run the game with <b>tools/serve.py</b> so requests go through the local proxy (the API key stays on your PC).</p>
+    const total = ALL_KEYS.length, designed = ALL_KEYS.filter(k => BR.cached(k, 'tech')).length;
+    return `<p class="fine">FriedrichBridge designs every spell and ability: its item for a merge decides the name, description, type, power, hits, cost, accuracy, instability and effects. Only element typing stays tied to the essences. Each merge is designed the first time you meet it and cached here; the baked lattice is the fallback while the bridge is offline. Run the game with <b>tools/serve.py</b> so requests go through the local proxy (the API key stays on your PC).</p>
+      <div class="xpbar"><i style="width:${designed / total * 100}%"></i></div><p class="fine">${designed} / ${total} merges designed by the bridge</p>
       <div class="kv two"><span class="lab">Status</span><b><span class="st ${col}">${st.state}</span> ${esc(st.detail || '')}</b>
       <span class="lab">Endpoint</span><b>${esc(conf.url)}${conf.key ? ' · direct key set' : ' · via proxy'}</b>
       <span class="lab">Named locally</span><b>${n} (${missing} discovered merges still unnamed${BR.pending() ? `, ${BR.pending()} in progress` : ''})</b></div>
       <div class="btnrow gap">
-        <button class="btn ${S.settings.bridge ? 'pri' : ''}" data-br="toggle">${S.settings.bridge ? 'Bridge names: on' : 'Bridge names: off'}</button>
+        <button class="btn ${S.settings.bridge ? 'pri' : ''}" data-br="toggle">${S.settings.bridge ? 'Bridge designs: on' : 'Bridge designs: off'}</button>
         <button class="btn" data-br="test">Test connection</button>
-        <button class="btn" data-br="fill" ${missing ? '' : 'disabled'}>Name discovered merges</button>
+        <button class="btn" data-br="fill" ${missing ? '' : 'disabled'}>Design discovered merges</button>
+        <button class="btn" data-br="all">Design the whole lattice…</button>
         <button class="btn" data-br="conf">Endpoint…</button>
-        <button class="btn" data-br="clear">Forget local names</button>
+        <button class="btn" data-br="clear">Forget local designs</button>
       </div>`;
   }
   function wireBridgeSection(body) {
@@ -1932,7 +1944,15 @@
     q('toggle').onclick = () => { S.settings.bridge = !S.settings.bridge; if (!S.settings.bridge) restoreBaked(); else for (const [ck, en] of Object.entries(BR.allCached())) { const i = ck.indexOf(':'); if (M.table[ck.slice(i + 1)]) applyFlavor(ck.slice(0, i), ck.slice(i + 1), en); } save(); renderSheet(); };
     q('test').onclick = async () => { await BR.health(); renderSheet(); toast(`Bridge: ${BR.status.state}${BR.status.detail ? ' · ' + esc(BR.status.detail) : ''}`); };
     q('fill').onclick = async () => { await BR.health(); if (BR.status.state !== 'online') { renderSheet(); return toast('The bridge is not reachable.'); } for (const k of discovered) flavorOf(k, 'tech'); for (const k of seen) flavorOf(k, 'form'); toast('Asking FriedrichBridge to name your discoveries…'); renderSheet(); };
-    q('clear').onclick = async () => { if ((await choose('Forget local names?', 'Merges go back to their lattice names in this browser. The bridge keeps its own recipes.', ['Forget', 'Cancel'])) === 0) { BR.clearCache(); restoreBaked(); renderSheet(); } };
+    q('all').onclick = async () => {
+      await BR.health(); if (BR.status.state !== 'online') { renderSheet(); return toast('The bridge is not reachable.'); }
+      const left = ALL_KEYS.filter(k => !BR.cached(k, 'tech'));
+      if ((await choose('Design the whole lattice?', `Queues ${left.length} merges. At a few seconds each on a local model this takes hours, and it runs in the background while you play. Discovered merges go first.`, ['Start', 'Cancel'])) !== 0) return;
+      for (const k of discovered) flavorOf(k, 'tech');
+      for (const k of left) flavorOf(k, 'tech');
+      toast(`Queued ${left.length} merges for FriedrichBridge.`); renderSheet();
+    };
+    q('clear').onclick = async () => { if ((await choose('Forget local designs?', 'Merges go back to their lattice versions in this browser. The bridge keeps its own recipes, so asking again returns the same designs.', ['Forget', 'Cancel'])) === 0) { BR.clearCache(); restoreBaked(); renderSheet(); } };
     q('conf').onclick = async () => {
       const url = await askText('Bridge endpoint', 'Use /bridge with tools/serve.py (recommended). A direct URL like http://127.0.0.1:8765 also needs the key below, and the bridge must allow cross-origin requests.', BR.conf.url, 'Next');
       if (url === null) return;
@@ -2042,7 +2062,7 @@
     h += row('Forges into', esc(forgeItem(k).name));
     h += `<p>${esc(rx.line + ' ' + r.text)}</p>`;
     if (r.anomaly) h += `<p class="bad">∆ ${esc(E.ANOMALY[r.anomaly])}</p>`;
-    if (r.bridge) h += row('Named by', `FriedrichBridge${r.bridge.rarity ? ' · ' + esc(r.bridge.rarity) : ''}${r.bridge.tags && r.bridge.tags.length ? ' · ' + esc(r.bridge.tags.slice(0, 4).join(', ')) : ''}`) + row('Lattice name', esc(r.baked.name));
+    if (r.bridge) h += row('Designed by', `FriedrichBridge${r.bridge.rarity ? ' · ' + esc(r.bridge.rarity) : ''}${r.bridge.tags && r.bridge.tags.length ? ' · ' + esc(r.bridge.tags.slice(0, 4).join(', ')) : ''}`) + row('Lattice version', `${esc(r.baked.name)} · ${r.baked.cls}${r.baked.power ? ' ' + r.baked.power + (r.baked.hits > 1 ? '×' + r.baked.hits : '') : ''}`);
     h += `<p class="fine">${esc(E.CLASSES[r.cls])} As a daemon genome: ${seen.has(k) ? esc(r.dName) : 'unseen form'}.</p>`;
     return h;
   }
