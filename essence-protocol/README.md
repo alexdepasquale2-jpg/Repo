@@ -49,7 +49,25 @@ Battles run live on a clock instead of taking turns, and every ability is color-
 | **Passive** | gold | Always on. One per daemon, from its genome. |
 | **Utility** | cyan | Rest (14s cooldown, big Flux refill), Swap (uses the GCD, 4s cooldown), Items (6s shared cooldown), Bind, Run, Pause. |
 
+The battle HUD is an action bar. A cast bar shows your global cooldown, and a hotbar holds your four memory slots (red square tiles are attacks, violet round tiles are actives, with cooldown sweeps and key numbers 1–4). A gold passive diamond sits beside it, and a cyan utility row sits below. Buff and debuff icons with live timers sit under each card. **Auto** (or the A key) hands your daemon to the same AI the foes use; tapping any tile takes control back.
+
 Flux regenerates continuously, and statuses, regen, echoes and delayed hits tick every 2 seconds. The foe's card has a wind-up bar that shows when it will act next. Opening Compose, Items, Swap or Info pauses the fight. Keys: 1–4 use memory slots, Space pauses, R rests.
+
+### Signature mechanics
+
+On top of its baked stats, every ability class has a signature mechanic. These are tuned to feel big rather than perfectly balanced:
+
+| Class | Signature |
+|---|---|
+| Strike | **Stagger** pushes the foe's next action back (twice as far on a crit), and Strike crits hit ×2 |
+| Barrage | Each hit adds **Charge**; at 6, your next attack is an **OVERDRIVE** (×1.8, guaranteed crit) |
+| Siphon | **Theft** steals Flux on top of its drain |
+| Hex | **Curse** slows the foe (Clock −1, next action delayed), doubles status chances and extends them |
+| Ward | **Riposte** reflects 35% of what the shield absorbs, then bursts on the attacker when it breaks |
+| Mend | **Reboot** purges statuses and stat drops, grants haste and trims your cooldown |
+| Field | **Domain** damages the foe every pulse; your merges of that element cost 40% less Flux |
+
+Every third cast of the same attack in a row is a **COMBO** (×1.6). Each trigger shows a big callout in the arena. Battles run at about 60% speed at level 5 and ramp up to full speed by level 30.
 
 ### Battle depth
 
@@ -66,6 +84,18 @@ Flux regenerates continuously, and statuses, regen, echoes and delayed hits tick
 - **XP share:** daemons that sit out a battle still earn half XP, as long as they're standing.
 - **Rogue and Prismatic daemons:** 7% of wild encounters are Rogue builds with an extra sub-essence. About 1 in 64 is Prismatic, with a hue-shifted sprite and +10% stats.
 - **Post-game:** Wardens and the Architect offer rematches with recompiled, higher-level teams. **The Rift**, a terminal in the Core, is an endless descent through random genomes from the whole table. Floors get harder, every fifth floor has a guardian, and you can leave with your rewards after any floor.
+
+## FriedrichBridge (AI-named merges)
+
+When [FriedrichBridge](CLAUDE.md) is running on your PC, it **designs every spell and ability**: the bridge's item for a merge decides its name, description, class, power, hits, Flux cost, accuracy, instability and effects. It also names daemon forms. Element typing, base stats and passives stay tied to the essences. Designs are cached in the browser. Without the bridge, the game uses the baked lattice. See `CLAUDE.md` for the contract and the id scheme.
+
+```
+start_bridge.bat                         (FriedrichBridge on 127.0.0.1:8765, with Ollama running)
+set FRIEDRICH_BRIDGE_KEY=<your key>      (or copy bridge.example.json to bridge.local.json)
+python tools/serve.py                    -> open http://127.0.0.1:8080
+```
+
+`tools/serve.py` serves the game and proxies `/bridge/*` to the bridge, adding the key server side, so the key never reaches the browser or git. Bridge status, "Test connection" and "Name discovered merges" are in **System > FriedrichBridge**.
 
 ## Play
 
@@ -86,6 +116,8 @@ Open `index.html` over HTTP (for example `python3 -m http.server` in this folder
 | `js/engine.js` | Daemon model and battle engine (no DOM, runs in Node) |
 | `js/content.js` | Map, zones, operators, starters |
 | `js/sprites.js` | Procedural pixel sprites, a pure function of the genome |
+| `js/bridge.js` | FriedrichBridge client: request mapping, queue, retries, local cache |
+| `tools/serve.py` | Local server and `/bridge` proxy (keeps the API key server side) |
 | `js/game.js` | Overworld, battle UI, composer, menus, forge |
 | `tools/verify.js` | CI checks: bake is fresh and complete, records are sane, content keys exist, the map is connected, and 300 seeded headless battles finish |
 

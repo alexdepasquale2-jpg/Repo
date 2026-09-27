@@ -242,7 +242,7 @@
   function freshVolatile(d) {
     const st = calcStats(d);
     return {
-      stats: st, flux: st.flux, stages: { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 }, crit: 0,
+      stats: st, flux: st.flux, stages: { atk: 0, def: 0, spd: 0, acc: 0, eva: 0 }, crit: 0, charge: 0, combo: { key: null, n: 0 }, ward: 0, hexFrom: false,
       status: null, soak: 0, regen: 0, regenMag: 0, shield: 0, phase: 0, mirror: false, petrify: false,
       echo: null, delayed: [], hpHist: [d.hp, d.hp], turnsIn: 0, burnMul: 1,
     };
@@ -293,7 +293,7 @@
       for (const k of d.memory) {
         if (!k) continue;
         const r = rec(k);
-        if (!r || r.flux > v.flux) continue;
+        if (!r || (this.costFor ? this.costFor(1, r) : r.flux) > v.flux) continue;
         if (this.rt && !isAttack(k) && (this.rt[1].cds[k] || 0) > 0) continue;
         let s = 0;
         if (r.damaging) {
@@ -488,8 +488,9 @@
       let r = rec(key);
       if (!r) return;
       if (this.skipCheck(i)) return;
-      if (r.flux > v.flux) { this.msg(`${this.labelCap(i)} doesn't have enough Flux!`); return; }
-      v.flux -= r.flux;
+      const cost = this.costFor(i, r);
+      if (cost > v.flux) { this.msg(`${this.labelCap(i)} doesn't have enough Flux!`); return; }
+      v.flux -= cost;
       this.fluxEv(i);
       this.discover(i, r.key);
       this.msg(`${this.labelCap(i)} merges ${r.name}!`, { side: i, anim: 'cast', key: r.key });
@@ -539,11 +540,19 @@
       if (this.field && this.field.el === lead) powMul *= 1.3;
       if (r.fx.some(f => f.code === 'overflow')) powMul *= 1 + v.flux / v.stats.flux;
 
+      // Signature: combos and overdrive make any attack worth committing to.
+      let forceCrit = false;
+      if (v.combo.key === r.key) v.combo.n++; else v.combo = { key: r.key, n: 1 };
+      if (r.damaging) {
+        if (v.combo.n >= 3 && v.combo.n % 3 === 0) { powMul *= 1.6; this.callout(i, `COMBO ×${v.combo.n}`, 'combo'); }
+        if (v.charge >= CHARGE_MAX) { powMul *= 1.8; forceCrit = true; v.charge = 0; this.callout(i, 'OVERDRIVE!', 'overdrive'); this.statusEv(i); }
+      }
+
       // Lay down residue.
       const addRes = (el, n) => { this.residue[el] = Math.min(6, this.residue[el] + n); };
       if (r.cls === 'Field') {
         addRes(r.a, 3); if (r.b !== r.a) addRes(r.b, 2);
-        this.field = { el: r.a, turns: 5 };
+        this.field = { el: r.a, turns: 5, side: i };
         this.msg(`The arena is saturated with ${E.MAIN[r.a].name}!`, { anim: 'field', el: r.a });
       } else {
         addRes(r.a, 1);
@@ -553,6 +562,20 @@
       // Self-targeted merges.
       if (r.self) {
         this.applyFx(i, j, r, 0, true);
+        // Signature: Ward arms a riposte and bursts when broken; Mend purges and hastes.
+        if (r.cls === 'Ward') {
+          if (!v.shield) v.shield = Math.ceil(v.stats.hp * 0.15);
+          v.ward = v.shield;
+          this.callout(i, 'WARD UP · RIPOSTE', 'ward');
+          this.hpEv(i); this.statusEv(i);
+        } else if (r.cls === 'Mend') {
+          let any = !!v.status; v.status = null;
+          for (const k of STAGES) if (v.stages[k] < 0) { v.stages[k] = 0; any = true; }
+          this.stage(i, 'spd', 1, true);
+          if (this.rt) this.rt[i].gcd = Math.max(0, this.rt[i].gcd - 1);
+          this.callout(i, any ? 'PURGED · HASTE' : 'REBOOT · HASTE', 'mend');
+          this.statusEv(i);
+        }
         this.stateEv();
         return;
       }
@@ -573,8 +596,9 @@
         let crits = 0;
         const eff = effectiveness(r.key, tgt.key);
         for (let h = 0; h < hits && tgt.hp > 0; h++) {
-          const out = this.damage(i, j, r, powMul, eff);
+          const out = this.damage(i, j, r, powMul, eff, forceCrit);
           dealt += out.dmg; if (out.crit) crits++;
+          if (r.cls === 'Barrage' && v.charge < CHARGE_MAX) { v.charge++; if (v.charge === CHARGE_MAX) this.callout(i, 'OVERDRIVE READY', 'overdrive'); }
         }
         if (hits > 1) this.msg(`Hit ${hits} times!`);
         if (crits) this.msg(crits > 1 ? `${crits} critical hits!` : 'A critical hit!');
@@ -582,6 +606,20 @@
         else if (eff <= 0.83) this.msg('It\'s not very effective...');
         if (extra.flatBlast && tgt.hp > 0) { this.dealRaw(j, extra.flatBlast); this.msg(`Scalding steam engulfs ${this.label(j)}!`); }
         if (passiveOf(d) === 'Vo' && dealt > 0) { tv.flux = Math.max(0, tv.flux - 3); this.fluxEv(j); }
+        // Signature: Strike staggers (pushes the foe's next action back).
+        if (r.cls === 'Strike' && dealt > 0 && tgt.hp > 0 && this.rt) {
+          const push = crits ? 1.2 : 0.6;
+          this.rt[j].gcd += push;
+          this.callout(j, crits ? 'STAGGERED!' : 'STAGGER', 'stagger');
+        }
+        // Signature: Siphon steals Flux, and overheal becomes a shield.
+        if (r.cls === 'Siphon' && dealt > 0) {
+          const steal = Math.min(tv.flux, Math.ceil(dealt * 0.2) + 2);
+          tv.flux -= steal; v.flux = Math.min(v.stats.flux, v.flux + steal);
+          this.fluxEv(i); this.fluxEv(j);
+          this.callout(i, `+${steal} FLUX STOLEN`, 'siphon');
+        }
+        if (v.charge) this.statusEv(i);
         if (dealt > 0 && tgt.hp > 0) {
           const tp = passiveOf(tgt);
           if (tp === 'Fr' && this.rng() < 0.2) { this.stage(i, 'spd', -1); this.msg(`${this.labelCap(j)}'s rime skin chills the attacker.`); }
@@ -593,18 +631,27 @@
         }
       }
       if (extra.statusBonus && tgt.hp > 0 && this.rng() < 0.5) this.setStatus(j, extra.statusBonus, i);
+      if (r.cls === 'Hex') {
+        v.hexFrom = true;
+        if (tgt.hp > 0) {
+          if (this.rt) this.rt[j].gcd += 1.4;
+          this.stage(j, 'spd', -1, true);
+          this.callout(j, 'HEXED · SLOWED', 'hex');
+        }
+      }
       this.applyFx(i, j, r, dealt, false);
+      v.hexFrom = false;
       if (dealt > 0 && passiveOf(d) === 'Ec' && !v.echo && this.rng() < 0.2) v.echo = { dmg: Math.ceil(dealt * 0.5), name: r.name };
       this.stateEv();
     }
 
-    damage(i, j, r, powMul, eff) {
+    damage(i, j, r, powMul, eff, forceCrit) {
       const d = this.act(i), v = this.sides[i].v, t = this.act(j), tv = this.sides[j].v;
       const pierce = r.fx.some(f => f.code === 'pierce');
       let critStage = v.crit + (r.fx.some(f => f.code === 'crit') ? 1 : 0);
       let critCh = [1 / 16, 1 / 8, 1 / 4, 1 / 2][clamp(critStage, 0, 3)];
       if (passiveOf(d) === 'Me') critCh *= 2;
-      const crit = this.rng() < critCh;
+      const crit = forceCrit || this.rng() < critCh;
       let atkSt = v.stages.atk, defSt = tv.stages.def;
       if (crit) { atkSt = Math.max(0, atkSt); defSt = Math.min(0, defSt); }
       if (pierce) defSt = Math.min(0, defSt);
@@ -612,7 +659,7 @@
       const def = tv.stats.def * stageMul(defSt);
       let base = ((2 * d.level / 5 + 2) * r.power * atk / def) / 50 + 2;
       let m = eff * powMul * (0.85 + this.rng() * 0.15);
-      if (crit) m *= 1.5;
+      if (crit) m *= r.cls === 'Strike' ? 2 : 1.5;
       if (v.status && v.status.id === 'burn') m *= 0.85;
       if (tv.soak > 0) { if (r.a === 'F') m *= 0.6; else if (r.a === 'A') m *= 1.3; }
       const pv = passiveOf(d);
@@ -632,7 +679,19 @@
         const ab = Math.min(tv.shield, rest);
         tv.shield -= ab; rest -= ab;
         if (ab > 0) this.ev('absorb', { side: j, amount: ab });
+        if (tv.ward && from != null && ab > 0) {
+          const back = Math.max(1, Math.ceil(ab * 0.35));
+          this.dealRaw(from, back);
+          if (tv.shield <= 0) {
+            const burst = Math.ceil(tv.ward * 0.6);
+            tv.ward = 0;
+            this.dealRaw(from, burst);
+            this.callout(from, `SHIELD BURST −${burst}`, 'ward');
+          } else this.callout(from, `RIPOSTE −${back}`, 'ward');
+          this.statusEv(j);
+        }
       }
+      if (tv.shield <= 0) tv.ward = 0;
       t.hp = Math.max(0, t.hp - rest);
       this.ev('hit', { side: j, amount: dmg, crit: !!crit });
       this.hpEv(j);
@@ -677,6 +736,7 @@
       let turns = S.turns;
       if (id === 'frozen') turns = 1 + Math.floor(this.rng() * 2);
       if (passiveOf(t) === 'Li') turns = Math.max(1, turns - 2);
+      if (from != null && this.sides[from].v.hexFrom) turns += 1;
       tv.status = { id, turns };
       if (id === 'burn' && from != null && passiveOf(this.act(from)) === 'Em') tv.burnMul = 2; else tv.burnMul = 1;
       const txt = { burn: 'is burned!', frozen: 'is frozen solid!', static: 'is locked up with static!', rooted: 'is rooted in place!', corrupt: 'is corrupted!', dormant: 'falls dormant...' }[id];
@@ -692,6 +752,7 @@
         if (selfOnly && !self) continue;
         if (!self && t.hp <= 0) continue;
         let ch = f.chance / 100;
+        if (v.hexFrom && FX_TO_STATUS[f.code]) ch = Math.min(1, ch * 2 + 0.25);
         if (f.code === 'freeze' && tv.soak > 0) ch *= 2;
         if (this.rng() >= ch) continue;
         switch (f.code) {
@@ -817,10 +878,19 @@
     }
 
     fieldEnd() {
+      // Signature: a Field burns the other side every pulse while it lasts.
+      if (this.field && this.field.side != null) {
+        const j = 1 - this.field.side, t = this.act(j);
+        if (t.hp > 0) { const dmg = Math.max(1, Math.ceil(this.sides[j].v.stats.hp / 18)); this.dealRaw(j, dmg); this.callout(j, `${E.MAIN[this.field.el].name.toUpperCase()} FIELD −${dmg}`, 'field'); }
+      }
       if (this.field) { this.field.turns--; if (this.field.turns <= 0) { this.msg(`The ${E.MAIN[this.field.el].name} field dissipates.`); this.field = null; } }
       if (this.turn % 3 === 0) for (const k of Object.keys(this.residue)) this.residue[k] = Math.max(0, this.residue[k] - 1);
       this.stateEv();
     }
+
+    callout(side, text, kind) { this.ev('callout', { side, text, kind }); }
+    // Merges of the element that owns the field cost 40% less for its caster.
+    costFor(i, r) { return this.field && this.field.side === i && this.field.el === r.a ? Math.ceil(r.flux * 0.6) : r.flux; }
 
     // ---- real-time mode ------------------------------------------------
     // Attacks go through a global cooldown (GCD) whose length depends on
@@ -861,10 +931,22 @@
       if (this.fieldPulse <= 0) { this.fieldPulse += PULSE; this.turn++; this.fieldEnd(); }
       // player: fire the queued attack whenever the GCD is ready
       const p = this.rt[0];
+      // A queued utility (Bind) takes the next global cooldown ahead of the auto-attack.
+      if (p.gcd <= 0 && p.pending) {
+        const a = p.pending; p.pending = null;
+        this.perform(0, a);
+        p.gcd = a.type === 'bind' ? 1.5 : 1.2;
+        this.checkFaints();
+        return this.events;
+      }
       if (p.gcd <= 0 && p.queued) {
-        const r = rec(p.queued);
-        if (r.flux <= this.sides[0].v.flux) { p.starved = false; this.doMerge(0, p.queued); p.gcd = this.gcdFor(0, r); if (this.checkFaints()) return this.events; }
-        else p.starved = true;
+        let r = rec(p.queued), v0 = this.sides[0].v;
+        // Out of Flux for the queued attack: fall back to the cheapest affordable attack rather than stalling.
+        if (this.costFor(0, r) > v0.flux) {
+          const alt = this.act(0).memory.filter(k => k && isAttack(k) && this.costFor(0, rec(k)) <= v0.flux).sort((x, y) => rec(x).flux - rec(y).flux)[0];
+          if (alt) { r = rec(alt); p.fallback = alt; } else { p.starved = true; r = null; }
+        } else p.fallback = null;
+        if (r) { p.starved = false; this.doMerge(0, r.key); p.gcd = this.gcdFor(0, r); if (this.checkFaints()) return this.events; }
       }
       // enemy
       const e = this.rt[1];
@@ -882,7 +964,7 @@
     // Player actions that don't wait for the GCD. Return events, or null if not ready.
     useActive(key) {
       const rt = this.rt[0], r = rec(key);
-      if (!r || rt.cds[key] > 0 || r.flux > this.sides[0].v.flux) return null;
+      if (!r || rt.cds[key] > 0 || this.costFor(0, r) > this.sides[0].v.flux) return null;
       rt.cds[key] = cooldownFor(r);
       return this.run(() => this.doMerge(0, key));
     }
@@ -962,6 +1044,18 @@
   }
 
   const PULSE = 2;
+  const CHARGE_MAX = 6;
+  // What every ability class does on top of its baked stats.
+  const SIGNATURE = {
+    Strike: 'Stagger: pushes the foe\'s next action back (more on a crit). Crits hit ×2.',
+    Barrage: 'Charge: every hit adds 1 charge. At 6, your next attack is an OVERDRIVE (×1.8 and a guaranteed crit).',
+    Siphon: 'Theft: steals Flux from the foe on top of its drain.',
+    Hex: 'Curse: slows the foe (Clock −1, next action delayed) and doubles its status chances, which last longer.',
+    Ward: 'Riposte: attackers take 35% of what the shield absorbs, and it bursts on them when it breaks.',
+    Mend: 'Reboot: purges statuses and stat drops, grants haste and cuts your cooldown.',
+    Field: 'Domain: damages the foe every pulse, and your merges of that element cost 40% less Flux.',
+  };
+  const COMBO = 'Every third cast of the same attack in a row is a COMBO (×1.6).';
   const UTIL_CD = { defrag: 14, item: 6, switch: 4, bind: 0, run: 0 };
   function isAttack(key) { const r = rec(key); return r.cls === 'Strike' || r.cls === 'Barrage' || r.cls === 'Siphon'; }
   function cooldownFor(r) { return Math.round(5 + r.flux * 0.7); }
@@ -978,7 +1072,7 @@
   return {
     rec, PASSIVES, STATUS, REACT, ATTUNE_LEVELS, RECOMPILE_LEVELS, LEVEL_CAP,
     calcStats, levelWidth, width, xpFor, tierOf, mainsOf, eligibleSubs, composableFor, canCompose, autoMemory,
-    isAttack, cooldownFor, UTIL_CD, PULSE,
+    isAttack, cooldownFor, UTIL_CD, PULSE, SIGNATURE, COMBO, CHARGE_MAX,
     createDaemon, recompileOptions, recompile, gainXp, xpYield, effectiveness, captureChance, Battle, describeFx, passiveOf,
   };
 });

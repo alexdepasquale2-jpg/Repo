@@ -1,0 +1,5 @@
+{
+  "port": 8080,
+  "bridge_url": "http://127.0.0.1:8765",
+  "key": "put-your-FriedrichBridge-key-here (or set FRIEDRICH_BRIDGE_KEY instead)"
+}
