@@ -83,7 +83,8 @@
       const neverLead = d.traits.traits.filter(t => !st.leadTrait[t.code]).map(t => t.code);
       if (neverLead.length) thin.push([`${plural(neverLead.length, 'trait')} never lead a genome`, `${neverLead.join(', ')} only show up as second picks, so they're rare. Raise their leanings.`, 'traits', '']);
       const wild = new Set(d.world.zones.flatMap(z => z.wild.map(w => w.key)));
-      thin.push([`${plural(wild.size, 'genome')} appear in the wild; ${plural(d.world.npcs.length, 'person', 'people')} live in the world`, 'Everything else only turns up by composing, splicing or in the Rift.', 'world/zones', '']);
+      const things = [].concat(...d.world.maps.map(m => m.things)), trainers = things.filter(t => t.type === 'trainer'), people = things.filter(t => t.type === 'person');
+      thin.push([`${plural(wild.size, 'genome')} appear in the wild; ${plural(people.length, 'person', 'people')} live in the world`, 'Everything else only turns up by composing, splicing or in the Rift.', 'world/zones', '']);
       return `<div class="page">
         ${head('Essence Protocol content', `Everything the game shows comes from here: ${fmt(st.total)} merges (each one a spell, a daemon form and an item) baked from ${d.essences.mains.length} main and ${d.essences.subs.length} sub-essences, plus the world around them.`, `<button class="btn" data-go="changes">Review changes (${fmt(S.ops.length)})</button>`)}
         <div class="note acc">${esc(modeCard)}</div>
@@ -91,8 +92,8 @@
           <button class="tile" data-go="spells"><span class="k">Spells, daemons, items</span><span class="v">${fmt(st.total)}</span><span class="s">one of each per merge</span></button>
           <button class="tile" data-go="essences"><span class="k">Essences</span><span class="v">${d.essences.mains.length} + ${d.essences.subs.length}</span><span class="s">mains + sub-essences</span></button>
           <button class="tile" data-go="combos"><span class="k">Combos</span><span class="v">${d.combos.resonances.length} · ${d.combos.trinities.length}</span><span class="s">resonances · trinities</span></button>
-          <button class="tile" data-go="world/trainers"><span class="k">Trainers</span><span class="v">${d.world.trainers.length}</span><span class="s">${d.world.trainers.filter(t => t.warden).length} wardens</span></button>
-          <button class="tile" data-go="world/people"><span class="k">People</span><span class="v">${d.world.npcs.length}</span><span class="s">${fmt(d.world.npcs.reduce((a, n) => a + n.lines.length, 0))} lines</span></button>
+          <button class="tile" data-go="world/maps"><span class="k">World</span><span class="v">${d.world.maps.length}</span><span class="s">${plural(d.world.maps.length, 'map')} · ${plural(things.length, 'thing')}</span></button>
+          <button class="tile" data-go="world/trainers"><span class="k">Trainers</span><span class="v">${trainers.length}</span><span class="s">${trainers.filter(t => t.warden).length} wardens · ${plural(people.length, 'person', 'people')}</span></button>
           <button class="tile" data-go="overrides"><span class="k">Hand edits</span><span class="v">${Object.keys(d.overrides).length}</span><span class="s">merges edited by hand</span></button>
         </div>
         <div class="grid g2">
@@ -317,7 +318,11 @@
     const w = S.cur.world, out = [];
     for (const s of w.starters) if (s.key === key) out.push({ text: 'A starter', go: 'world/starters/' + key });
     for (const z of w.zones) for (const x of z.wild) if (x.key === key) out.push({ text: `Wild in ${z.name} (levels ${x.min}-${x.max})`, go: 'world/zones/' + z.id });
-    for (const t of w.trainers) for (const x of t.team) if (x.key === key) out.push({ text: `${t.name}'s team (level ${x.level})`, go: 'world/trainers/' + t.id });
+    for (const m of w.maps) for (const t of m.things) {
+      if (t.type === 'trainer') for (const x of t.team) if (x.key === key) out.push({ text: `${t.name}'s team (level ${x.level})`, go: 'world/trainers/' + t.id });
+      if (t.gives && t.gives.daemon && t.gives.daemon.key === key) out.push({ text: `Given by ${t.name || t.id} (level ${t.gives.daemon.level})`, go: 'world/things/' + t.id });
+      if (t.gives && t.gives.item === key) out.push({ text: `Forged item from ${t.name || t.id}`, go: 'world/things/' + t.id });
+    }
     return out;
   }
   App.usedIn = usedIn;

@@ -29,7 +29,8 @@ const C = require('../js/content.js');
   edited.combos.resonances.push({ id: 'verify', name: 'Verify', subs: ['Mi', 'Fr'], traits: {}, effects: [] });
   edited.essences.subs[0].adjectives = edited.essences.subs[0].adjectives.concat(['Verified']);
   edited.overrides['FW'] = { name: 'Verified Scald' };
-  delete edited.world.npcs[0].lines;
+  delete edited.world.maps[0].things.find(t => t.type === 'person').lines;
+  edited.world.maps[0].things.push({ id: 'verify-sign', type: 'sign', x: 1, y: 1, lines: ['Verified.'] });
   const ops = SC.diff(data, edited), back = SC.applyOps(data, ops);
   assert(SC.same(back.data, edited) && !back.conflicts.length, 'change sets must round-trip');
   console.log(`ok: data/ passes its schema (${SC.FILES.length} files, canonical layout), change sets round-trip`);
@@ -196,24 +197,32 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
   console.log('ok: reveal tier colors are valid for every rarity');
 }
 
-// 6. Map: every room row is well-formed and every NPC, terminal and gate is reachable from spawn
-//    when gates are treated as open.
+// 6. The world: every map is reachable from the start through its warps, every thing and terminal can
+//    be reached (SC.checkWorld, in step 0), the Wardens hand out the four keys the gates ask for,
+//    and there is one final boss.
 {
-  const map = C.buildMap();
-  const passable = (x, y) => { const ch = map.tiles[y][x]; return !C.SOLID.has(ch) || C.GATES[ch]; };
-  const npcAt = new Set(map.npcs.map(n => n.x + ',' + n.y));
-  const seen = new Set([map.spawn.x + ',' + map.spawn.y]);
-  const q = [map.spawn];
-  while (q.length) {
-    const { x, y } = q.shift();
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = x + dx, ny = y + dy, id = nx + ',' + ny;
-      if (seen.has(id) || !passable(nx, ny) || npcAt.has(id)) continue;
-      seen.add(id); q.push({ x: nx, y: ny });
-    }
+  const maps = Object.values(C.MAPS);
+  assert(C.START && C.MAPS[C.START.map], 'the start is on a map');
+  assert.strictEqual(C.OPERATORS.filter(o => o.final).length, 1, 'exactly one final boss');
+  assert.deepStrictEqual(C.GATE_KEYS, [1, 2, 3, 4], 'the gates ask for one to four keys');
+  assert.strictEqual(C.KEYS, 4, 'four Wardens give the gate keys');
+  assert(!C.problems.length, 'the world builds without problems: ' + JSON.stringify(C.problems));
+  const walk = maps.reduce((n, m) => n + m.tiles.join('').split('').filter(ch => !C.SOLID.has(ch)).length, 0);
+  console.log(`ok: world "${C.TITLE}": ${maps.length} map(s), ${Object.keys(C.THINGS).length} things, ${walk} walkable tiles, everything reachable`);
+}
+
+// 7. The worlds a player can start from in the builder (js/worlds.js templates) pass the schema.
+{
+  const SC = require('../js/schema.js');
+  const data = require('../data').data;
+  global.window = { EP_GAME: { esc: s => s }, CONTENT_SCHEMA: SC, CONTENT: C, WORLD_RENDER: {}, EP_DATA: data };
+  require('../js/worlds.js');
+  const T = window.WORLDS.templates;
+  const ctx = { mechanics: Object.keys(ENG.MECHANICS), organs: Object.keys(require('../js/sprites.js').SPRITES.ORGANS), reactionKinds: Object.keys(ENG.REACTION_KINDS), validKey: E.validKey };
+  for (const [name, make] of Object.entries(T)) {
+    const w = make(), issues = SC.validateWorld(w, data, ctx, C.withWorld(w)).filter(i => i.level === 'error');
+    assert(!issues.length, `the "${name}" world template has problems:\n  ` + issues.map(i => `${i.path}: ${i.msg}`).join('\n  '));
   }
-  const adj = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => seen.has((x + dx) + ',' + (y + dy)));
-  for (const n of map.npcs) assert(adj(n.x, n.y), 'unreachable npc ' + n.name);
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) if ('HFR'.includes(map.tiles[y][x])) assert(adj(x, y), 'unreachable terminal at ' + x + ',' + y);
-  console.log(`ok: map ${map.w}x${map.h}, ${map.npcs.length} npcs reachable, ${seen.size} walkable tiles`);
+  delete global.window;
+  console.log(`ok: ${Object.keys(T).length} world templates (${Object.keys(T).join(', ')}) pass the schema`);
 }

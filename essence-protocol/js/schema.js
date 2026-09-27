@@ -6,7 +6,7 @@
  *   diff / applyOps change sets: [{ op: 'set' | 'add' | 'remove', path, value, before }]
  *   format(value)   the canonical layout of a data file
  *
- * Paths name one value: `essences.subs[Em].desc`, `world.trainers[air-a].team`,
+ * Paths name one value: `essences.subs[Em].desc`, `world.maps[lattice].things[air-a].team`,
  * `overrides[FW-Em1Li2].name`. A list item is picked by its id in brackets (a sub's code, a
  * trainer's id, a residue reaction's `F>W`); words in a word list are edited as the whole list.
  * No dependencies: loaded by the browser (global CONTENT_SCHEMA) and by Node. */
@@ -38,13 +38,81 @@
   const TIERS = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
   const SUB_TIERS = ['No subs', 'One sub', 'Two subs', 'Three subs'];
   const FACING = ['down', 'up', 'left', 'right'];
-  // Room tiles. Any other letter marks where the trainer with that slot stands.
+  // Map tiles. `solid` tiles block the way; gates 1-9 open once you hold that many keys.
+  // group: which shelf of the builder's palette the tile sits on.
   const TILES = {
-    '#': ['Wall', true], '.': ['Floor', false], ',': ['Static (wild daemons appear here)', false], '~': ['Water', true],
-    '^': ['Magma', true], 'o': ['Boulder', true], '*': ['Tree', true], 'x': ['Pillar', true],
-    'H': ['Healing terminal', true], 'F': ['Nexus Forge', true], 'R': ['Rift terminal', true],
+    '.': { name: 'Floor', group: 'ground' },
+    ',': { name: 'Static', group: 'ground', wild: true, help: 'Wild daemons appear here (if the zone has any).' },
+    ':': { name: 'Path', group: 'ground' },
+    'S': { name: 'Sand', group: 'ground' },
+    '&': { name: 'Flowers', group: 'ground' },
+    '=': { name: 'Bridge', group: 'ground' },
+    '_': { name: 'Ice', group: 'ground', slide: true, help: 'You slide across until something stops you.' },
+    '#': { name: 'Wall', group: 'wall', solid: true },
+    'V': { name: 'Void', group: 'wall', solid: true },
+    '|': { name: 'Fence', group: 'wall', solid: true },
+    'o': { name: 'Boulder', group: 'wall', solid: true },
+    '*': { name: 'Tree', group: 'wall', solid: true },
+    'x': { name: 'Pillar', group: 'wall', solid: true },
+    '+': { name: 'Crystal', group: 'wall', solid: true },
+    'L': { name: 'Lamp', group: 'wall', solid: true },
+    '~': { name: 'Water', group: 'liquid', solid: true },
+    '^': { name: 'Magma', group: 'liquid', solid: true },
+    'T': { name: 'Console', group: 'machine', solid: true },
+    'B': { name: 'Archive shelf', group: 'machine', solid: true },
+    'H': { name: 'Healing terminal', group: 'machine', solid: true, use: 'heal', help: 'Heals the party and becomes the place you wake up after a defeat.' },
+    'F': { name: 'Nexus Forge', group: 'machine', solid: true, use: 'forge', help: 'Forges motes into items, and opens the Splice chamber.' },
+    'R': { name: 'Rift terminal', group: 'machine', solid: true, use: 'rift', help: 'The endless Rift, open after the final boss falls.' },
   };
-  const isSlotChar = ch => /^[A-Za-z]$/.test(ch) && !TILES[ch];
+  for (let n = 1; n <= 9; n++) TILES[String(n)] = { name: `Gate (${n} key${n > 1 ? 's' : ''})`, group: 'gate', solid: true, keys: n, help: `Opens for a player holding ${n} key${n > 1 ? 's' : ''}.` };
+  const TILE_GROUPS = [['ground', 'Ground'], ['wall', 'Walls and obstacles'], ['liquid', 'Water and magma'], ['machine', 'Machines'], ['gate', 'Key gates']];
+  const tileName = ch => (TILES[ch] ? TILES[ch].name : `"${ch}"`);
+  // Things stand on a map tile. People, trainers, signs, chests and blocks are in the way; warps
+  // and triggers are stepped on.
+  const THING_TYPES = ['person', 'trainer', 'sign', 'chest', 'warp', 'trigger', 'block'];
+  const BLOCKING = new Set(['person', 'trainer', 'sign', 'chest', 'block']);
+  const THING = {
+    person: ['Person', 'Talks when you face them and press A. Can give a reward once, heal, or set a flag.'],
+    trainer: ['Trainer', 'Battles you when they spot you (or when you talk to them). Wardens give keys.'],
+    sign: ['Sign', 'Shows its text when you read it.'],
+    chest: ['Chest', 'Gives its reward once.'],
+    warp: ['Warp', 'Takes you to another place (a door, stairs, a portal) when you step on it.'],
+    trigger: ['Trigger', 'Invisible. Runs when you step on it: says lines, gives, heals or sets a flag.'],
+    block: ['Block', 'Something in the way, until its condition hides it (a gate that opens after a battle).'],
+  };
+  const LOOKS = { chest: ['chest', 'cache', 'orb'], warp: ['door', 'stairs', 'portal', 'pad', 'hidden'], block: ['boulder', 'crystal', 'gate', 'barrier', 'tree', 'pillar'] };
+  const PARTICLES = ['data', 'wind', 'ember', 'bubble', 'dust', 'spark', 'snow', 'leaf', 'none'];
+  const FLAG = /^[A-Za-z0-9][A-Za-z0-9-]*$/;
+  // Conditions: words separated by spaces or commas, all must hold. A word is a flag (set by a
+  // thing's `sets`), beat:<trainer>, open:<chest>, got:<person> (their gift), keys:<n>, or won;
+  // ! in front turns it around.
+  function parseCond(str) {
+    const out = [];
+    for (const w of String(str || '').split(/[\s,]+/).filter(Boolean)) {
+      const m = /^(!?)(?:(beat|open|got|keys):([A-Za-z0-9][A-Za-z0-9-]*)|(won)|([A-Za-z0-9][A-Za-z0-9-]*))$/.exec(w);
+      if (!m) return null;
+      if (m[2] === 'keys' && !/^[1-9]$/.test(m[3])) return null;
+      out.push({ not: !!m[1], kind: m[2] || (m[4] ? 'won' : 'flag'), arg: m[3] || m[5] || '' });
+    }
+    return out;
+  }
+  function describeCond(str, nameOf) {
+    const terms = parseCond(str);
+    if (!terms) return 'a condition that doesn\'t parse';
+    if (!terms.length) return 'always';
+    const nm = id => (nameOf && nameOf(id)) || id;
+    return terms.map(t => {
+      const s = {
+        beat: [`after you beat ${nm(t.arg)}`, `until you beat ${nm(t.arg)}`],
+        open: [`after the chest ${nm(t.arg)} is opened`, `until the chest ${nm(t.arg)} is opened`],
+        got: [`after ${nm(t.arg)} gave their gift`, `until ${nm(t.arg)} gives their gift`],
+        keys: [`with ${t.arg} key${t.arg === '1' ? '' : 's'} or more`, `with fewer than ${t.arg} keys`],
+        won: ['after the final boss falls', 'until the final boss falls'],
+        flag: [`once "${t.arg}" is set`, `until "${t.arg}" is set`],
+      }[t.kind];
+      return s[t.not ? 1 : 0];
+    }).join(' and ');
+  }
   const RARITY = ['Base', 'Compound', 'Resonant', 'Trinity', 'Anomaly'];
 
   // ---- schema nodes
@@ -123,6 +191,106 @@
     subs: N('subs', 'Sub-essences', { count: n, help: n === 2 ? 'Any merge that has both subs (on any host) resonates.' : 'A merge with exactly these three subs is a Trinity.' }),
     traits: axes('Trait pushes', { max: 9 }),
     effects: effects('Effects'),
+  });
+
+  const OVERRIDE = obj('Override', {
+    name: text('Spell name', { max: 40, optional: true }),
+    text: long('Spell text', { max: 300, optional: true }),
+    dName: text('Daemon name', { max: 24, optional: true }),
+    dDesc: long('Form description', { max: 300, optional: true }),
+    itemName: text('Item name', { max: 48, optional: true }),
+    itemLore: long('Item lore', { max: 160, optional: true }),
+    line: text('Lineage word', { pattern: ONEWORD, optional: true }),
+    power: int('Power', 1, 160, { optional: true, help: 'Only on merges that already deal damage.' }),
+    hits: int('Hits', 1, 6, { optional: true }),
+    acc: int('Accuracy (101 never misses)', 55, 101, { optional: true }),
+    flux: int('Flux cost', 3, 30, { optional: true }),
+    prio: int('Priority', -1, 1, { optional: true }),
+    instab: int('Instability %', 0, 65, { optional: true }),
+    dStats: N('stats', 'Form base stats', { min: 20, max: 200, partial: true, optional: true }),
+  });
+
+  // ---- the world: maps of tiles, zones painted over them, and things standing on them
+  const is = (...types) => t => types.includes(t.type);
+  const MEMBER = obj('Daemon', { key: N('mergeKey', 'Genome'), level: int('Level', 1, 60) });
+  const THEME = obj('Theme', {
+    id: text('Id', { pattern: SLUG, readonly: 'existing' }),
+    name: text('Name', { max: 20 }),
+    floor: N('colors', 'Floor (two tones)', { count: 2 }),
+    speck: color('Floor specks'), line: color('Floor circuit lines'),
+    wall: color('Wall top'), face: color('Wall face'), trim: color('Wall trim (glows)'),
+    static: N('colors', 'Static (dark, blades, sparkle)', { count: 3 }),
+    obstacle: color('Obstacles (boulders, trees, water)'),
+    accent: color('Accent (lights, operators\' outfits)'),
+    sky: N('colors', 'Battle sky (top, horizon)', { count: 2 }),
+    particles: N('enum', 'Floating particles', { options: PARTICLES }),
+  }, { help: 'The colors a zone is drawn in, on the map and behind its battles.' });
+  const ZONE = obj('Zone', {
+    id: text('Id', { pattern: SLUG, readonly: 'existing' }),
+    name: text('Name', { max: 24 }),
+    mark: text('Map letter', { pattern: /^[A-Za-z0-9]$/, help: 'The letter that paints this zone in a map\'s zone layer. "." is the map\'s own zone.' }),
+    theme: N('enum', 'Theme', { catalog: 'themes' }),
+    element: N('main', 'Element', { nullable: 'None' }),
+    rate: int('Encounter rate (%)', 0, 50, { help: 'Chance per step on static that a wild daemon appears. 0 turns them off.' }),
+    wild: list('Wild daemons', obj('Wild daemon', {
+      key: N('mergeKey', 'Genome'),
+      min: int('Lowest level', 1, 60), max: int('Highest level', 1, 60),
+      weight: int('How common', 1, 20, { help: 'Relative weight: 4 is four times as common as 1.' }),
+    }), { idOf: w => w.key }),
+  });
+  const THINGDEF = obj('Thing', {
+    id: text('Id', { pattern: SLUG, readonly: 'existing', help: 'Unique in the world. Saves remember beaten trainers and opened chests by it.' }),
+    type: N('enum', 'Kind', { options: THING_TYPES, readonly: true }),
+    x: int('Column', 0, 159), y: int('Row', 0, 159),
+    name: text('Name', { max: 24, when: is('person', 'trainer') }),
+    facing: N('enum', 'Facing', { options: FACING, when: is('person', 'trainer') }),
+    color: color('Outfit color', { optional: true, when: is('person', 'trainer'), help: 'Leave empty for the usual look (trainers wear their zone\'s accent).' }),
+    look: N('enum', 'Looks like', { options: [...new Set([].concat(...Object.values(LOOKS)))], when: is('chest', 'warp', 'block') }),
+    who: text('Speaker', { max: 24, optional: true, when: is('sign', 'trigger', 'block') }),
+    lines: N('lines', 'What it says', { min: 1, max: 12, maxLen: 240, when: t => t.type === 'person' || t.type === 'sign' || (t.type === 'trigger' && t.lines !== undefined) || (t.type === 'block' && t.lines !== undefined), help: '{merges} is how many merges exist, in words.' }),
+    after: N('lines', 'Later they say', { max: 12, maxLen: 240, optional: true, when: is('person'), help: 'Said instead of the lines above once their gift was given (or their flag is set).' }),
+    sight: int('Sight (tiles)', 0, 8, { when: is('trainer'), help: '0 means you have to talk to them.' }),
+    warden: bool('Warden', { when: is('trainer') }),
+    final: bool('The final boss', { when: is('trainer'), help: 'Beating them wins the game and opens the Rift.' }),
+    badge: text('Key they give', { max: 24, optional: true, when: is('trainer') }),
+    team: list('Team', MEMBER, { min: 1, max: 6, when: is('trainer') }),
+    intro: long('Before the battle', { max: 240, when: is('trainer') }),
+    outro: long('After you win', { max: 240, when: is('trainer') }),
+    gives: N('reward', 'Gives', { optional: true, when: is('person', 'trainer', 'chest', 'trigger') }),
+    heal: bool('Heals your daemons', { when: is('person', 'trigger') }),
+    to: obj('Leads to', { map: N('enum', 'Map', { catalog: 'maps' }), x: int('Column', 0, 159), y: int('Row', 0, 159), facing: N('enum', 'Facing', { options: FACING, optional: true }) }, { when: is('warp') }),
+    if: text('Only while', { optional: true, max: 200, help: 'A condition: flag, !flag, beat:<trainer>, open:<chest>, got:<person>, keys:<n>, won. All must hold.' }),
+    sets: text('Sets flag', { optional: true, pattern: FLAG, help: 'A flag to set afterwards (other things can check it with "Only while").' }),
+  });
+  const MAP = obj('Map', {
+    id: text('Id', { pattern: SLUG, readonly: 'existing' }),
+    name: text('Name', { max: 30 }),
+    zone: N('enum', 'Zone', { catalog: 'zones', help: 'The zone of every tile whose zone letter is ".".' }),
+    tiles: N('grid', 'Tiles'),
+    zones: N('zonegrid', 'Zone layer'),
+    things: list('Things', THINGDEF, { id: 'id' }),
+  });
+  const WORLD = obj('World', {
+    format: int('Format', 2, 2, { readonly: true }),
+    title: text('Title', { max: 40 }),
+    about: long('About', { max: 300, optional: true }),
+    author: text('Made by', { max: 40, optional: true }),
+    start: obj('Start', { map: N('enum', 'Map', { catalog: 'maps' }), x: int('Column', 0, 159), y: int('Row', 0, 159), facing: N('enum', 'Facing', { options: FACING }) }),
+    rules: obj('Rules', { mains: N('enum', 'Main essences', { options: ['keys', 'all'], help: 'keys: Air first, one more main per key (the Composer and requests follow it). all: every main from the start.' }) }),
+    starters: list('Starters', obj('Starter', {
+      key: N('mergeKey', 'Genome'),
+      attune: N('subs', 'Starts attuned to', { min: 1, max: 3, forKey: 'key' }),
+      blurb: long('Blurb', { max: 120 }),
+    }), { idOf: s => s.key, min: 1, max: 8 }),
+    themes: list('Themes', THEME, { id: 'id', min: 1 }),
+    zones: list('Zones', ZONE, { id: 'id', min: 1, unique: ['mark'] }),
+    maps: list('Maps', MAP, { id: 'id', min: 1 }),
+    merges: map('Merge edits', OVERRIDE, { keys: 'mergeKey', optional: true, help: 'This world\'s own names and numbers for single merges, on top of the baked ones.' }),
+    text: obj('Game lines', {
+      guide: text('Who explains the basics', { max: 24 }),
+      tutorial: N('lines', 'After you pick a starter', { min: 1, max: 6, maxLen: 240, help: '{daemon} is the starter\'s name.' }),
+      ending: N('lines', 'The ending', { optional: true, max: 6, maxLen: 300, help: 'Shown after the final boss. Leave empty for the usual ending.' }),
+    }),
   });
 
   const SCHEMA = obj('Content', {
@@ -211,68 +379,8 @@
         formAnomaly: text('Anomaly forms', { max: 60 }),
       }, { help: 'Spell text is built from these. {role} is lead, follow or core.' }),
     }),
-    world: obj('World', {
-      starters: list('Starters', obj('Starter', {
-        key: N('mergeKey', 'Genome'),
-        attune: N('subs', 'Starts attuned to', { min: 1, max: 3, forKey: 'key' }),
-        blurb: long('Blurb', { max: 120 }),
-      }), { idOf: s => s.key, min: 1, max: 8 }),
-      zones: list('Zones', obj('Zone', {
-        id: text('Id', { readonly: true }),
-        name: text('Name', { max: 20 }),
-        element: N('main', 'Element', { nullable: 'None' }),
-        wild: list('Wild daemons', obj('Wild daemon', {
-          key: N('mergeKey', 'Genome'),
-          min: int('Lowest level', 1, 60), max: int('Highest level', 1, 60),
-          weight: int('How common', 1, 20, { help: 'Relative weight: 4 is four times as common as 1.' }),
-        }), { idOf: w => w.key, min: 1 }),
-      }), { id: 'id', fixed: true, help: 'A new zone needs map space and a gate: ask Claude Code.' }),
-      trainers: list('Trainers', obj('Trainer', {
-        id: text('Id', { pattern: SLUG, readonly: 'existing' }),
-        zone: N('enum', 'Room', { catalog: 'rooms' }),
-        slot: text('Slot letter', { pattern: /^[A-Za-z]$/, help: 'Where the trainer stands: this letter in the room\'s map.' }),
-        name: text('Name', { max: 24 }),
-        facing: N('enum', 'Facing', { options: FACING }),
-        sight: int('Sight (tiles)', 0, 8, { help: '0 means you have to talk to them.' }),
-        warden: bool('Warden'),
-        final: bool('The final boss'),
-        badge: text('Key they give', { max: 20, optional: true }),
-        team: list('Team', obj('Daemon', { key: N('mergeKey', 'Genome'), level: int('Level', 1, 60) }), { min: 1, max: 6 }),
-        intro: long('Before the battle', { max: 200 }),
-        outro: long('After you win', { max: 200 }),
-      }), { id: 'id', help: '{merges} in a line says how many merges exist, in words.' }),
-      npcs: list('People', obj('Person', {
-        id: text('Id', { pattern: SLUG, readonly: 'existing' }),
-        name: text('Name', { max: 24 }),
-        x: int('Column', 0, 59), y: int('Row', 0, 45),
-        facing: N('enum', 'Facing', { options: FACING }),
-        lines: N('lines', 'What they say', { min: 1, max: 12, maxLen: 240 }),
-      }), { id: 'id' }),
-      rooms: list('Rooms', obj('Room', {
-        zone: text('Zone', { readonly: true }),
-        x: int('Column', 0, 59, { readonly: true }), y: int('Row', 0, 45, { readonly: true }),
-        rows: N('grid', 'Layout'),
-      }), { id: 'zone', fixed: true }),
-      text: obj('Game lines', {
-        tutorial: N('lines', 'After you pick a starter', { min: 1, max: 6, maxLen: 240, help: '{daemon} is the starter\'s name.' }),
-      }),
-    }),
-    overrides: map('Hand-edited merges', obj('Override', {
-      name: text('Spell name', { max: 40, optional: true }),
-      text: long('Spell text', { max: 300, optional: true }),
-      dName: text('Daemon name', { max: 24, optional: true }),
-      dDesc: long('Form description', { max: 300, optional: true }),
-      itemName: text('Item name', { max: 48, optional: true }),
-      itemLore: long('Item lore', { max: 160, optional: true }),
-      line: text('Lineage word', { pattern: ONEWORD, optional: true }),
-      power: int('Power', 1, 160, { optional: true, help: 'Only on merges that already deal damage.' }),
-      hits: int('Hits', 1, 6, { optional: true }),
-      acc: int('Accuracy (101 never misses)', 55, 101, { optional: true }),
-      flux: int('Flux cost', 3, 30, { optional: true }),
-      prio: int('Priority', -1, 1, { optional: true }),
-      instab: int('Instability %', 0, 65, { optional: true }),
-      dStats: N('stats', 'Form base stats', { min: 20, max: 200, partial: true, optional: true }),
-    }), { keys: 'mergeKey', help: 'Replace fields of single merges after the rules have run.' }),
+    world: WORLD,
+    overrides: map('Hand-edited merges', OVERRIDE, { keys: 'mergeKey', help: 'Replace fields of single merges after the rules have run.' }),
   });
 
   // ---- paths
@@ -434,8 +542,9 @@
     const subs = (data.essences.subs || []).map(s => s.code);
     const effectCodes = (data.battle.effects || []).map(f => f.code);
     const traitCodes = (data.traits.traits || []).map(t => t.code);
-    const roomZones = (data.world.rooms || []).map(r => r.zone);
-    const catalogs = { mechanics: ctx.mechanics, organs: ctx.organs, reactionKinds: ctx.reactionKinds, rooms: roomZones };
+    const W0 = data.world || {};
+    const ids = list => (Array.isArray(list) ? list.map(x => x && x.id) : []);
+    const catalogs = { mechanics: ctx.mechanics, organs: ctx.organs, reactionKinds: ctx.reactionKinds, maps: ids(W0.maps), themes: ids(W0.themes), zones: ids(W0.zones) };
     const subOf = code => (data.essences.subs || []).find(s => s.code === code);
 
     function check(node, v, path, owner) {
@@ -583,14 +692,45 @@
           if (ctx.validKey && !ctx.validKey(v)) err(P, `${node.label}: "${v}" is not a merge (keys look like FW-Em1Li2, subs in essence order)`);
           return;
         }
-        case 'grid': {
+        case 'grid': case 'zonegrid': {
           if (!Array.isArray(v) || !v.length) return err(P, `${node.label} is empty`);
-          const w = v[0].length;
+          const w = typeof v[0] === 'string' ? v[0].length : 0;
+          if (node.t === 'grid' && (w < 4 || v.length < 4 || w > 160 || v.length > 160)) err(P, `${node.label}: a map is 4 to 160 tiles wide and high (this one is ${w} × ${v.length})`);
+          const marks = new Set(['.'].concat((W0.zones || []).map(z => z && z.mark)));
           v.forEach((row, y) => {
             if (typeof row !== 'string') return err(P, `${node.label} row ${y + 1} is not text`);
             if (row.length !== w) err(P, `${node.label} row ${y + 1} is ${row.length} tiles wide, the first row is ${w}`);
-            for (const ch of row) if (!TILES[ch] && !isSlotChar(ch)) { err(P, `${node.label} row ${y + 1}: "${ch}" is not a tile`); break; }
+            for (const ch of row) {
+              if (node.t === 'grid' ? !TILES[ch] : !marks.has(ch)) { err(P, `${node.label} row ${y + 1}: "${ch}" is not ${node.t === 'grid' ? 'a tile' : 'a zone letter'}`); break; }
+            }
           });
+          return;
+        }
+        case 'colors': {
+          if (!Array.isArray(v) || v.length !== node.count) return err(P, `${node.label} needs ${node.count} colors`);
+          v.forEach((c, i) => { if (typeof c !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(c)) err(P, `${node.label} #${i + 1} must be a color like #ff6b3d`); });
+          return;
+        }
+        case 'reward': {
+          if (!v || typeof v !== 'object' || Array.isArray(v)) return err(P, `${node.label} must be a reward`);
+          const count = (k, n) => { if (!(Number.isInteger(n) && n >= 1 && n <= 99)) err(P, `${node.label}: ${k} must be a whole number from 1 to 99`); };
+          const known = ['lattices', 'cells', 'motes', 'daemon', 'item'];
+          for (const k of Object.keys(v)) if (!known.includes(k)) err(P, `${node.label}: "${k}" is not something a reward can give (${known.join(', ')})`);
+          if (!Object.keys(v).length) err(P, `${node.label} is empty`);
+          if (v.lattices != null) count('lattices', v.lattices);
+          if (v.cells != null) count('cells', v.cells);
+          if (v.motes != null) {
+            if (!v.motes || typeof v.motes !== 'object') err(P, `${node.label}: motes must be a set of essence counts`);
+            else for (const [c, n] of Object.entries(v.motes)) { if (!mains.includes(c) && !subs.includes(c)) err(P, `${node.label}: "${c}" is not an essence`); count(c + ' motes', n); }
+          }
+          if (v.daemon != null) {
+            if (!v.daemon || typeof v.daemon !== 'object') err(P, `${node.label}: the daemon needs a genome and a level`);
+            else {
+              if (ctx.validKey && !ctx.validKey(v.daemon.key)) err(P, `${node.label}: "${v.daemon.key}" is not a merge`);
+              if (!(Number.isInteger(v.daemon.level) && v.daemon.level >= 1 && v.daemon.level <= 60)) err(P, `${node.label}: the daemon's level must be 1 to 60`);
+            }
+          }
+          if (v.item != null && ctx.validKey && !ctx.validKey(v.item)) err(P, `${node.label}: the item is forged from a merge, and "${v.item}" is not one`);
           return;
         }
         case 'object': {
@@ -628,6 +768,89 @@
         default: warn(P, `unknown field type ${node.t}`);
       }
     }
+    // cross-field rules of a world (also used on player-made worlds, see validateWorld)
+    function worldRules(W) {
+      const maps = new Map(W.maps.filter(m => m && m.id).map(m => [m.id, m]));
+      const size = m => ({ w: ((m.tiles || [])[0] || '').length, h: (m.tiles || []).length });
+      const tileOf = (m, x, y) => ((m.tiles || [])[y] || '')[x];
+      const label = t => t.name || `${THING[t.type] ? THING[t.type][0] : 'Thing'} ${t.id}`;
+      const all = new Map(), at = new Map();
+      for (const m of W.maps) {
+        if (!m || !Array.isArray(m.things) || !Array.isArray(m.tiles)) continue;
+        const { w, h } = size(m);
+        if (Array.isArray(m.zones) && (m.zones.length !== h || (m.zones[0] || '').length !== w)) err(`world.maps[${m.id}].zones`, `the zone layer is ${(m.zones[0] || '').length} × ${m.zones.length} but the tiles are ${w} × ${h}`);
+        for (const t of m.things) {
+          if (!t || !t.id) continue;
+          const P = `world.maps[${m.id}].things[${t.id}]`;
+          if (all.has(t.id)) err(P, `the id "${t.id}" is also used on the map ${all.get(t.id).map}`);
+          else all.set(t.id, { t, map: m.id, P });
+          if (!(t.x >= 0 && t.y >= 0 && t.x < w && t.y < h)) { err(P, `${label(t)} stands outside the map (${t.x},${t.y}; the map is ${w} × ${h})`); continue; }
+          const T = TILES[tileOf(m, t.x, t.y)];
+          if (BLOCKING.has(t.type) && t.type !== 'block' && T && T.solid) err(P, `${label(t)} stands on a ${T.name.toLowerCase()} at ${t.x},${t.y}`);
+          if (t.type === 'trigger' && T && T.solid) warn(P, `this trigger sits on a ${T.name.toLowerCase()}, where nobody can step`);
+          const spot = m.id + ':' + t.x + ',' + t.y;
+          if (at.has(spot)) err(P, `${label(t)} shares the tile ${t.x},${t.y} with ${at.get(spot)}`);
+          at.set(spot, label(t));
+          if (LOOKS[t.type] && t.look != null && !LOOKS[t.type].includes(t.look)) err(P + '.look', `a ${t.type} can look like ${LOOKS[t.type].join(', ')}`);
+          if (t.if != null && !parseCond(t.if)) err(P + '.if', `"${t.if}" is not a condition (use flag, !flag, beat:<trainer>, open:<chest>, got:<person>, keys:<n> or won)`);
+          if (t.type === 'warp' && t.to) {
+            const d = maps.get(t.to.map);
+            if (d) { const s2 = size(d); if (!(t.to.x >= 0 && t.to.y >= 0 && t.to.x < s2.w && t.to.y < s2.h)) err(P + '.to', `the warp leads outside ${d.name} (${t.to.x},${t.to.y})`); }
+          }
+          if (t.type === 'chest' && !t.gives) err(P + '.gives', 'a chest needs something inside');
+          if (t.type === 'trainer' && t.final && !t.warden) warn(P + '.final', 'the final boss should also be a Warden');
+          if (t.type === 'trigger' && !t.lines && !t.gives && !t.heal && !t.sets) warn(P, 'this trigger does nothing yet: give it lines, a reward, healing or a flag');
+        }
+      }
+      // conditions name things that exist; checked flags are set somewhere
+      const setFlags = new Set([...all.values()].map(o => o.t.sets).filter(Boolean));
+      for (const { t, P } of all.values()) {
+        for (const c of parseCond(t.if) || []) {
+          const want = { beat: 'trainer', open: 'chest', got: 'person' }[c.kind];
+          if (want) {
+            const o = all.get(c.arg);
+            if (!o) err(P + '.if', `${c.kind}:${c.arg} names nothing in this world`);
+            else if (o.t.type !== want) err(P + '.if', `${c.kind}: needs a ${want}, and ${c.arg} is a ${o.t.type}`);
+            else if (c.kind === 'got' && !o.t.gives) warn(P + '.if', `${o.t.name || c.arg} has no gift, so got:${c.arg} never happens`);
+          }
+          if (c.kind === 'flag' && !setFlags.has(c.arg)) warn(P + '.if', `nothing sets the flag "${c.arg}"`);
+        }
+      }
+      // the start
+      const sm = W.start && maps.get(W.start.map);
+      if (sm) {
+        const { w, h } = size(sm), T = TILES[tileOf(sm, W.start.x, W.start.y)];
+        if (!(W.start.x >= 0 && W.start.y >= 0 && W.start.x < w && W.start.y < h)) err('world.start', `the start is outside ${sm.name}`);
+        else if (T && T.solid) err('world.start', `the start is on a ${T.name.toLowerCase()}`);
+        else if (at.has(sm.id + ':' + W.start.x + ',' + W.start.y)) err('world.start', `the start is where ${at.get(sm.id + ':' + W.start.x + ',' + W.start.y)} stands`);
+      }
+      // trainers: one final boss at most, and enough keys for the gates
+      const trainers = [...all.values()].filter(o => o.t.type === 'trainer').map(o => o.t);
+      const finals = trainers.filter(t => t.final);
+      if (finals.length > 1) err('world.maps', `only one trainer can be the final boss (now ${finals.length}: ${finals.map(t => t.name).join(', ')})`);
+      const keyNames = trainers.filter(t => t.badge).map(t => t.badge);
+      const dup = keyNames.find((k, i) => keyNames.indexOf(k) !== i);
+      if (dup) warn('world.maps', `two trainers give the "${dup}"; a player holds it once, so it counts once`);
+      let most = 0;
+      for (const m of W.maps) for (const row of (m && m.tiles) || []) for (const ch of String(row)) if (TILES[ch] && TILES[ch].keys > most) most = TILES[ch].keys;
+      for (const { t } of all.values()) for (const c of parseCond(t.if) || []) if (c.kind === 'keys' && !c.not && +c.arg > most) most = +c.arg;
+      const giving = new Set(keyNames).size;
+      if (most > giving) warn('world.maps', `something needs ${most} key${most > 1 ? 's' : ''} but only ${giving} trainer${giving === 1 ? ' gives' : 's give'} a key`);
+      // wild levels, starters
+      for (const z of W.zones) for (const w of (z && z.wild) || []) if (w.min > w.max) err(`world.zones[${z.id}].wild[${w.key}]`, 'the lowest level is above the highest');
+      for (const s of W.starters || []) {
+        const ms = typeof s.key === 'string' ? [s.key[0], s.key[1]] : [];
+        for (const a of s.attune || []) { const sub = subOf(a); if (sub && sub.host && !ms.includes(sub.host)) err(`world.starters[${s.key}].attune`, `${sub.name} binds to ${sub.host}, which this genome doesn't have`); }
+      }
+      const seenName = new Map();
+      for (const [k, o] of Object.entries(W.merges || {})) if (o && o.dName) { if (seenName.has(o.dName)) err(`world.merges[${k}].dName`, `"${o.dName}" is also the name of ${seenName.get(o.dName)}`); seenName.set(o.dName, k); }
+    }
+    // ctx.only = 'world': just that file (a player-made world, checked against the game's content)
+    if (ctx.only) {
+      check(SCHEMA.fields[ctx.only], data[ctx.only], [{ k: ctx.only }], null);
+      if (ctx.only === 'world' && data.world && Array.isArray(data.world.maps) && Array.isArray(data.world.zones) && Array.isArray(data.world.themes)) worldRules(data.world);
+      return out;
+    }
     check(SCHEMA, data, [], null);
 
     // ---- rules that span fields
@@ -661,35 +884,9 @@
     const dupName = allNames.find((x, i) => allNames.indexOf(x) !== i);
     if (dupName) err('combos', `two combos are called "${dupName}"`);
     // residue: one reaction per (cast, into)
-    // trainers: rooms, slots and keys
-    const rooms = {};
-    for (const r of W_.rooms || []) rooms[r.zone] = r;
-    const slotsUsed = new Map();
-    for (const t of W_.trainers || []) {
-      const P = `world.trainers[${t.id}]`;
-      const room = rooms[t.zone];
-      if (!room) continue;
-      const count = (room.rows || []).join('').split(t.slot).length - 1;
-      if (count === 0) err(P + '.slot', `the ${t.zone} room has no "${t.slot}" in its layout: paint the slot where ${t.name} stands`);
-      if (count > 1) err(P + '.slot', `the ${t.zone} room has "${t.slot}" ${count} times`);
-      const sk = t.zone + '/' + t.slot;
-      if (slotsUsed.has(sk)) err(P + '.slot', `${slotsUsed.get(sk)} already stands on ${t.zone} slot "${t.slot}"`);
-      slotsUsed.set(sk, t.name);
-      if (TILES[t.slot]) err(P + '.slot', `"${t.slot}" is a tile letter; use another letter`);
-      if (t.final && !t.warden) warn(P + '.final', 'the final boss should also be a Warden');
-    }
-    for (const r of W_.rooms || []) for (const ch of new Set((r.rows || []).join(''))) if (isSlotChar(ch) && !slotsUsed.has(r.zone + '/' + ch)) err(`world.rooms[${r.zone}].rows`, `slot "${ch}" in the ${r.zone} room has no trainer`);
-    const finals = (W_.trainers || []).filter(t => t.final);
-    if (finals.length !== 1) err('world.trainers', `exactly one trainer must be the final boss (now ${finals.length})`);
-    const wardens = (W_.trainers || []).filter(t => t.warden && !t.final);
-    if (wardens.length < 4) warn('world.trainers', `there are ${wardens.length} Wardens; the gates need 4 keys`);
-    // wild levels
-    for (const z of W_.zones || []) for (const w of z.wild || []) if (w.min > w.max) err(`world.zones[${z.id}].wild[${w.key}]`, 'the lowest level is above the highest');
-    // starters: attunements must fit the genome
-    for (const s of W_.starters || []) {
-      const ms = typeof s.key === 'string' ? [s.key[0], s.key[1]] : [];
-      for (const a of s.attune || []) { const sub = subOf(a); if (sub && sub.host && !ms.includes(sub.host)) err(`world.starters[${s.key}].attune`, `${sub.name} binds to ${sub.host}, which this genome doesn't have`); }
-    }
+    // the world: ids, positions, links and conditions
+    const W_ok = W_ && Array.isArray(W_.maps) && Array.isArray(W_.zones) && Array.isArray(W_.themes);
+    if (W_ok) worldRules(W_);
     // overrides: hand-given names stay unique
     const ov = data.overrides || {};
     for (const f of ['name', 'dName']) {
@@ -698,36 +895,63 @@
     }
     return out;
   }
-  // The built map (C = CONTENT.make(E) for the data): every trainer, person and terminal can be
-  // reached from the spawn point with every gate open, and people stand on open floor.
+  // The built world (C = CONTENT.make(E)): starting from the start and walking through every warp
+  // with every gate open (and every thing that has a condition gone), each trainer, person, sign,
+  // chest, terminal, warp and trigger can be reached, and no warp leads into a wall.
   function checkWorld(C) {
     const out = [];
-    let map;
-    try { map = C.buildMap(); } catch (e) { return [{ level: 'error', path: 'world.rooms', msg: 'the map can\'t be built: ' + e.message }]; }
-    const passable = (x, y) => { const ch = (map.tiles[y] || '')[x]; return ch != null && (!C.SOLID.has(ch) || C.GATES[ch]); };
-    const npcAt = new Map();
-    for (const n of map.npcs) {
-      const at = n.x + ',' + n.y, P = n.kind === 'folk' ? `world.npcs[${n.id}]` : `world.trainers[${n.id}]`;
-      if (npcAt.has(at)) out.push({ level: 'error', path: P, msg: `${n.name} stands on the same tile as ${npcAt.get(at)}` });
-      npcAt.set(at, n.name);
-      if (n.kind === 'folk' && !passable(n.x, n.y)) out.push({ level: 'error', path: P, msg: `${n.name} stands on a wall or obstacle at ${n.x},${n.y}` });
+    const maps = C.MAPS || {}, st = C.START;
+    if (!st || !maps[st.map]) return [{ level: 'error', path: 'world.start', msg: 'the start is not on a map of this world' }];
+    const key = (m, x, y) => m + ':' + x + ',' + y;
+    const blockers = new Set(), warps = new Map();
+    for (const m of Object.values(maps)) for (const t of m.things) {
+      if (BLOCKING.has(t.type) && !t.cond) blockers.add(key(m.id, t.x, t.y));
+      if (t.type === 'warp') warps.set(key(m.id, t.x, t.y), t);
     }
-    const seen = new Set([map.spawn.x + ',' + map.spawn.y]), q = [map.spawn];
+    const walk = (m, x, y) => {
+      const M = maps[m]; if (!M || x < 0 || y < 0 || x >= M.w || y >= M.h) return false;
+      if (warps.has(key(m, x, y))) return true;
+      const T = TILES[M.tiles[y][x]];
+      return !!T && (!T.solid || !!T.keys) && !blockers.has(key(m, x, y));
+    };
+    const seen = new Set([key(st.map, st.x, st.y)]), q = [[st.map, st.x, st.y]];
     while (q.length) {
-      const { x, y } = q.shift();
+      const [m, x, y] = q.shift();
+      const w = warps.get(key(m, x, y));
+      if (w && w.to && maps[w.to.map]) { const id = key(w.to.map, w.to.x, w.to.y); if (!seen.has(id)) { seen.add(id); q.push([w.to.map, w.to.x, w.to.y]); } }
       for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-        const nx = x + dx, ny = y + dy, id = nx + ',' + ny;
-        if (seen.has(id) || !passable(nx, ny) || npcAt.has(id)) continue;
-        seen.add(id); q.push({ x: nx, y: ny });
+        const nx = x + dx, ny = y + dy, id = key(m, nx, ny);
+        if (seen.has(id) || !walk(m, nx, ny)) continue;
+        seen.add(id); q.push([m, nx, ny]);
       }
     }
-    const reach = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => seen.has((x + dx) + ',' + (y + dy)));
-    for (const n of map.npcs) if (!reach(n.x, n.y)) out.push({ level: 'error', path: n.kind === 'folk' ? `world.npcs[${n.id}]` : `world.trainers[${n.id}]`, msg: `nobody can reach ${n.name} at ${n.x},${n.y}` });
-    for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) {
-      const ch = map.tiles[y][x];
-      if ('HFR'.includes(ch) && !reach(x, y)) out.push({ level: 'error', path: 'world.rooms[' + (map.zone[y][x] || 'nexus') + ']', msg: `the ${TILES[ch][0].toLowerCase()} at ${x},${y} can't be reached` });
+    const near = (m, x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => seen.has(key(m, x + dx, y + dy)));
+    for (const M of Object.values(maps)) {
+      let any = false;
+      for (const k of seen) if (k.startsWith(M.id + ':')) { any = true; break; }
+      if (!any) { out.push({ level: 'warn', path: `world.maps[${M.id}]`, msg: `nothing leads to ${M.name}: add a warp to it` }); continue; }
+      for (const t of M.things) {
+        const P = `world.maps[${M.id}].things[${t.id}]`, nm = t.name || `the ${t.type} ${t.id}`;
+        if (t.type === 'warp' || t.type === 'trigger') { if (!seen.has(key(M.id, t.x, t.y))) out.push({ level: 'error', path: P, msg: `nobody can step on ${nm} at ${t.x},${t.y}` }); }
+        else if (t.type !== 'block' && !near(M.id, t.x, t.y)) out.push({ level: 'error', path: P, msg: `nobody can reach ${nm} at ${t.x},${t.y}` });
+        if (t.type === 'warp' && t.to) {
+          const D = maps[t.to.map];
+          if (!D) out.push({ level: 'error', path: P + '.to', msg: `the warp leads to a map that doesn't exist (${t.to.map})` });
+          else if (!walk(t.to.map, t.to.x, t.to.y)) out.push({ level: 'error', path: P + '.to', msg: `the warp leads into ${D.tiles[t.to.y] ? tileName(D.tiles[t.to.y][t.to.x]).toLowerCase() : 'nothing'} at ${D.name} ${t.to.x},${t.to.y}` });
+        }
+      }
+      for (let y = 0; y < M.h; y++) for (let x = 0; x < M.w; x++) {
+        const T = TILES[M.tiles[y][x]];
+        if (T && T.use && !near(M.id, x, y)) out.push({ level: 'error', path: `world.maps[${M.id}].tiles`, msg: `the ${T.name.toLowerCase()} at ${M.name} ${x},${y} can't be reached` });
+      }
     }
     return out;
+  }
+  // A world on its own (a player-made one), checked against the game's content: its issues, plus
+  // (when C is its built world and nothing is broken) whether everything can be reached.
+  function validateWorld(world, data, ctx, C) {
+    const issues = validate(Object.assign({}, data, { world }), Object.assign({}, ctx, { only: 'world' }));
+    return C && !issues.some(i => i.level === 'error') ? issues.concat(checkWorld(C)) : issues;
   }
   function patternHelp(re) {
     if (re === LOWER) return 'lowercase letters';
@@ -778,7 +1002,8 @@
   const CHANGES_FORMAT = 'essence-protocol.changes/1';
 
   return {
-    FILES, AXES, AXIS, STAT_KEYS, STAT, TIERS, SUB_TIERS, FACING, TILES, RARITY, isSlotChar,
+    FILES, AXES, AXIS, STAT_KEYS, STAT, TIERS, SUB_TIERS, FACING, TILES, TILE_GROUPS, tileName, THING, THING_TYPES, BLOCKING, LOOKS, PARTICLES, FLAG, parseCond, describeCond, RARITY,
+    WORLD_SCHEMA: WORLD, validateWorld,
     SCHEMA, parsePath, pathString, resolve, getAt, describePath, clone, same,
     diff, applyOps, validate, checkWorld, format, hashData, CHANGES_FORMAT,
   };

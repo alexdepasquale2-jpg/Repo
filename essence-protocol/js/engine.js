@@ -14,11 +14,34 @@
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const cache = new Map();
 
+  // A player-made world can give single merges its own names and numbers (world.merges, the
+  // same fields as data/overrides.json), laid over the baked records while it is played.
+  let edits = {};
+  const TEXT_EDIT = ['name', 'text', 'dName', 'dDesc', 'line'];
+  const NUM_EDIT = { power: [1, 160], acc: [55, 101], flux: [3, 30], prio: [-1, 1], hits: [1, 6], instab: [0, 65] };
+  const STAT_ORDER = ['hp', 'atk', 'def', 'spd', 'flux', 'coh'];
+  function setEdits(map) { edits = map || {}; cache.clear(); }
+  function edited(row, ov) {
+    row = row.slice();
+    const at = f => DB.fields.indexOf(f);
+    for (const f of TEXT_EDIT) if (typeof ov[f] === 'string' && ov[f] && at(f) >= 0) row[at(f)] = ov[f];
+    for (const [f, [lo, hi]] of Object.entries(NUM_EDIT)) {
+      if (typeof ov[f] !== 'number' || !isFinite(ov[f]) || at(f) < 0) continue;
+      if ((f === 'power' || f === 'hits') && !(row[at('power')] > 0)) continue;
+      row[at(f)] = clamp(Math.round(ov[f]), lo, hi);
+    }
+    if (ov.dStats && at('dStats') >= 0) row[at('dStats')] = row[at('dStats')].map((v, i) => (typeof ov.dStats[STAT_ORDER[i]] === 'number' ? clamp(Math.round(ov.dStats[STAT_ORDER[i]]), 20, 200) : v));
+    const it = at('item');
+    if (it >= 0 && typeof ov.itemName === 'string' && ov.itemName) row[it] = [row[it][0], ov.itemName.slice(0, 48), row[it][2], row[it][3], row[it][4]];
+    if (it >= 0 && typeof ov.itemLore === 'string' && ov.itemLore) row[it] = [row[it][0], row[it][1], ov.itemLore, row[it][3], row[it][4]];
+    return row;
+  }
   function rec(key) {
     let r = cache.get(key);
     if (r) return r;
-    const row = DB.row(key);
+    let row = DB.row(key);
     if (!row) return null;
+    if (edits[key]) row = edited(row, edits[key]);
     r = { key };
     DB.fields.forEach((f, i) => { r[f] = row[i]; });
     r.fx = r.fx.map(([code, chance, mag]) => ({ code, chance, mag }));
@@ -1081,7 +1104,7 @@
 
   return {
     make, MECHANICS, REACTION_KINDS, mechOf,
-    rec, PASSIVES, STATUS, REACT, ATTUNE_LEVELS, RECOMPILE_LEVELS, LEVEL_CAP,
+    rec, setEdits, PASSIVES, STATUS, REACT, ATTUNE_LEVELS, RECOMPILE_LEVELS, LEVEL_CAP,
     calcStats, levelWidth, width, xpFor, tierOf, mainsOf, eligibleSubs, composableFor, canCompose, autoMemory,
     isAttack, cooldownFor, UTIL_CD, PULSE, SIGNATURE, COMBO, CHARGE_MAX,
     createDaemon, recompileOptions, recompile, gainXp, xpYield, effectiveness, captureChance, Battle, describeFx, passiveOf,

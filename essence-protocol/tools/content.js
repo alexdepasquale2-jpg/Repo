@@ -5,20 +5,22 @@
  * words, the world) lives in data/*.json. This tool reads and edits those files with the same
  * schema, validation and change sets as the content editor (editor/), re-bakes the merge
  * database after a change and says which merges changed. Paths name one value, e.g.
- * essences.subs[Em].desc, world.trainers[air-a].team, overrides[FW-Em1Li2].name.
+ * essences.subs[Em].desc, world.maps[lattice].things[air-a].team, overrides[FW-Em1Li2].name.
  *
  *   node tools/content.js                        what's in the game, and these commands
  *   node tools/content.js list <what>            subs, mains, resonances, trainers, ... (list alone shows all)
  *   node tools/content.js get <path>             print a value as JSON
  *   node tools/content.js set <path> <value>     set a value (JSON, or plain text for a string)
  *   node tools/content.js add <list> <item>      add an item (JSON) to a list, e.g. combos.resonances
- *   node tools/content.js remove <path>          remove an item, e.g. world.npcs[poet]
+ *   node tools/content.js remove <path>          remove an item, e.g. world.maps[lattice].things[tech]
  *   node tools/content.js merge <key>            a baked merge: spell, daemon, item, and why
  *   node tools/content.js find <text>            search spells, daemons, items and content
  *   node tools/content.js check                  validate data/ (schema, references, map)
  *   node tools/content.js preview [changes.json] what a change set (or data/ as it is) changes in db/
  *   node tools/content.js apply <changes.json>   apply a change set from the content editor (an export, or
  *                                                the hosted editor's draft documents saved as a JSON list)
+ *   node tools/content.js world <file>           make a world file from the in-game builder (or a world
+ *                                                code's JSON) the game's world: data/world.json
  *   node tools/content.js format                 rewrite data/*.json in the canonical layout
  *
  * Flags: --dry (show, don't write)  --no-bake (skip the re-bake)  --force (apply stale edits)
@@ -149,14 +151,16 @@ const LISTS = {
   residue: ['battle.residue', x => `${x.cast}>${x.into}  ${x.name.padEnd(12)} ${x.kind}`],
   traits: ['traits.traits', x => `${x.code.padEnd(10)} ${x.category.padEnd(8)} ${x.nouns.join(', ')}`],
   items: ['items.kinds', x => `${x.kind.padEnd(9)} ${x.name}: ${x.desc}`],
-  zones: ['world.zones', x => `${x.id.padEnd(7)} ${x.name.padEnd(15)} ${x.wild.length} wild daemons`],
-  trainers: ['world.trainers', x => `${x.id.padEnd(8)} ${x.name.padEnd(18)} ${x.zone}/${x.slot}  team ${x.team.map(m => m.key + ':' + m.level).join(' ')}`],
-  npcs: ['world.npcs', x => `${x.id.padEnd(8)} ${x.name.padEnd(16)} at ${x.x},${x.y}  ${x.lines.length} lines`],
+  zones: ['world.zones', x => `${x.id.padEnd(7)} ${x.name.padEnd(15)} letter ${x.mark}  theme ${x.theme.padEnd(7)} ${x.rate}%  ${x.wild.length} wild daemons`],
+  themes: ['world.themes', x => `${x.id.padEnd(8)} ${x.name.padEnd(9)} accent ${x.accent}  particles ${x.particles}`],
+  maps: ['world.maps', x => `${x.id.padEnd(10)} ${x.name.padEnd(16)} ${x.tiles[0].length}x${x.tiles.length}  zone ${x.zone}  ${x.things.length} things`],
+  things: [d => [].concat(...d.world.maps.map(m => m.things.map(t => Object.assign({ map: m.id }, t)))), x => `world.maps[${x.map}].things[${x.id}]`.padEnd(38) + ` ${x.type.padEnd(8)} ${String(x.x).padStart(3)},${String(x.y).padEnd(3)} ${x.name || (x.to ? '-> ' + x.to.map : '')}`],
+  trainers: [d => [].concat(...d.world.maps.map(m => m.things.filter(t => t.type === 'trainer').map(t => Object.assign({ map: m.id }, t)))), x => `${x.id.padEnd(8)} ${x.name.padEnd(18)} ${x.map} ${x.x},${x.y}${x.warden ? ' warden' : ''}${x.final ? ' final' : ''}  team ${x.team.map(m => m.key + ':' + m.level).join(' ')}`],
+  people: [d => [].concat(...d.world.maps.map(m => m.things.filter(t => t.type === 'person').map(t => Object.assign({ map: m.id }, t)))), x => `${x.id.padEnd(8)} ${x.name.padEnd(16)} ${x.map} ${x.x},${x.y}  ${x.lines.length} lines`],
   starters: ['world.starters', x => `${x.key.padEnd(6)} attuned to ${x.attune.join(', ')}  ${x.blurb}`],
-  rooms: ['world.rooms', x => `${x.zone.padEnd(6)} at ${x.x},${x.y}  ${x.rows[0].length}x${x.rows.length}`],
   overrides: ['overrides', (x, k) => `${k.padEnd(14)} ${Object.keys(x).join(', ')}`],
 };
-LISTS.people = LISTS.npcs;
+LISTS.npcs = LISTS.people;
 
 function overview(data) {
   const db = readDb(), rows = Object.values(db.rows), fi = f => db.fields.indexOf(f);
@@ -165,7 +169,8 @@ function overview(data) {
   out(`Merges (each is a spell, a daemon form and an item): ${rows.length.toLocaleString('en-US')}`);
   out('  by class: ' + Object.entries(count('cls', rows)).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
   out('  by rarity: ' + Object.entries(count('rarity', rows)).map(([k, v]) => `${SC.RARITY[k]} ${v}`).join(', '));
-  out(`World: ${data.world.zones.length} zones, ${data.world.trainers.length} trainers, ${data.world.npcs.length} people, ${data.world.starters.length} starters · Overrides: ${Object.keys(data.overrides).length}`);
+  const things = [].concat(...data.world.maps.map(m => m.things)), of = t => things.filter(x => x.type === t).length;
+  out(`World "${data.world.title}": ${data.world.maps.length} map${data.world.maps.length === 1 ? '' : 's'}, ${data.world.zones.length} zones, ${data.world.themes.length} themes, ${of('trainer')} trainers, ${of('person')} people, ${things.length - of('trainer') - of('person')} other things, ${data.world.starters.length} starters · Overrides: ${Object.keys(data.overrides).length}`);
   out('\nCommands: list, get, set, add, remove, merge, find, check, preview, apply, format (see the top of tools/content.js).');
 }
 
@@ -179,7 +184,7 @@ function main() {
     if (!what) { out('Lists: ' + Object.keys(LISTS).join(', ')); return; }
     const L = LISTS[what];
     if (!L) fail(`Unknown list "${what}". Lists: ${Object.keys(LISTS).join(', ')}`);
-    const v = SC.getAt(data, L[0]);
+    const v = typeof L[0] === 'function' ? L[0](data) : SC.getAt(data, L[0]);
     if (JSON_OUT) return out(JSON.stringify(v, null, 1));
     if (Array.isArray(v)) v.forEach(x => out(L[1](x))); else for (const [k, x] of Object.entries(v)) out(L[1](x, k));
     if (!(Array.isArray(v) ? v.length : Object.keys(v).length)) out('(none)');
@@ -297,6 +302,18 @@ function main() {
     const stale = Object.entries(files).filter(([f, t]) => !fs.existsSync(path.join(ROOT, f)) || fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/\r\n/g, '\n') !== t).map(([f]) => f);
     if (!args[1]) out(stale.length ? `db/ is stale for data/ as it is now (${stale.length} files): run node tools/bake.js` : 'db/ matches data/.');
     return;
+  }
+  if (cmd === 'world') {
+    if (!args[1]) fail('Usage: node tools/content.js world <file.world.json> [--dry]');
+    let obj;
+    try { obj = JSON.parse(fs.readFileSync(args[1], 'utf8')); } catch (e) { fail(`Can't read ${args[1]}: ${e.message}`); }
+    const world = obj && obj.format === 'essence-protocol.world/2' ? obj.world : obj;
+    if (!world || !Array.isArray(world.maps)) fail(`${args[1]} is not a world file (the builder's Save & share makes one).`);
+    const next = SC.clone(data);
+    next.world = world;
+    const ops = SC.diff(data, next);
+    out(`${ops.length} change${ops.length === 1 ? '' : 's'} to data/world.json (${world.maps.length} maps, ${[].concat(...world.maps.map(m => m.things)).length} things).`);
+    return commit(next, data, `world from ${path.basename(args[1])}`);
   }
   if (cmd === 'format') {
     const written = SC.FILES.filter(f => fs.readFileSync(path.join(ROOT, 'data', f + '.json'), 'utf8') !== SC.format(data[f]));

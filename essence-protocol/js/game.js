@@ -4,13 +4,16 @@
    per-splice designs in designs.js; this file presents them. */
 (function () {
   'use strict';
-  const E = window.ESSENCE, ENG = window.ENGINE, C = window.CONTENT, SP = window.SPRITES, DB = window.MERGE_DB, DZ = window.DESIGNS;
+  const E = window.ESSENCE, ENG = window.ENGINE, SP = window.SPRITES, DB = window.MERGE_DB, DZ = window.DESIGNS, SC = window.CONTENT_SCHEMA, WR = window.WORLD_RENDER;
+  // The world being played: the game's own (data/world.json) or one a player made (see worlds.js).
+  let C = window.CONTENT;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const rnd = n => Math.floor(Math.random() * n);
-  const SAVE_KEY = 'essence-protocol-save-v1';
+  // The content editor's draft (js/draft.js) plays on a save of its own.
+  const SAVE_KEY = self.EP_DRAFT ? 'ep-save:draft' : 'essence-protocol-save-v1';
   const RARITY = ['Base', 'Compound', 'Resonant', 'Trinity', 'Anomaly'];
   const TIER = ['Seed', 'Build', 'Release', 'Prime'];
   const ALL_KEYS = E.enumerateAll(); // the database holds exactly these, in this order
@@ -28,8 +31,10 @@
   let pendingXp = [];
   let skipping = false;
   let muted = false;
-  const map = C.buildMap();
-  const npcs = map.npcs.map(n => Object.assign({}, n));
+  let M = null;       // the map you're on (C.MAPS[id])
+  let things = [];    // its things as they are now: trainers walk up to you, conditions hide things
+  // Where this playthrough saves: the game's own world keeps the save it always had.
+  let saveSlot = SAVE_KEY;
 
   function defaults(s) {
     s.settings = Object.assign({ speed: 'normal', tips: 'compact', auto: false, haptics: true }, s.settings || {});
@@ -45,6 +50,12 @@
     s.kernels = s.kernels || [];     // spliced kernels still compiling
     s.specials = s.specials || [];   // designs already celebrated with a discovery toast
     s.repelUntil = s.repelUntil || 0;
+    s.flags = s.flags || [];         // set by things in the world (chests opened, gifts, story flags)
+    const st = C.START;
+    s.pos = s.pos || { x: st.x, y: st.y, dir: st.facing };
+    if (!s.pos.map || !C.MAPS[s.pos.map]) s.pos.map = st.map;
+    s.lastHeal = s.lastHeal || { x: st.x, y: st.y };
+    if (!s.lastHeal.map || !C.MAPS[s.lastHeal.map]) s.lastHeal.map = s.pos.map;
     for (const list of [s.party || [], s.box || []]) for (const d of list) if (!d.seed) d.seed = newSeed();
     return s;
   }
@@ -59,7 +70,7 @@
     return defaults({
       v: 1, party: [d], box: [], bag: { 'lattice:basic': basicLattice(5) },
       motes: {}, discovered: [], seen: [starter.key], bound: [starter.key], badges: 0, keys: [], beaten: [],
-      pos: { x: map.spawn.x, y: map.spawn.y, dir: 'down' }, lastHeal: { x: map.heal.x, y: map.heal.y }, steps: 0, won: false, started: Date.now(),
+      pos: { map: C.START.map, x: C.START.x, y: C.START.y, dir: C.START.facing }, lastHeal: { map: C.START.map, x: C.START.x, y: C.START.y }, steps: 0, won: false, started: Date.now(),
     });
   }
   function basicLattice(n) { return { id: 'lattice:basic', kind: 'lattice', name: 'Basic Lattice', power: 1, count: n }; }
@@ -67,19 +78,18 @@
   function save() {
     if (!S) return;
     S.discovered = [...discovered]; S.seen = [...seen]; S.bound = [...boundForms];
-    S.pos = { x: player.x, y: player.y, dir: player.dir };
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) { /* storage unavailable */ }
+    if (M) S.pos = { map: M.id, x: player.x, y: player.y, dir: player.dir };
+    try { localStorage.setItem(saveSlot, JSON.stringify(S)); } catch (e) { /* storage unavailable */ }
   }
-  function loadSave() {
-    try { const raw = localStorage.getItem(SAVE_KEY); if (!raw) return null; const s = JSON.parse(raw); return s && s.v === 1 ? s : null; } catch (e) { return null; }
+  function loadSave(slot) {
+    try { const raw = localStorage.getItem(slot || saveSlot); if (!raw) return null; const s = JSON.parse(raw); return s && s.v === 1 ? s : null; } catch (e) { return null; }
   }
   function adopt(s) {
     S = defaults(s);
     discovered = new Set(s.discovered); seen = new Set(s.seen); boundForms = new Set(s.bound);
     for (const list of [S.party, S.box]) for (const d of list) d.memory = d.memory.map(k => (k && DB.has(k) ? k : null));
     migrate();
-    player.x = player.px = s.pos.x; player.y = player.py = s.pos.y; player.dir = s.pos.dir || 'down';
-    follower.x = follower.px = player.x; follower.y = follower.py = player.y;
+    enterMap(S.pos.map, S.pos.x, S.pos.y, S.pos.dir || 'down');
     ensureQuests();
   }
 
@@ -322,7 +332,7 @@
 
   // ------------------------------------------------------------------ requests
   const QUEST_TYPES = ['discover', 'pair', 'bind', 'react', 'defeat', 'resonant', 'forge'];
-  function unlockedMains() { return ['A', 'F', 'W', 'E'].slice(0, Math.min(4, S.badges + 1)); }
+  function unlockedMains() { return C.RULES.mains === 'keys' ? ['A', 'F', 'W', 'E'].slice(0, Math.min(4, S.badges + 1)) : ['A', 'F', 'W', 'E']; }
   function makeReward() {
     const roll = rnd(4);
     if (roll === 0) return { lattices: 3 };
@@ -444,240 +454,29 @@
   }
   addEventListener('resize', resize);
 
-  function shade(hex, amt) {
-    const n = parseInt(hex.slice(1), 16);
-    const f = v => clamp(Math.round(v + (amt < 0 ? v * amt : (255 - v) * amt)), 0, 255);
-    return '#' + [n >> 16 & 255, n >> 8 & 255, n & 255].map(v => f(v).toString(16).padStart(2, '0')).join('');
-  }
-  const THEME = {
-    nexus:  { f1: '#141b2e', f2: '#172036', speck: '#22304f', line: '#243457', wall: '#0c1120', face: '#1d2846', trim: '#46f3ff', grass: ['#15443f', '#23796b', '#7ffff0'], obst: '#46f3ff', accent: '#46f3ff', rgb: '70,243,255', part: 'data', sky: ['#050814', '#111a33'] },
-    fringe: { f1: '#141c2c', f2: '#172233', speck: '#223449', line: '#243c55', wall: '#0b1320', face: '#1b2c44', trim: '#7ffff0', grass: ['#15443f', '#23796b', '#7ffff0'], obst: '#46f3ff', accent: '#5fe0d0', rgb: '95,224,208', part: 'data', sky: ['#050b12', '#0f2230'] },
-    air:    { f1: '#15303a', f2: '#183641', speck: '#24505c', line: '#235563', wall: '#0a1b22', face: '#1f4a57', trim: '#bff8ee', grass: ['#1f6a60', '#3fae98', '#e2fff8'], obst: '#dff6fa', accent: '#8fe6d4', rgb: '143,230,212', part: 'wind', sky: ['#0b2230', '#2d6474'] },
-    fire:   { f1: '#2c1813', f2: '#321b15', speck: '#46261c', line: '#4f2b1f', wall: '#150a07', face: '#3d1d14', trim: '#ff8a3d', grass: ['#6d2c14', '#b4522a', '#ffc27a'], obst: '#ff6b1a', accent: '#ff6b3d', rgb: '255,107,61', part: 'ember', sky: ['#120505', '#4a160c'] },
-    water:  { f1: '#0f213b', f2: '#122644', speck: '#1b365c', line: '#1c3b66', wall: '#060e1b', face: '#16335a', trim: '#6cc4ff', grass: ['#18507f', '#2a7cbc', '#aadcff'], obst: '#1c5fb0', accent: '#3aa6ff', rgb: '58,166,255', part: 'bubble', sky: ['#030a18', '#123a6a'] },
-    earth:  { f1: '#2a2217', f2: '#2f261a', speck: '#3e3222', line: '#463826', wall: '#130e08', face: '#3a2d1c', trim: '#e0b060', grass: ['#56451c', '#86672c', '#efd49c'], obst: '#6b5a45', accent: '#c9913d', rgb: '201,145,61', part: 'dust', sky: ['#0d0904', '#3c2c16'] },
-    core:   { f1: '#160d27', f2: '#1a102f', speck: '#281a45', line: '#2e1d52', wall: '#090512', face: '#26164a', trim: '#b48cff', grass: ['#3a2466', '#6a3fbf', '#e0c8ff'], obst: '#6a3fbf', accent: '#b48cff', rgb: '180,140,255', part: 'spark', sky: ['#07030f', '#2a1552'] },
-  };
-  for (const t of Object.values(THEME)) { t.face2 = shade(t.face, -0.4); t.blade = shade(t.grass[1], -0.15); t.obst2 = shade(t.obst, -0.25); t.obst3 = shade(t.obst, 0.25); }
+  const shade = WR.shade, hash2 = WR.hash2;
+  const R = WR.create(ctx);
+  R.setThemes(Object.values(C.THEMES));
+  const themeOf = zoneId => R.theme(C.ZONES[zoneId] ? C.ZONES[zoneId].theme : null);
 
-  const tileAt = (x, y) => (map.tiles[y] || '')[x] || '#';
-  const zoneAt = (x, y) => (map.zone[y] || [])[x] || 'nexus';
-  const npcAt = (x, y) => npcs.find(n => n.x === x && n.y === y);
+  const tileAt = (x, y) => (M.tiles[y] || '')[x] || '#';
+  const zoneAt = (x, y) => (M.zone[y] || [])[x] || M.zoneId;
+  // the thing standing (or lying) on a tile, if it is there right now
+  const thingAt = (x, y) => { for (const n of things) if (n.visible && n.x === x && n.y === y) return n; return null; };
+  const blockerAt = (x, y) => { const n = thingAt(x, y); return n && SC.BLOCKING.has(n.type) ? n : null; };
   const gateOpen = ch => C.GATES[ch] != null && S && S.badges >= C.GATES[ch];
   function passable(x, y) {
+    if (x < 0 || y < 0 || x >= M.w || y >= M.h) return false;
+    const n = thingAt(x, y);
+    if (n) { if (n.type === 'warp') return true; if (SC.BLOCKING.has(n.type)) return false; }
     const ch = tileAt(x, y);
-    if (C.SOLID.has(ch) && !gateOpen(ch)) return false;
-    return !npcAt(x, y);
+    return !(C.SOLID.has(ch) && !gateOpen(ch));
   }
-  function hash2(x, y) { let h = x * 374761393 + y * 668265263; h = (h ^ (h >> 13)) * 1274126177; return (h ^ (h >> 16)) >>> 0; }
+  // what the renderer asks about the map (one object, reused every frame)
+  const view = { tile: tileAt, theme: (x, y) => themeOf(zoneAt(x, y)), t: 0, rustle, gateOpen };
+  const opened = n => n.type === 'chest' && S && S.flags.includes('open:' + n.id);
 
-  function drawTile(x, y, sx, sy, s, lights) {
-    const ch = tileAt(x, y), th = THEME[zoneAt(x, y)] || THEME.nexus, h = hash2(x, y), u = s / 16;
-    if (ch === '#') {
-      ctx.fillStyle = th.wall; ctx.fillRect(sx, sy, s, s);
-      if (tileAt(x, y + 1) !== '#') {
-        // front face of a wall block (the 2.5D part)
-        const fy = sy + s * 0.4;
-        ctx.fillStyle = th.face; ctx.fillRect(sx, fy, s, s * 0.6);
-        ctx.fillStyle = th.face2; ctx.fillRect(sx, fy + s * 0.38, s, s * 0.22);
-        ctx.fillStyle = 'rgba(0,0,0,.28)';
-        for (let i = 2; i < 16; i += 5) ctx.fillRect(sx + (i + (y % 2) * 2) * u, fy + 1.5 * u, 0.6 * u, s * 0.5);
-        ctx.globalAlpha = 0.5 + 0.3 * Math.sin(animT * 2 + x * 0.7);
-        ctx.fillStyle = th.trim; ctx.fillRect(sx, fy - 0.5 * u, s, 0.9 * u);
-        ctx.globalAlpha = 1;
-        if (h % 7 === 0) { ctx.fillStyle = th.trim; ctx.fillRect(sx + 7 * u, fy + 4 * u, 2 * u, u); lights.push([sx + 8 * u, fy + 4.5 * u, s * 0.7, th.rgb, 0.18]); }
-      } else if (h % 11 === 0) { ctx.fillStyle = th.face; ctx.fillRect(sx + 6 * u, sy + 6 * u, u, u); }
-      return;
-    }
-    // floor
-    ctx.fillStyle = (x + y) % 2 ? th.f1 : th.f2; ctx.fillRect(sx, sy, s, s);
-    ctx.fillStyle = th.speck; ctx.fillRect(sx + (h % 14 + 1) * u, sy + ((h >> 5) % 14 + 1) * u, u, u);
-    if (h % 6 === 0) {
-      const ox = (h >> 3) % 7 + 2;
-      ctx.fillStyle = th.line;
-      ctx.fillRect(sx + ox * u, sy + 8 * u, 6 * u, 0.7 * u); ctx.fillRect(sx + ox * u, sy + 8 * u, 0.7 * u, 5 * u); ctx.fillRect(sx + (ox + 5.5) * u, sy + 7.5 * u, 1.6 * u, 1.6 * u);
-    }
-    if (tileAt(x, y - 1) === '#') { ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(sx, sy, s, 3 * u); ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(sx, sy + 3 * u, s, 2 * u); }
-    if (tileAt(x - 1, y) === '#') { ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(sx, sy, 2 * u, s); }
-    if (tileAt(x + 1, y) === '#') { ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.fillRect(sx + s - 2 * u, sy, 2 * u, s); }
-    switch (ch) {
-      case ',': {
-        const [c1, c2, c3] = th.grass;
-        const r = rustle.get(x + ',' + y), age = r == null ? 9 : animT - r;
-        const shake = age < 0.5 ? Math.sin(age * 40) * u * (0.5 - age) * 4 : 0;
-        ctx.fillStyle = c1; ctx.fillRect(sx + u, sy + 3 * u, s - 2 * u, s - 4 * u);
-        for (let i = 0; i < 7; i++) {
-          const bx = sx + (1.5 + i * 2) * u, sway = Math.sin(animT * 2.2 + x * 0.9 + i) * u * 0.8 + shake;
-          const bh = (6 + (hash2(x + i, y) % 5)) * u;
-          ctx.fillStyle = i % 2 ? c2 : th.blade;
-          ctx.fillRect(bx + sway * 0.5, sy + s - u - bh, u, bh);
-          ctx.fillRect(bx + sway, sy + s - 2 * u - bh, u, u);
-        }
-        if ((h + Math.floor(animT * 6)) % 11 === 0) { ctx.fillStyle = c3; ctx.fillRect(sx + (h % 12 + 2) * u, sy + ((h >> 4) % 8 + 3) * u, u, u); }
-        break;
-      }
-      case '~': {
-        ctx.fillStyle = th.obst; ctx.fillRect(sx, sy, s, s);
-        if (tileAt(x, y - 1) !== '~') { ctx.fillStyle = 'rgba(0,15,45,.45)'; ctx.fillRect(sx, sy, s, 3 * u); ctx.fillStyle = 'rgba(170,220,255,.5)'; ctx.fillRect(sx, sy + 3 * u, s, 0.7 * u); }
-        ctx.fillStyle = 'rgba(170,220,255,.4)';
-        const o = (animT * 5 + x * 5 + y * 3) % 16;
-        ctx.fillRect(sx + (o % 12) * u, sy + 7 * u, 4 * u, 0.8 * u);
-        ctx.fillRect(sx + ((o + 7) % 12) * u, sy + 12 * u, 3 * u, 0.8 * u);
-        break;
-      }
-      case '^': {
-        const g = 0.5 + 0.5 * Math.sin(animT * 3 + x + y);
-        ctx.fillStyle = '#5a1a08'; ctx.fillRect(sx, sy, s, s);
-        ctx.fillStyle = `rgb(255,${100 + 80 * g | 0},30)`; ctx.fillRect(sx + 1.5 * u, sy + 1.5 * u, 13 * u, 13 * u);
-        ctx.fillStyle = '#ffe08a'; ctx.fillRect(sx + (h % 9 + 3) * u, sy + ((h >> 3) % 7 + 4) * u, 2 * u, 2 * u);
-        if ((h + Math.floor(animT * 2)) % 5 === 0) { ctx.fillStyle = '#fff6c8'; ctx.fillRect(sx + (h % 11 + 2) * u, sy + 3 * u, u, u); }
-        lights.push([sx + s / 2, sy + s / 2, s * 1.4, '255,110,30', 0.14 + 0.05 * g]);
-        break;
-      }
-      case 'o': {
-        ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(sx + 2 * u, sy + 12 * u, 13 * u, 3 * u);
-        ctx.fillStyle = th.obst2; ctx.fillRect(sx + 2 * u, sy + 4 * u, 12 * u, 10 * u);
-        ctx.fillStyle = th.obst; ctx.fillRect(sx + 2 * u, sy + 3 * u, 12 * u, 7 * u);
-        ctx.fillStyle = th.obst3; ctx.fillRect(sx + 3 * u, sy + 3 * u, 7 * u, 2 * u);
-        break;
-      }
-      case '*': {
-        const b = Math.sin(animT * 2 + x) * u;
-        ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(sx + 3 * u, sy + 13 * u, 10 * u, 2 * u);
-        ctx.fillStyle = '#7fb8c4'; ctx.fillRect(sx + 4 * u, sy + 8 * u, 8 * u, 6 * u);
-        ctx.fillStyle = '#2c5b66'; ctx.fillRect(sx + 5 * u, sy + 9 * u, 6 * u, 2 * u);
-        ctx.fillStyle = th.obst; ctx.beginPath(); ctx.arc(sx + 8 * u, sy + 5 * u + b, 4.5 * u, 0, 7); ctx.arc(sx + 5 * u, sy + 6 * u + b, 3 * u, 0, 7); ctx.arc(sx + 11 * u, sy + 6 * u + b, 3 * u, 0, 7); ctx.fill();
-        break;
-      }
-      case 'x': {
-        const g = 0.5 + 0.5 * Math.sin(animT * 2.5 + x);
-        ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(sx + 2 * u, sy + 13 * u, 12 * u, 3 * u);
-        ctx.fillStyle = '#2a1850'; ctx.fillRect(sx + 3 * u, sy - 8 * u, 10 * u, s + 6 * u);
-        ctx.fillStyle = '#3d2672'; ctx.fillRect(sx + 3 * u, sy - 8 * u, 10 * u, 2 * u);
-        ctx.fillStyle = `rgba(190,140,255,${0.45 + 0.5 * g})`; ctx.fillRect(sx + 7 * u, sy - 5 * u, 2 * u, 15 * u);
-        lights.push([sx + s / 2, sy + 2 * u, s * 1.3, '180,140,255', 0.12 + 0.08 * g]);
-        break;
-      }
-      case 'H': {
-        ctx.fillStyle = '#0c1a16'; ctx.fillRect(sx + u, sy - 3 * u, 14 * u, 17 * u);
-        ctx.fillStyle = '#12352b'; ctx.fillRect(sx + 2 * u, sy - 2 * u, 12 * u, 9 * u);
-        ctx.fillStyle = '#5dff9a'; ctx.fillRect(sx + 7 * u, sy - u, 2 * u, 7 * u); ctx.fillRect(sx + 4.5 * u, sy + 1.5 * u, 7 * u, 2 * u);
-        ctx.fillStyle = '#1d4a3c'; ctx.fillRect(sx + 3 * u, sy + 9 * u, 10 * u, 2 * u);
-        lights.push([sx + s / 2, sy + 2 * u, s * 1.8, '93,255,154', 0.16 + 0.05 * Math.sin(animT * 3)]);
-        break;
-      }
-      case 'F': {
-        ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(sx + u, sy + 13 * u, 14 * u, 3 * u);
-        ctx.fillStyle = '#2b1e17'; ctx.fillRect(sx + 2 * u, sy + 6 * u, 12 * u, 8 * u);
-        ctx.fillStyle = '#4a342a'; ctx.fillRect(sx + u, sy + 5 * u, 14 * u, 3 * u);
-        ctx.fillStyle = `rgba(255,190,90,${0.5 + 0.4 * Math.sin(animT * 4)})`; ctx.fillRect(sx + 4 * u, sy + 9 * u, 8 * u, 3 * u);
-        ['#ff6b3d', '#3aa6ff', '#c9913d', '#8fe6d4'].forEach((c, i) => {
-          const a = animT * 1.6 + i * Math.PI / 2;
-          ctx.fillStyle = c; ctx.fillRect(sx + (8 + Math.cos(a) * 5) * u - u, sy + (2 + Math.sin(a) * 2) * u - u, 2 * u, 2 * u);
-        });
-        lights.push([sx + s / 2, sy + 6 * u, s * 1.8, '255,170,90', 0.16]);
-        break;
-      }
-      case 'R': {
-        const cx = sx + s / 2, cy = sy + s / 2;
-        ctx.lineWidth = u * 1.2;
-        for (let i = 0; i < 3; i++) {
-          ctx.strokeStyle = ['#b48cff', '#46f3ff', '#ff5cf0'][i];
-          ctx.beginPath(); ctx.arc(cx, cy, (6 - i * 1.6) * u, animT * (1.5 + i) + i, animT * (1.5 + i) + i + 4.2); ctx.stroke();
-        }
-        ctx.fillStyle = '#fff'; ctx.fillRect(cx - u / 2, cy - u / 2, u, u);
-        lights.push([cx, cy, s * 2, '180,140,255', 0.22 + 0.08 * Math.sin(animT * 4)]);
-        break;
-      }
-      case '2': case '3': case '4': case '5': {
-        if (gateOpen(ch)) { ctx.fillStyle = 'rgba(70,243,255,.12)'; ctx.fillRect(sx, sy + 7 * u, s, 2 * u); break; }
-        const g = 0.5 + 0.5 * Math.sin(animT * 5 + y);
-        ctx.fillStyle = `rgba(255,84,112,${0.25 + 0.25 * g})`; ctx.fillRect(sx, sy, s, s);
-        ctx.fillStyle = '#ffd0d8';
-        for (let i = 0; i < 4; i++) ctx.fillRect(sx + (i * 4 + 1.5) * u, sy, 0.8 * u, s);
-        lights.push([sx + s / 2, sy + s / 2, s * 1.2, '255,84,112', 0.14]);
-        break;
-      }
-      default: break;
-    }
-  }
-
-  // ---- people: 16x17 pixel templates, cached per palette/dir/frame
-  const PT = {
-    down: ['................', '.....HHHHHH.....', '....HHHHHHHH....', '....HSSSSSSH....', '....SVVVVVVS....', '....SVEVVEVS....', '.....SSSSSS.....', '....JJJJJJJJ....', '...JJjJLLJjJJ...', '...SJjJJJJjJS...', '...SJJJJJJJJS...', '....jjjjjjjj....'],
-    up: ['................', '.....HHHHHH.....', '....HHHHHHHH....', '....HHHHHHHH....', '....HHHHHHHH....', '....SHHHHHHS....', '.....SSSSSS.....', '....JJJJJJJJ....', '...JJjJJJJjJJ...', '...SJjJJJJjJS...', '...SJJJJJJJJS...', '....jjjjjjjj....'],
-    side: ['................', '.....HHHHHH.....', '....HHHHHHHH....', '....SSSSSHHH....', '...VVVVVSSHH....', '...VEVVSSSHH....', '.....SSSSSS.....', '.....JJJJJJ.....', '....JLJJJjJ.....', '....JSJJJjJ.....', '....JSJJJJJ.....', '.....jjjjjj.....'],
-  };
-  const PAL = {
-    player: { id: 'p', H: '#46f3ff', S: '#f0c9a0', V: '#101421', E: '#c8feff', J: '#1f6f82', j: '#134653', L: 'rgba(255,255,255,.35)', P: '#1c2130', B: '#07090f', cape: '#46f3ff' },
-    folk: { id: 'f', H: '#9aa6c8', S: '#e8c0a0', V: '#101421', E: '#ffe9a0', J: '#3a4466', j: '#262d45', L: 'rgba(255,255,255,.25)', P: '#1c2130', B: '#07090f', cape: '#3a4466' },
-  };
-  for (const z of ['air', 'fire', 'water', 'earth', 'core']) {
-    const th = THEME[z];
-    PAL[z] = { id: z, H: th.accent, S: '#e8c0a0', V: '#101421', E: th.trim, J: shade(th.accent, -0.45), j: shade(th.accent, -0.65), L: 'rgba(255,255,255,.25)', P: '#1c2130', B: '#07090f', cape: shade(th.accent, -0.2) };
-  }
-  const personCache = new Map();
-  function personCanvas(pal, dir, frame, kind) {
-    const id = pal.id + dir + frame + kind;
-    if (personCache.has(id)) return personCache.get(id);
-    const c = document.createElement('canvas'); c.width = 16; c.height = 17;
-    const g = c.getContext('2d');
-    const side = dir === 'left' || dir === 'right';
-    const px = (x, y, w, h, col) => { g.fillStyle = col; g.fillRect(x, y, w, h); };
-    if (kind === 'warden') px(3, 8, 10, 8, pal.cape);
-    PT[side ? 'side' : dir].forEach((row, y) => { for (let x = 0; x < 16; x++) { const k = row[x]; if (k !== '.') px(x, y + 1, 1, 1, pal[k]); } });
-    const L = pal.P, Bt = pal.B;
-    if (side) {
-      const a = frame === 1 ? -1 : frame === 2 ? 1 : 0;
-      px(6 + a, 13, 2, 3, L); px(6 + a, 16, 2, 1, Bt);
-      px(8 - a, 13, 2, 3, L); px(8 - a, 16, 2, 1, Bt);
-    } else {
-      const l = frame === 1 ? 1 : 0, r = frame === 2 ? 1 : 0;
-      px(5, 13, 3, 3 - l, L); px(5, 16 - l, 3, 1, Bt);
-      px(8, 13, 3, 3 - r, L); px(8, 16 - r, 3, 1, Bt);
-    }
-    if (kind === 'warden') { px(5, 0, 6, 1, '#ffd23d'); px(7, 0, 2, 1, '#fff2a8'); }
-    let out = c;
-    if (dir === 'right') { out = document.createElement('canvas'); out.width = 16; out.height = 17; const o = out.getContext('2d'); o.translate(16, 0); o.scale(-1, 1); o.drawImage(c, 0, 0); }
-    personCache.set(id, out);
-    return out;
-  }
-  function drawPerson(sx, sy, s, pal, dir, frame, kind, bob) {
-    const u = s / 16;
-    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.ellipse(sx + s / 2, sy + s - u, 5 * u, 1.8 * u, 0, 0, 7); ctx.fill();
-    ctx.drawImage(personCanvas(pal, dir, frame, kind), sx, sy - 3 * u + (bob || 0), s, s * 17 / 16);
-  }
-
-  // ---- ambient particles (world pixels)
-  const amb = [];
-  function spawnAmb(kind, camX, camY, W, H, s) {
-    const x = camX + Math.random() * W, y = camY + Math.random() * H, k = s / 16;
-    switch (kind) {
-      case 'wind': return { kind, x: camX + W + Math.random() * W * 0.3, y, vx: -(140 + Math.random() * 120) * k, vy: 8 * k, life: 4, size: k, col: 'rgba(230,255,250,' };
-      case 'ember': return { kind, x, y: camY + H + 10, vx: (Math.random() - 0.5) * 20 * k, vy: -(25 + Math.random() * 35) * k, life: 6, size: k * (1 + Math.random()), col: 'rgba(255,150,60,' };
-      case 'bubble': return { kind, x, y: camY + H + 10, vx: 0, vy: -(15 + Math.random() * 20) * k, life: 7, size: k * (1.5 + Math.random() * 1.5), col: 'rgba(170,220,255,' };
-      case 'dust': return { kind, x, y, vx: (8 + Math.random() * 10) * k, vy: (Math.random() - 0.5) * 6 * k, life: 5, size: k, col: 'rgba(239,212,156,' };
-      case 'spark': return { kind, x, y, vx: 0, vy: -6 * k, life: 1 + Math.random() * 2, size: k, col: 'rgba(200,160,255,' };
-      default: return { kind: 'data', x, y: camY - 10, vx: 0, vy: (12 + Math.random() * 18) * k, life: 8, size: k, col: 'rgba(70,243,255,' };
-    }
-  }
-  function drawAmbient(dt, camX, camY, W, H, s, zone) {
-    const th = THEME[zone] || THEME.nexus;
-    while (amb.length < 34) amb.push(spawnAmb(th.part, camX, camY, W, H, s));
-    for (let i = amb.length - 1; i >= 0; i--) {
-      const p = amb[i];
-      p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
-      if (p.kind === 'ember') p.x += Math.sin(animT * 3 + p.y * 0.01) * 0.3 * dpr;
-      const sx = p.x - camX, sy = p.y - camY;
-      if (p.life <= 0 || sx < -40 || sx > W * 1.4 || sy < -40 || sy > H + 40 || (p.kind !== th.part && Math.random() < 0.02)) { amb.splice(i, 1); continue; }
-      const a = Math.min(1, p.life) * (p.kind === 'spark' ? 0.5 + 0.5 * Math.sin(animT * 10 + i) : 0.7);
-      ctx.fillStyle = p.col + a + ')';
-      if (p.kind === 'wind') ctx.fillRect(sx, sy, p.size * 10, p.size * 0.6);
-      else if (p.kind === 'bubble') { ctx.strokeStyle = p.col + a + ')'; ctx.lineWidth = p.size * 0.4; ctx.beginPath(); ctx.arc(sx, sy, p.size, 0, 7); ctx.stroke(); }
-      else ctx.fillRect(sx, sy, p.size, p.size);
-    }
-  }
-
+  const lights = [];
   function renderWorld(dt) {
     const W = cv.width, H = cv.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -687,27 +486,31 @@
     const camX = Math.round((player.px + 0.5) * s - W / 2), camY = Math.round((player.py + 0.5) * s - H / 2);
     const x0 = Math.floor(camX / s) - 1, y0 = Math.floor(camY / s) - 1;
     const x1 = x0 + Math.ceil(W / s) + 2, y1 = y0 + Math.ceil(H / s) + 2;
-    const lights = [];
+    view.t = animT;
+    lights.length = 0;
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-      if (x < 0 || y < 0 || x >= map.w || y >= map.h) continue;
-      drawTile(x, y, Math.round(x * s - camX), Math.round(y * s - camY), s, lights);
+      if (x < 0 || y < 0 || x >= M.w || y >= M.h) continue;
+      R.drawTile(view, x, y, Math.round(x * s - camX), Math.round(y * s - camY), s, lights);
     }
     const actors = [];
-    for (const n of npcs) if (n.x >= x0 && n.x <= x1 && n.y >= y0 && n.y <= y1) actors.push({ y: n.y, draw: () => {
-      const sx = Math.round(n.x * s - camX), sy = Math.round(n.y * s - camY);
-      const pal = n.kind === 'folk' ? PAL.folk : PAL[n.zone] || PAL.folk;
-      drawPerson(sx, sy, s, pal, n.dir, 0, n.kind, Math.sin(animT * 2 + n.x) > 0.6 ? -u * 0.5 : 0);
-      const beaten = S.beaten.includes(n.id);
-      const marker = spotted === n || (n.warden && (!beaten || S.won));
-      if (marker) {
-        const by = sy - 8 * u + Math.sin(animT * 4) * u;
-        ctx.fillStyle = spotted === n ? '#ffd23d' : beaten ? '#b48cff' : '#46f3ff';
-        ctx.fillRect(sx + 5 * u, by, 6 * u, 5 * u); ctx.fillRect(sx + 7 * u, by + 5 * u, 2 * u, u);
-        ctx.fillStyle = '#0b0e18';
-        if (spotted === n) { ctx.fillRect(sx + 7.5 * u, by + u, u, 2 * u); ctx.fillRect(sx + 7.5 * u, by + 3.5 * u, u, 0.8 * u); }
-        else ctx.fillRect(sx + 7 * u, by + 1.5 * u, 2 * u, 2 * u);
-      }
-    } });
+    for (const n of things) {
+      if (!n.visible || n.x < x0 || n.x > x1 || n.y < y0 || n.y > y1) continue;
+      if (n.type !== 'person' && n.type !== 'trainer') { R.drawThing(view, n, Math.round(n.x * s - camX), Math.round(n.y * s - camY), s, lights, opened(n)); continue; }
+      actors.push({ y: n.y, draw: () => {
+        const sx = Math.round(n.x * s - camX), sy = Math.round(n.y * s - camY);
+        R.drawPerson(sx, sy, s, R.personPal(n.kind, n.color, themeOf(n.zone)), n.dir, 0, n.kind, Math.sin(animT * 2 + n.x) > 0.6 ? -u * 0.5 : 0);
+        const beaten = S.beaten.includes(n.id);
+        const marker = spotted === n || (n.warden && (!beaten || S.won));
+        if (marker) {
+          const by = sy - 8 * u + Math.sin(animT * 4) * u;
+          ctx.fillStyle = spotted === n ? '#ffd23d' : beaten ? '#b48cff' : '#46f3ff';
+          ctx.fillRect(sx + 5 * u, by, 6 * u, 5 * u); ctx.fillRect(sx + 7 * u, by + 5 * u, 2 * u, u);
+          ctx.fillStyle = '#0b0e18';
+          if (spotted === n) { ctx.fillRect(sx + 7.5 * u, by + u, u, 2 * u); ctx.fillRect(sx + 7.5 * u, by + 3.5 * u, u, 0.8 * u); }
+          else ctx.fillRect(sx + 7 * u, by + 1.5 * u, 2 * u, 2 * u);
+        }
+      } });
+    }
     const lead = S.party.find(d => d.hp > 0) || S.party[0];
     actors.push({ y: follower.py, draw: () => {
       const sx = Math.round(follower.px * s - camX), sy = Math.round(follower.py * s - camY);
@@ -716,37 +519,21 @@
     } });
     actors.push({ y: player.py + 0.01, draw: () => {
       const sx = Math.round(player.px * s - camX), sy = Math.round(player.py * s - camY);
-      const fr = player.moving && player.t < 0.6 ? 1 + (S.steps % 2) : 0;
-      drawPerson(sx, sy, s, PAL.player, player.dir, fr, 'player', 0);
+      const fr = player.moving && player.t < 0.6 && !player.slide ? 1 + (S.steps % 2) : 0;
+      R.drawPerson(sx, sy, s, R.personPal('player'), player.dir, fr, 'player', 0);
     } });
     actors.sort((a, b) => a.y - b.y).forEach(a => a.draw());
     // additive lights: each glow is a cached sprite, not a new gradient every frame
-    ctx.globalCompositeOperation = 'lighter';
-    for (const [lx, ly, r, col, a] of lights) { ctx.globalAlpha = Math.min(1, a); ctx.drawImage(glow(col, r), lx - r, ly - r); }
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-    drawAmbient(dt, camX, camY, W, H, s, zoneAt(player.x, player.y));
+    R.flushLights(lights);
+    R.drawAmbient(dt, camX, camY, W, H, s, themeOf(zoneAt(player.x, player.y)), animT);
     // the vignette is a CSS layer (#vignette), composited by the GPU
-  }
-  const glows = new Map();
-  function glow(col, r) {
-    const R = Math.max(1, Math.round(r)), id = col + '|' + R;
-    let c = glows.get(id);
-    if (!c) {
-      c = document.createElement('canvas'); c.width = c.height = R * 2;
-      const g = c.getContext('2d'), gr = g.createRadialGradient(R, R, 0, R, R, R);
-      gr.addColorStop(0, `rgba(${col},1)`); gr.addColorStop(1, `rgba(${col},0)`);
-      g.fillStyle = gr; g.fillRect(0, 0, R * 2, R * 2);
-      glows.set(id, c);
-    }
-    return c;
   }
 
   function frame(t) {
     const dt = Math.min(0.05, (t - lastTime) / 1000 || 0); lastTime = t; animT += dt;
-    if (S && (mode === 'world' || mode === 'busy')) {
+    if (S && M && (mode === 'world' || mode === 'busy')) {
       if (player.moving) {
-        player.t += dt / 0.12;
+        player.t += dt / (player.slide ? 0.08 : 0.12);
         const [fx, fy] = player.from;
         if (player.t >= 1) { player.moving = false; player.px = player.x; player.py = player.y; follower.px = follower.x; follower.py = follower.y; onStep(); }
         else {
@@ -757,42 +544,50 @@
       if (!player.moving && mode === 'world' && held) tryMove(held);
       renderWorld(dt);
     }
+    if (window.BUILD && mode === 'build') window.BUILD.frame(dt, animT);
     requestAnimationFrame(frame);
   }
 
-  function tryMove(dir) {
+  function tryMove(dir, slide) {
     player.dir = dir;
     const [dx, dy] = DIRS[dir];
     const nx = player.x + dx, ny = player.y + dy;
-    if (!passable(nx, ny)) return;
+    if (!passable(nx, ny)) return false;
     player.from = [player.x, player.y];
     follower.x = player.x; follower.y = player.y;
-    player.x = nx; player.y = ny; player.t = 0; player.moving = true;
+    player.x = nx; player.y = ny; player.t = 0; player.moving = true; player.slide = !!slide;
+    return true;
   }
 
   function onStep() {
     S.steps++; S.sinceFight++;
-    const z = zoneAt(player.x, player.y);
+    const z = zoneAt(player.x, player.y), here = thingAt(player.x, player.y);
     updateHud();
+    if (here && here.type === 'warp') { warp(here); return; }
     if (tileAt(player.x, player.y) === ',') rustle.set(player.x + ',' + player.y, animT);
     if (S.kernels.length) tickKernels();
     const mend = partyTrait('mender');
     if (mend && S.steps % 25 === 0) for (const d of S.party) if (d.hp > 0) { const mx = ENG.calcStats(d).hp; d.hp = Math.min(mx, d.hp + Math.ceil(mx * mend / 100)); }
+    if (here && here.type === 'trigger') { runTrigger(here); return; }
     if (checkSight()) return;
+    // ice: keep sliding the way you were going until something stops you
+    const T = C.TILES[tileAt(player.x, player.y)];
+    if (T && T.slide && tryMove(player.dir, true)) return;
     // trait utilities: lure and shroud shift the encounter rate, repel stops it for a while
-    const rate = S.steps < S.repelUntil ? 0 : 0.12 * (1 + partyTrait('lure') / 100) * (1 - partyTrait('shroud') / 100);
-    if (tileAt(player.x, player.y) === ',' && C.ZONES[z] && S.sinceFight >= 4 && Math.random() < rate) { S.sinceFight = 0; startWild(z); return; }
+    const zone = C.ZONES[z];
+    const rate = S.steps < S.repelUntil || !zone ? 0 : zone.rate / 100 * (1 + partyTrait('lure') / 100) * (1 - partyTrait('shroud') / 100);
+    if (tileAt(player.x, player.y) === ',' && zone && zone.wild.length && S.sinceFight >= 4 && Math.random() < rate) { S.sinceFight = 0; startWild(z); return; }
     if (S.steps % 20 === 0) save();
   }
 
   function checkSight() {
-    for (const n of npcs) {
-      if (!n.sight || n.kind === 'folk' || S.beaten.includes(n.id)) continue;
+    for (const n of things) {
+      if (n.type !== 'trainer' || !n.visible || !n.sight || S.beaten.includes(n.id)) continue;
       const [dx, dy] = DIRS[n.dir];
       for (let d = 1; d <= n.sight; d++) {
         const x = n.x + dx * d, y = n.y + dy * d;
-        if (C.SOLID.has(tileAt(x, y))) break;
         if (x === player.x && y === player.y) { challenge(n, d); return true; }
+        if (C.SOLID.has(tileAt(x, y)) || blockerAt(x, y)) break;
       }
     }
     return false;
@@ -810,16 +605,127 @@
     startTrainer(n);
   }
 
+  // ---- maps, things and flags
+  // Puts the player on a map. Things start where the world puts them (trainers walk back).
+  function enterMap(id, x, y, dir) {
+    const next = C.MAPS[id] || C.MAPS[C.START.map];
+    const changed = !M || M.id !== next.id;
+    M = next;
+    things = M.things.map(t => Object.assign({}, t));
+    refreshThings();
+    player.x = player.px = follower.x = follower.px = clamp(x | 0, 0, M.w - 1);
+    player.y = player.py = follower.y = follower.py = clamp(y | 0, 0, M.h - 1);
+    player.dir = dir || player.dir; player.moving = false; player.slide = false;
+    if (changed) { R.clearAmbient(); rustle.clear(); }
+    if (S) updateHud();
+    return changed;
+  }
+  // A thing is there while its condition holds (and an orb is gone once it's picked up).
+  function refreshThings() {
+    for (const n of things) n.visible = condOk(n.cond) && !(n.type === 'chest' && n.look === 'orb' && opened(n));
+  }
+  function has(t) {
+    switch (t.kind) {
+      case 'beat': return S.beaten.includes(t.arg);
+      case 'open': return S.flags.includes('open:' + t.arg);
+      case 'got': return S.flags.includes('got:' + t.arg);
+      case 'keys': return S.badges >= +t.arg;
+      case 'won': return !!S.won;
+      default: return S.flags.includes(t.arg);
+    }
+  }
+  const condOk = c => !c || !S || c.every(t => has(t) !== t.not);
+  function setFlag(f) { if (f && !S.flags.includes(f)) S.flags.push(f); refreshThings(); }
+
+  const fade = on => { $('fade').classList.toggle('on', on); return sleep(on ? 190 : 60); };
+  async function warp(w) {
+    mode = 'busy'; setPad(false); held = null;
+    beep(330, 0.06, 'sine', 0.03);
+    await fade(true);
+    const changed = enterMap(w.to.map, w.to.x, w.to.y, w.to.facing || player.dir);
+    await fade(false);
+    mode = 'world'; setPad(true); save();
+    if (changed) mapBanner();
+  }
+  function mapBanner() {
+    const el = $('mapBanner'), z = C.ZONES[zoneAt(player.x, player.y)];
+    el.innerHTML = `<b>${esc(M.name)}</b>${z && z.name !== M.name ? `<small>${esc(z.name)}</small>` : ''}`;
+    el.classList.remove('go'); void el.offsetWidth; el.classList.add('go');
+  }
+
+  async function runTrigger(n) {
+    mode = 'busy'; setPad(false); held = null;
+    if (n.lines.length) await say(n.who, n.lines);
+    if (n.heal) { healParty(); toast('Your daemons are fully restored.'); }
+    if (n.gives) await giveReward(n.gives, n.who);
+    setFlag(n.sets);
+    save();
+    mode = 'world'; setPad(true);
+  }
+
+  // Rewards from people, chests, triggers and trainers.
+  function rewardBits(r) {
+    const bits = [];
+    if (r.lattices) bits.push(`${r.lattices} Basic Lattice${r.lattices > 1 ? 's' : ''}`);
+    if (r.cells) bits.push(`${r.cells} Flux Cell${r.cells > 1 ? 's' : ''}`);
+    for (const [k, n] of Object.entries(r.motes || {})) if (E.MAIN[k] || E.SUB[k]) bits.push(`${n} ${(E.MAIN[k] || E.SUB[k]).name} mote${n > 1 ? 's' : ''}`);
+    if (r.item && DB.has(r.item)) bits.push(forgeItem(r.item).name);
+    if (r.daemon && DB.has(r.daemon.key)) bits.push(`${ENG.rec(r.daemon.key).dName} (Lv ${r.daemon.level})`);
+    return bits;
+  }
+  async function giveReward(r, who) {
+    if (!r) return;
+    const bits = rewardBits(r);
+    grant({ lattices: r.lattices, cells: r.cells, motes: Object.fromEntries(Object.entries(r.motes || {}).filter(([k]) => E.MAIN[k] || E.SUB[k])) });
+    if (r.item && DB.has(r.item)) {
+      const it = forgeItem(r.item);
+      if (S.bag[it.id]) S.bag[it.id].count++; else S.bag[it.id] = Object.assign({ count: 1 }, it);
+    }
+    beep(659, 0.1, 'triangle'); setTimeout(() => beep(988, 0.16, 'triangle'), 100);
+    if (bits.length) await say(who || 'System', [`You received ${bits.join(', ')}!`]);
+    if (r.daemon && DB.has(r.daemon.key)) {
+      const d = ENG.createDaemon(r.daemon.key, clamp(r.daemon.level | 0, 1, ENG.LEVEL_CAP));
+      d.seed = newSeed();
+      boundForms.add(d.key); seen.add(d.key);
+      if (S.party.length < 6) S.party.push(d); else { S.box.push(d); toast(`${esc(dName(d))} was sent to Storage.`); }
+      designTrait(d);
+      await celebrateTrait(d, null, true);
+    }
+    updateHud();
+  }
+  function healParty() { for (const d of S.party) d.hp = ENG.calcStats(d).hp; }
+
+  async function talk(n) {
+    const gave = n.gives && S.flags.includes('got:' + n.id);
+    const later = n.after && (gave || (!n.gives && n.sets && S.flags.includes(n.sets)));
+    await say(n.name, later ? n.after : n.lines);
+    if (n.heal) { healParty(); beep(523, 0.1, 'sine'); setTimeout(() => beep(784, 0.15, 'sine'), 100); toast('Your daemons are fully restored.'); }
+    if (n.gives && !gave) { S.flags.push('got:' + n.id); await giveReward(n.gives, n.name); }
+    setFlag(n.sets);
+    save();
+  }
+  async function openChest(n) {
+    if (opened(n)) { await say('', ['It\'s empty.']); return; }
+    S.flags.push('open:' + n.id);
+    refreshThings();
+    await giveReward(n.gives, '');
+    setFlag(n.sets);
+    save();
+  }
+
   async function interact() {
     if (mode !== 'world' || player.moving) return;
     const [dx, dy] = DIRS[player.dir];
     const x = player.x + dx, y = player.y + dy;
-    const n = npcAt(x, y), ch = tileAt(x, y);
+    const n = thingAt(x, y), ch = tileAt(x, y);
     const back = () => { mode = 'world'; setPad(true); };
-    if (n) {
-      n.dir = OPP[player.dir];
+    if (n && n.type !== 'warp' && n.type !== 'trigger') {
       mode = 'busy'; setPad(false);
-      if (n.kind === 'folk') { await say(n.name, n.lines); return back(); }
+      if (n.type === 'person') { n.dir = OPP[player.dir]; await talk(n); return back(); }
+      if (n.type === 'sign') { await say(n.who || 'Sign', n.lines); setFlag(n.sets); return back(); }
+      if (n.type === 'chest') { await openChest(n); return back(); }
+      if (n.type === 'block') { if (n.lines.length) await say(n.who, n.lines); return back(); }
+      n.dir = OPP[player.dir];
       if (S.beaten.includes(n.id)) {
         if (n.warden && S.won) {
           const times = S.rematches[n.id] || 0;
@@ -837,26 +743,29 @@
     if (ch === 'R') return riftTerminal();
     if (C.GATES[ch] != null && !gateOpen(ch)) {
       mode = 'busy';
-      await say('Gate', [`A firewall gate. It needs ${C.GATES[ch]} Warden key${C.GATES[ch] > 1 ? 's' : ''} to open. You have ${S.badges}.`]);
+      await say('Gate', [`A firewall gate. It needs ${C.GATES[ch]} key${C.GATES[ch] > 1 ? 's' : ''} to open. You have ${S.badges}.`]);
       back();
     }
   }
 
   function healTerminal() {
-    for (const d of S.party) d.hp = ENG.calcStats(d).hp;
+    healParty();
     const lat = S.bag['lattice:basic'];
     const topped = !lat || lat.count < 3;
     if (!lat) S.bag['lattice:basic'] = basicLattice(3); else lat.count = Math.max(3, lat.count);
-    S.lastHeal = { x: player.x, y: player.y };
+    S.lastHeal = { map: M.id, x: player.x, y: player.y };
     beep(523, 0.1, 'sine'); setTimeout(() => beep(784, 0.15, 'sine'), 100);
     mode = 'busy'; setPad(false);
     say('Terminal', ['Your daemons are fully restored.' + (topped ? ' The dispenser tops your Basic Lattices up to 3.' : '')]).then(() => { mode = 'world'; setPad(true); save(); });
   }
+  // after a defeat, or a warp trait: back to the last terminal you used
+  function toLastHeal() { const h = S.lastHeal; enterMap(h.map, h.x, h.y, 'down'); }
 
   // ------------------------------------------------------------------ input
   const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
   addEventListener('keydown', e => {
-    if (e.target && e.target.tagName === 'INPUT') return;
+    if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (mode === 'build') return; // the world builder has its own keys
     if ((e.key === 't' || e.key === 'T') && S) { cycleTips(); return; }
     if (!$('dialog').classList.contains('hidden') && ['Enter', ' ', 'z', 'Z'].includes(e.key)) { advanceDialog(); e.preventDefault(); return; }
     if (mode === 'world') {
@@ -899,10 +808,12 @@
 
   function updateHud() {
     if (!S) return;
-    const z = zoneAt(player.x, player.y);
-    $('zoneName').textContent = z === 'nexus' ? 'The Nexus' : z === 'core' ? 'The Core' : (C.ZONES[z] ? C.ZONES[z].name : 'The Nexus');
-    $('keysText').textContent = `${Math.min(S.badges, 4)}/4`;
+    const z = M ? zoneAt(player.x, player.y) : null;
+    $('zoneName').textContent = C.ZONES[z] ? C.ZONES[z].name : M ? M.name : '';
+    $('keysChip').classList.toggle('hidden', !C.KEYS);
+    $('keysText').textContent = `${Math.min(S.badges, C.KEYS)}/${C.KEYS}`;
     $('codexText').textContent = discovered.size;
+    $('buildBtn').classList.toggle('hidden', !window.BUILD);
   }
 
   // ------------------------------------------------------------------ dialog (typewriter)
@@ -1036,7 +947,7 @@
     const d = Math.min(window.devicePixelRatio || 1, 2);
     c.width = Math.max(1, Math.round(a.width * d)); c.height = Math.max(1, Math.round(a.height * d));
     const g = c.getContext('2d'), W = c.width, H = c.height;
-    const th = THEME[bctx.zone] || THEME.nexus;
+    const th = themeOf(bctx.zone);
     const hz = H * 0.44;
     let gr = g.createLinearGradient(0, 0, 0, hz);
     gr.addColorStop(0, th.sky[0]); gr.addColorStop(1, th.sky[1]);
@@ -1610,18 +1521,23 @@
     if (boundNow) { const d = boundNow; boundNow = null; await celebrateTrait(d, null, true); }
     if (res === 'lose') {
       for (const d of S.party) d.hp = ENG.calcStats(d).hp;
-      player.x = player.px = follower.x = follower.px = S.lastHeal.x; player.y = player.py = follower.y = follower.py = S.lastHeal.y;
+      toLastHeal();
       if (o.rift) { S.rift.best = Math.max(S.rift.best, o.floor - 1); riftRun = null; }
       await say('System', [o.rift ? `The Rift ejects you after floor ${o.floor - 1}.` : 'All of your daemons were deallocated...', 'Rebooting at the last terminal. Your daemons have been restored.']);
     }
     await processXp();
     if (res === 'win' && o.trainer && !o.rift && !o.rematch) {
       await say(o.trainer.name, [o.trainer.outro]);
+      const first = !S.flags.includes('won:' + o.trainer.id);
+      if (first) { S.flags.push('won:' + o.trainer.id); if (o.trainer.gives) await giveReward(o.trainer.gives, o.trainer.name); }
       if (o.trainer.badge && !S.keys.includes(o.trainer.badge)) {
         S.keys.push(o.trainer.badge); S.badges = S.keys.length;
-        await say('System', [`You received the ${o.trainer.badge}! (${Math.min(S.badges, 4)}/4)` + (o.trainer.final ? '' : ' A firewall gate somewhere just opened.')]);
+        const of = C.KEYS ? ` (${Math.min(S.badges, C.KEYS)}/${C.KEYS})` : '';
+        await say('System', [`You received the ${o.trainer.badge}!${of}` + (o.trainer.final || !C.GATE_KEYS.includes(S.badges) ? '' : ' A gate somewhere just opened.')]);
       }
-      if (o.trainer.final) { S.won = true; B = null; bctx = null; save(); showEnding(); return; }
+      setFlag(o.trainer.sets);
+      refreshThings();
+      if (o.trainer.final) { S.won = true; refreshThings(); B = null; bctx = null; save(); showEnding(); return; }
     }
     if (res === 'win' && o.rematch) await say(o.trainer.name, ['Now that was a real test. Come back any time.']);
     if (res === 'win' && o.rift && (await riftCleared(o.floor))) { B = null; startRiftFloor(o.floor + 1); return; }
@@ -1645,7 +1561,7 @@
   // ------------------------------------------------------------------ the Rift
   async function riftTerminal() {
     mode = 'busy'; setPad(false);
-    if (!S.won) { await say('Rift', ['A tear in the lattice, humming with every merge at once. It stays sealed until the Architect falls.']); mode = 'world'; setPad(true); return; }
+    if (!S.won) { await say('Rift', [`A tear in the lattice, humming with every merge at once. It stays sealed until ${(C.OPERATORS.find(o => o.final) || { name: 'the final boss' }).name} falls.`]); mode = 'world'; setPad(true); return; }
     const c = await choose('The Rift', `Endless floors of daemons drawn from the entire lattice, any of the ${DB.count} genomes. Floors get harder, every fifth floor holds a guardian, and rewards grow as you descend. You recover 30% HP between floors and can leave after any floor. Your best: floor ${S.rift.best}.`, ['Enter the Rift', 'Not now']);
     if (c !== 0) { mode = 'world'; setPad(true); return; }
     startRiftFloor(1);
@@ -1664,7 +1580,7 @@
   }
   function startRiftFloor(n) {
     riftRun = { floor: n };
-    startBattle({ enemy: riftTeam(n), wild: false, trainer: { name: `Rift · Floor ${n}`, id: 'rift' }, rift: true, floor: n, zone: 'core' });
+    startBattle({ enemy: riftTeam(n), wild: false, trainer: { name: `Rift · Floor ${n}`, id: 'rift' }, rift: true, floor: n, zone: C.ZONES.core ? 'core' : zoneAt(player.x, player.y) });
   }
   async function riftCleared(n) {
     S.rift.best = Math.max(S.rift.best, n);
@@ -1956,7 +1872,7 @@
     const setCd = () => { (d.cd || (d.cd = {}))[f.code] = S.steps + (f.code === 'warp' ? f.mag : DZ.ACTIVE_CD[f.code]); };
     if (f.code === 'warp') {
       setCd(); closeSheet();
-      player.x = player.px = follower.x = follower.px = S.lastHeal.x; player.y = player.py = follower.y = follower.py = S.lastHeal.y;
+      toLastHeal();
       updateHud(); save(); toast(`${esc(dName(d))} warps the party back to the last terminal.`);
       return;
     }
@@ -2022,14 +1938,14 @@
   function sheetRequests(body) {
     const next = (S.milestone + 1) * 50;
     const wardens = C.OPERATORS.filter(o => o.warden);
-    const goal = wardens[Math.min(S.badges, wardens.length - 1)];
-    const goalZone = C.ZONES[goal.zone] ? C.ZONES[goal.zone].name : 'the Core';
+    const goal = wardens.find(o => !S.beaten.includes(o.id));
+    const goalZone = goal ? (C.ZONES[goal.zone] ? C.ZONES[goal.zone].name : C.MAPS[goal.map].name) : '';
     body.innerHTML = `<h3>Archive requests</h3><p class="fine">The Archivists always have three requests open. Finishing one pays out right away and posts a new one.</p>
       <div class="qlist">${S.quests.map(q => `<div class="quest"><div class="qt">${esc(q.text)}</div><div class="xpbar"><i style="width:${q.progress / q.target * 100}%"></i></div><div class="fine">${q.progress}/${q.target} · Reward: ${esc(rewardText(q.reward))}</div></div>`).join('')}</div>
       <h3>Codex milestone</h3><div class="quest"><div class="qt">Discover ${next} merges</div><div class="xpbar"><i style="width:${(discovered.size % 50) / 50 * 100}%"></i></div><div class="fine">${discovered.size}/${next} · Reward: 2 Lattices and 3 sub-essence motes</div></div>
       <h3>Journey</h3><div class="kv two">
-        <span class="lab">Next goal</span><b>${S.won ? 'Rematch Wardens, dive the Rift, fill the Codex' : `Beat ${esc(goal.name)} in ${goalZone}`}</b>
-        <span class="lab">Warden keys</span><b>${S.keys.join(', ') || 'none yet'}</b>
+        <span class="lab">Next goal</span><b>${S.won ? 'Rematch Wardens, dive the Rift, fill the Codex' : goal ? `Beat ${esc(goal.name)} in ${esc(goalZone)}` : 'Explore, bind daemons and fill the Codex'}</b>
+        ${C.KEYS ? `<span class="lab">Keys</span><b>${esc(S.keys.join(', ')) || 'none yet'}</b>` : ''}
         <span class="lab">Operators beaten</span><b>${S.beaten.length}/${C.OPERATORS.length}</b>
         <span class="lab">Rift best floor</span><b>${S.won ? S.rift.best : 'sealed'}</b>
         <span class="lab">Prismatics bound</span><b>${S.prisms.length}</b>
@@ -2315,25 +2231,30 @@
       <p class="fine">Hover (or press and hold on touch) any merge, essence, status, item or daemon card for details. Press T or tap ⓘ in the top bar to switch compact and complex.</p>
       <p class="fine">Tap the battle text or press Space to fast-forward a turn. Keys 1–4 cast your memory merges.</p>
       <h3>Merge database</h3>${dbSection()}
-      <h3>Save</h3><div class="btnrow"><button class="btn pri" data-save>Save now</button><button class="btn" data-wipe>Delete save…</button></div>
+      <h3>Save</h3><div class="btnrow"><button class="btn pri" data-save>Save now</button><button class="btn" data-title>Save and quit to the title</button><button class="btn" data-wipe>Delete save…</button></div>
+      ${C !== OFFICIAL ? `<p class="fine">You're playing <b>${esc(C.TITLE)}</b>${playing.test ? ' (a test run from the world builder)' : ''}. Its save is kept apart from your other worlds.</p>` : ''}
       <p class="fine">Playing for ${mins} min · ${S.steps} steps · ${S.stats.wild} wild daemons defeated · ${S.stats.binds} bound · ${S.stats.forged} items forged · ${S.stats.spliced} spliced.</p>
       <h3>About</h3><p class="fine">Essence Protocol. All ${DB.count} merge outcomes and their designs were pre-baked by tools/bake.js from the rules in js/essences.js. Nothing is rolled when you compose a merge: a design's rarity comes from its seed, so the same merge is always the same. The randomness is in battle (accuracy, effect chances, instability), in encounters, and in each new daemon's seed.</p>`;
     body.querySelectorAll('[data-speed]').forEach(b => { b.onclick = () => { S.settings.speed = b.dataset.speed; save(); renderSheet(); }; });
     body.querySelectorAll('[data-tips]').forEach(b => { b.onclick = () => { S.settings.tips = b.dataset.tips; save(); renderSheet(); }; });
     if (body.querySelector('[data-haptics]')) body.querySelector('[data-haptics]').onclick = () => { S.settings.haptics = S.settings.haptics === false; save(); renderSheet(); buzz(20); };
     body.querySelector('[data-save]').onclick = () => { save(); toast('Saved.'); };
+    body.querySelector('[data-title]').onclick = () => toTitle();
     body.querySelector('[data-mute]').onclick = () => { muted = !muted; try { localStorage.setItem('ep-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } renderSheet(); };
     body.querySelector('[data-wipe]').onclick = async () => {
-      if ((await choose('Delete save?', 'Your progress is erased and the game returns to the title screen. This can\'t be undone.', ['Delete save', 'Cancel'])) === 0) { try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* ignore */ } location.reload(); }
+      if ((await choose('Delete save?', 'Your progress in this world is erased and the game returns to the title screen. This can\'t be undone.', ['Delete save', 'Cancel'])) === 0) { try { localStorage.removeItem(saveSlot); } catch (e) { /* ignore */ } S = null; toTitle(); }
     };
   }
 
   // ------------------------------------------------------------------ ending
   function showEnding() {
     $('hud').classList.add('hidden'); setPad(false);
-    const card = modal(`<h2>The lattice is yours</h2><p>The Architect is beaten and all four keys are turned. But the lattice still holds ${DB.count - discovered.size} merges nobody has cast, and now it's open to you.</p>
+    const boss = C.OPERATORS.find(o => o.final), keys = C.KEYS ? ` and ${C.KEYS === 1 ? 'the key is' : `all ${C.numberWords(C.KEYS)} keys are`} turned` : '';
+    const story = C.TEXT.ending ? C.TEXT.ending.map(l => `<p>${esc(l)}</p>`).join('') : `<p>${esc(boss ? boss.name : 'The final boss')} is beaten${keys}. But the lattice still holds ${DB.count - discovered.size} merges nobody has cast, and now it's open to you.</p>`;
+    const rift = Object.values(C.MAPS).some(m => m.tiles.some(r => r.includes('R')));
+    const card = modal(`<h2>${esc(C.TEXT.ending ? C.TITLE : 'The lattice is yours')}</h2>${story}
       <div class="kv two"><span class="lab">Merges discovered</span><b>${discovered.size} / ${DB.count}</b><span class="lab">Forms seen</span><b>${seen.size}</b><span class="lab">Forms bound</span><b>${boundForms.size}</b><span class="lab">Resonances</span><b>${resonancesFound().size}</b></div>
-      <p>Unlocked: <b>the Rift</b>, the swirling terminal in the Core, an endless descent through every genome. <b>Warden rematches</b> are open too, with recompiled teams.</p>
+      <p>Unlocked: ${rift ? '<b>the Rift</b>, the swirling terminal, an endless descent through every genome. ' : ''}<b>Warden rematches</b>${rift ? ' are open too' : ' are open'}, with recompiled teams.</p>
       <div class="btnrow"><button class="btn pri" data-go>Keep exploring</button></div>`);
     card.querySelector('[data-go]').onclick = () => { closeModal(); $('hud').classList.remove('hidden'); mode = 'world'; setPad(true); updateHud(); };
   }
@@ -2359,7 +2280,7 @@
   function showStarter() {
     mode = 'starter';
     $('title').classList.add('hidden'); $('starter').classList.remove('hidden');
-    $('starterList').innerHTML = C.STARTERS.map((s, i) => { const r = ENG.rec(s.key); return `<button class="starter" data-i="${i}"><canvas data-sprite="${s.key}" width="96" height="96"></canvas><span class="grow"><b class="h">${esc(r.dName)}</b>${genomeHTML(s.key)}<small>${esc(s.blurb)}</small><small>Starts attuned to ${E.SUB[s.attune[0]].name}. Passive: ${ENG.PASSIVES[r.dPassive][0]}.</small></span></button>`; }).join('');
+    $('starterList').innerHTML = C.STARTERS.map((s, i) => { const r = ENG.rec(s.key); return `<button class="starter" data-i="${i}"><canvas data-sprite="${s.key}" width="96" height="96"></canvas><span class="grow"><b class="h">${esc(r.dName)}</b>${genomeHTML(s.key)}<small>${esc(s.blurb)}</small>${s.attune[0] && E.SUB[s.attune[0]] ? `<small>Starts attuned to ${E.SUB[s.attune[0]].name}. Passive: ${ENG.PASSIVES[r.dPassive][0]}.</small>` : ''}</span></button>`; }).join('');
     hydrateCanvases($('starterList'));
     $('starterList').querySelectorAll('[data-i]').forEach(b => { b.onclick = async () => {
       const st = C.STARTERS[+b.dataset.i];
@@ -2369,7 +2290,7 @@
       $('starter').classList.add('hidden');
       enterWorld();
       mode = 'busy'; setPad(false);
-      await say('Archivist Lo', C.TEXT.tutorial.map(l => l.replace(/\{daemon\}/g, ENG.rec(st.key).dName)));
+      if (C.TEXT.tutorial.length) await say(C.TEXT.guide, C.TEXT.tutorial.map(l => l.replace(/\{daemon\}/g, ENG.rec(st.key).dName)));
       await celebrateTrait(S.party[0], null, true);
       mode = 'world'; setPad(true); save();
     }; });
@@ -2377,7 +2298,6 @@
   function enterWorld() {
     $('title').classList.add('hidden'); $('starter').classList.add('hidden');
     $('hud').classList.remove('hidden');
-    for (const n of npcs) { const o = map.npcs.find(x => x.id === n.id); n.x = o.x; n.y = o.y; n.dir = o.dir; }
     mode = 'world'; setPad(true); updateHud();
   }
 
@@ -2525,16 +2445,61 @@
   resize();
   try { muted = localStorage.getItem('ep-muted') === '1'; } catch (e) { /* ignore */ }
   titleArt();
+  // ---- which world is played: the game's own (data/world.json) or a player-made one (worlds.js)
+  const OFFICIAL = window.CONTENT;
+  let playing = { id: 'main', test: false };
+  function useWorld(c, slot, meta) {
+    C = c || OFFICIAL;
+    saveSlot = slot || SAVE_KEY;
+    playing = meta || { id: 'main', test: false };
+    R.setThemes(Object.values(C.THEMES));
+    ENG.setEdits(C.MERGE_EDITS);
+    M = null; things = [];
+  }
+  // Continues the world's save, or starts it with the starter pick (fresh: always start over).
+  function playWorld(fresh) {
+    const saved = fresh ? null : loadSave();
+    if (saved) { adopt(saved); enterWorld(); mapBanner(); return; }
+    showStarter();
+  }
+  // A quick test run from the world builder: the first starter, no tutorial, placed where asked.
+  function testWorld(at) {
+    const saved = loadSave();
+    if (saved) adopt(saved);
+    else {
+      const st = C.STARTERS[0];
+      adopt(newState(st));
+      for (const k of S.party[0].memory) if (k) discovered.add(k);
+      designTrait(S.party[0]);
+    }
+    if (at) enterMap(at.map, at.x, at.y, at.dir);
+    enterWorld();
+    save();
+  }
+  function toTitle() {
+    if (S) save();
+    S = null; B = null; M = null; things = [];
+    mode = 'title'; setPad(false);
+    for (const id of ['hud', 'sheet', 'starter', 'battle']) $(id).classList.add('hidden');
+    closeModal();
+    useWorld(null);
+    const has = !!loadSave();
+    $('contBtn').classList.toggle('hidden', !has);
+    $('title').classList.remove('hidden');
+    titleArt();
+  }
   const existing = loadSave();
   if (existing) $('contBtn').classList.remove('hidden');
-  $('newBtn').onclick = async () => { if (existing && (await choose('Start a new game?', 'Your current save is overwritten the next time the game saves.', ['Start over', 'Cancel'])) !== 0) return; showStarter(); };
-  $('contBtn').onclick = () => { adopt(existing); enterWorld(); if (S.won) toast('Welcome back. The Rift is waiting in the Core.'); };
+  $('newBtn').onclick = async () => { useWorld(null); if (loadSave() && (await choose('Start a new game?', 'Your current save is overwritten the next time the game saves.', ['Start over', 'Cancel'])) !== 0) return; showStarter(); };
+  $('contBtn').onclick = () => { useWorld(null); const saved = loadSave(); if (!saved) return; adopt(saved); enterWorld(); if (S.won) toast('Welcome back. The Rift is waiting in the Core.'); };
+  $('createBtn').onclick = () => { if (window.WORLDS) window.WORLDS.open(); };
+  $('buildBtn').onclick = () => { if (mode === 'world' && window.BUILD) window.BUILD.fromPlay(playing, { map: M.id, x: player.x, y: player.y, dir: player.dir }); };
   // The title is up while the merge database streams in; the buttons wait for it.
   function openDatabase() {
-    $('newBtn').disabled = $('contBtn').disabled = true;
+    $('newBtn').disabled = $('contBtn').disabled = $('createBtn').disabled = true;
     if ($('subCount')) $('subCount').textContent = C.numberWords(E.SUB_ORDER.length);
     DB.open({ onProgress: (n, of) => { $('bakeInfo').textContent = `Loading the merge database… ${n}/${of}`; $('dbBar').style.width = (of ? n / of * 100 : 0) + '%'; } }).then(() => {
-      $('newBtn').disabled = $('contBtn').disabled = false;
+      $('newBtn').disabled = $('contBtn').disabled = $('createBtn').disabled = false;
       $('dbBar').parentNode.classList.add('done');
       $('bakeInfo').textContent = `${DB.count.toLocaleString()} merges pre-baked · ${E.MAINS.length} main essences · ${E.SUB_ORDER.length} sub-essences · ${E.RESONANCE.length} resonances · ${E.TRINITY.length} trinities`;
     }, err => {
@@ -2546,8 +2511,40 @@
   openDatabase();
   requestAnimationFrame(frame);
 
+  // The content editor lives next to the game when it is served locally, and in the desktop and
+  // Android apps; not on a hosted page. The title links it, and the builder can hand worlds to it.
+  let editorAround = false;
+  const APP_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'appassets.androidplatform.net'];
+  if (APP_HOSTS.includes(location.hostname) && !self.EP_DRAFT) fetch('editor/index.html', { method: 'HEAD', cache: 'no-store' }).then(r => { editorAround = r.ok; if (r.ok) $('editorLink').classList.remove('hidden'); }).catch(() => {});
+  if (self.EP_DRAFT) {
+    $('draftNote').classList.remove('hidden');
+    $('draftNote').innerHTML = `Playing the <b>content editor's draft</b>${self.EP_DRAFT.rows ? ', with its re-baked merges' : ''}. It saves apart from your game. <a href="editor/">Back to the editor</a>`;
+  }
+  // the editor's "Open in the world builder": its draft world arrives here
+  function takeHandoff() {
+    if (!/^#build=editor/.test(location.hash) || !window.WORLDS || !window.BUILD) return;
+    let h = null;
+    try { h = JSON.parse(localStorage.getItem('ep-builder-handoff')); localStorage.removeItem('ep-builder-handoff'); } catch (e) { /* none */ }
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!h || !h.world) return;
+    const w = window.WORLDS.normalize(h.world);
+    window.WORLDS.save('editor', w);
+    window.BUILD.open('editor');
+    toast('The editor\'s world is open in the builder. <b>Save & share → Send back to the editor</b> returns it as a draft.', 'tip', 7000);
+  }
+  DB.open().then(() => setTimeout(takeHandoff, 0), () => {});
+
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 
-  window.EP = { get state() { return S; }, get battle() { return B; }, get mode() { return mode; }, get discovered() { return discovered; }, forgeItem, toast,
-    teleport(x, y, dir) { player.x = player.px = follower.x = follower.px = x; player.y = player.py = follower.y = follower.py = y; if (dir) player.dir = dir; updateHud(); } };
+  window.EP = { get state() { return S; }, get battle() { return B; }, get mode() { return mode; }, get discovered() { return discovered; }, get map() { return M; }, get world() { return C; }, forgeItem, toast,
+    teleport(x, y, dir, map) { enterMap(map || M.id, x, y, dir); } };
+  // What the world builder and the worlds screen use to drive the game.
+  window.EP_GAME = {
+    get C() { return C; }, get M() { return M; }, get S() { return S; }, get mode() { return mode; }, set mode(m) { mode = m; },
+    get zoom() { return zoom; }, get playing() { return playing; }, get dbReady() { return DB.ready; },
+    TS, cv, ctx, R, player, OFFICIAL, SAVE_KEY, E, ENG, SP, DB, get editorAround() { return editorAround; },
+    useWorld, playWorld, testWorld, toTitle, enterMap, updateHud, setPad, save, loadSave, mapBanner,
+    toast, choose, askText, modal, closeModal, esc, hydrateCanvases, genomeHTML, beep, sleep,
+    hideScreens() { for (const id of ['title', 'starter', 'hud', 'sheet']) $(id).classList.add('hidden'); setPad(false); },
+  };
 })();

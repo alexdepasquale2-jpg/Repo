@@ -51,7 +51,9 @@ def build_game():
     s = strip_document(read('index.html'))
     s = re.sub(r'<link rel="(manifest|icon|apple-touch-icon|preload)"[^>]*>\n', '', s)
     s = s.replace('<link rel="stylesheet" href="style.css">', '<style>\n' + read('style.css') + '\n</style>')
+    s = s.replace('<link rel="stylesheet" href="build.css">', '<style>\n' + read('build.css') + '\n</style>')
     s = inline_scripts(s, '')
+    assert 'href="build.css"' not in s and 'src="js/' not in s
     assert s.lstrip().startswith('<title>')
     with open(os.path.join(out, 'index.html'), 'w', encoding='utf-8') as f:
         f.write(s)

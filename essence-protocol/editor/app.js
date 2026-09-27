@@ -318,6 +318,32 @@
   };
   // A change set file, the same format tools/content.js apply reads.
   App.changeSet = () => ({ format: SC.CHANGES_FORMAT, base: S.baseHash, made: new Date().toISOString(), ops: S.ops, requests: S.requests.filter(r => r.status !== 'done').map(r => ({ text: r.text, at: r.at })) });
+  // ---- the game: its world builder edits this draft's world, and the game plays this draft
+  App.gameAround = () => S.mode !== 'hosted';
+  App.openBuilder = function () {
+    try { localStorage.setItem('ep-builder-handoff', JSON.stringify({ world: S.cur.world, at: Date.now() })); } catch (e) { App.toast('This browser can\'t hand the world over (storage is off).', 'bad'); return; }
+    persist.now();
+    location.href = ROOT + 'index.html#build=editor';
+  };
+  App.playDraft = async function () {
+    if (S.errors) { App.toast(`Fix ${plural(S.errors, 'problem')} first.`, 'bad'); return; }
+    if (S.bake.state === 'running') { App.toast('Still baking; try again in a moment.'); return; }
+    const own = S.curRows !== S.baseRows;
+    try {
+      if (own) await idbPut('rows', { fields: S.fields, keys: S.keys, rows: S.curRows });
+      localStorage.setItem('ep-play-draft', JSON.stringify({ data: S.cur, rows: own, at: Date.now() }));
+    } catch (e) { App.toast('Couldn\'t hand the draft to the game: ' + e.message, 'bad'); return; }
+    persist.now();
+    location.href = ROOT + 'index.html?draft';
+  };
+  function idbPut(key, value) {
+    return new Promise((res, rej) => {
+      const req = indexedDB.open('ep-play', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('draft');
+      req.onerror = () => rej(req.error);
+      req.onsuccess = () => { const tx = req.result.transaction('draft', 'readwrite'); tx.objectStore('draft').put(value, key); tx.oncomplete = () => { req.result.close(); res(); }; tx.onerror = () => rej(tx.error); };
+    });
+  }
   App.claudePrompt = () => {
     const cs = App.changeSet();
     return `Apply these Essence Protocol content edits from the content editor. Save the JSON below as a file and run \`node essence-protocol/tools/content.js apply <file>\`, then check the result with \`node essence-protocol/tools/verify.js\`.${cs.requests.length ? ' It also lists requests that need new code; do those too.' : ''}\n\n` + JSON.stringify(cs, null, 1);
@@ -424,7 +450,9 @@
     if (node.catalog === 'mechanics') return Object.entries(E.MECHANICS).map(([k, d]) => [k, `${k}: ${d}`]);
     if (node.catalog === 'reactionKinds') return Object.entries(E.REACTION_KINDS).map(([k, d]) => [k, `${k}: ${d}`]);
     if (node.catalog === 'organs') return Object.entries(SP.ORGANS).map(([k, d]) => [k, `${k}: ${d}`]);
-    if (node.catalog === 'rooms') return S.cur.world.rooms.map(r => [r.zone, r.zone]);
+    if (node.catalog === 'maps') return S.cur.world.maps.map(m => [m.id, m.name]);
+    if (node.catalog === 'themes') return S.cur.world.themes.map(t => [t.id, t.name]);
+    if (node.catalog === 'zones') return S.cur.world.zones.map(z => [z.id, z.name]);
     return [];
   };
   F.widget = function (node, v, path, ro, opts) {
@@ -489,7 +517,8 @@
         const m = App.mods(), ok = m.E && m.E.validKey(v), r = ok ? App.rec(v) : null;
         return `<div class="inline" data-keyfield="${P}">${ok ? App.sprite(v, 32) : ''}<input type="text" class="mono" data-p="${P}" data-w="key" value="${esc(v || '')}" spellcheck="false" style="max-width:190px"${dis}><button type="button" class="btn small" data-pick="${P}"${dis}>Pick…</button>${r ? `<span class="dim">${esc(r.dName)} · ${esc(r.name)}</span>` : ''}</div>`;
       }
-      case 'grid': return `<textarea data-p="${P}" data-w="grid" class="mono" rows="${(v || []).length + 1}"${dis}>${esc((v || []).join('\n'))}</textarea>`;
+      case 'grid': case 'zonegrid': return `<textarea data-p="${P}" data-w="grid" class="mono" rows="${Math.min(24, (v || []).length + 1)}" wrap="off" style="white-space:pre;overflow-x:auto"${dis}>${esc((v || []).join('\n'))}</textarea>`;
+      case 'colors': return `<div class="inline" data-p="${P}" data-w="colors">${(v || []).map((c, i) => `<input type="color" data-i="${i}" value="${esc(c)}"${dis}>`).join('')}</div>`;
       default: return `<textarea data-p="${P}" data-w="json" class="mono" rows="4"${dis}>${esc(JSON.stringify(v, null, 1))}</textarea>`;
     }
   };
@@ -538,6 +567,7 @@
     if (w === 'keyed') { const o = v || {}; o[target.dataset.k] = target.value; return App.set(path, o); }
     if (w === 'lines') { const list = v || []; list[+target.dataset.i] = target.value; return App.set(path, list); }
     if (w === 'tiers') { const list = v || []; list[+target.dataset.i] = host.dataset.of === 'int' ? Math.round(Number(target.value)) : target.value; return App.set(path, list); }
+    if (w === 'colors') { const list = v || []; list[+target.dataset.i] = target.value; return App.set(path, list); }
   }
   document.addEventListener('change', e => {
     const t = e.target;
@@ -547,7 +577,7 @@
       return App.set(t.dataset.p, valueFromWidget(t));
     }
     const host = t.closest('[data-w]');
-    if (host && host.dataset.p && ['effects', 'axes', 'lean', 'stats', 'keyed', 'lines', 'tiers'].includes(host.dataset.w)) compositeChange(host, t);
+    if (host && host.dataset.p && ['effects', 'axes', 'lean', 'stats', 'keyed', 'lines', 'tiers', 'colors'].includes(host.dataset.w)) compositeChange(host, t);
   });
   document.addEventListener('input', e => {
     const t = e.target;
@@ -720,6 +750,7 @@
     $('status').innerHTML = pills.join('');
     $('changesCount').textContent = fmt(S.ops.length);
     $('undoBtn').disabled = !S.past.length; $('redoBtn').disabled = !S.future.length;
+    $('playBtn').hidden = !App.gameAround();
   };
 
   // nav drawer on phones
@@ -728,6 +759,7 @@
   $('menuBtn').onclick = openNav; $('scrim').onclick = closeNav;
   $('undoBtn').onclick = App.undo; $('redoBtn').onclick = App.redo;
   $('changesBtn').onclick = () => App.go('changes');
+  $('playBtn').onclick = () => App.playDraft();
   $('nav').addEventListener('click', e => { if (e.target.id === 'themeBtn') { const order = ['system', 'light', 'dark']; const next = order[(order.indexOf(store.get('ep-editor-theme', 'system')) + 1) % 3]; store.set('ep-editor-theme', next); applyTheme(); App.renderNav(); } });
   function applyTheme() { const t = store.get('ep-editor-theme', 'system'); if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
   applyTheme();
@@ -765,8 +797,13 @@
     for (const r of d.battle.residue) ent('Residue', r.name, `${App.essName(r.cast)} into ${App.essName(r.into)} residue · ${r.kind}`, 'battle/residue');
     for (const t of d.traits.traits) ent('Trait', t.code, t.does, 'traits/' + t.code, t.nouns.join(' ') + ' ' + t.epithet);
     for (const z of d.world.zones) ent('Zone', z.name, `${z.wild.length} wild daemons`, 'world/zones/' + z.id);
-    for (const t of d.world.trainers) ent('Trainer', t.name, `${t.zone} · ${t.team.length} daemons`, 'world/trainers/' + t.id, t.intro + ' ' + t.outro);
-    for (const n of d.world.npcs) ent('Person', n.name, n.lines[0] || '', 'world/people/' + n.id, n.lines.join(' '));
+    for (const m of d.world.maps) {
+      ent('Map', m.name, `${m.tiles[0].length}×${m.tiles.length} · ${m.things.length} things`, 'world/maps/' + m.id, m.id);
+      for (const t of m.things) {
+        if (t.type === 'trainer') ent('Trainer', t.name, `${m.name} · ${t.team.length} daemons`, 'world/trainers/' + t.id, t.intro + ' ' + t.outro + ' ' + t.id);
+        else ent(t.type[0].toUpperCase() + t.type.slice(1), t.name || t.id, `${m.name} ${t.x},${t.y}${t.lines ? ' · ' + t.lines[0] : ''}`, 'world/things/' + t.id, (t.lines || []).join(' '));
+      }
+    }
     for (const k of d.items.kinds) ent('Item kind', k.name, k.desc, 'words/items');
     S.index = items;
   }
@@ -854,6 +891,13 @@
       S.cur = r.data;
       if (r.conflicts.length) App.toast(`${plural(r.conflicts.length, 'saved edit')} no longer fit the content and were left out.`, 'bad');
       else App.toast(`Your draft is back: ${plural(r.applied.length, 'change')}.`);
+    }
+    // a world sent back from the game's world builder
+    const back = store.get('ep-editor-world-return', null);
+    if (back && back.world) {
+      store.del('ep-editor-world-return');
+      S.cur = clone(S.cur); S.cur.world = back.world;
+      App.toast('The world from the builder is in your draft. Check it in Changes.');
     }
     S.version++;
     S.ops = SC.diff(S.base, S.cur);

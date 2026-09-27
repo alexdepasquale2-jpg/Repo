@@ -300,122 +300,59 @@
   };
 
   // ================================================================ world
-  const TCOL = { '#': '#27304a', '.': '#3b4768', ',': '#2c7d6b', '~': '#1f5f99', '^': '#b4522a', o: '#6b5a45', '*': '#2f6b3a', x: '#6a3fbf', H: '#5dff9a', F: '#ffb13d', R: '#b48cff', '2': '#ffd23d', '3': '#ffd23d', '4': '#ffd23d', '5': '#ffd23d' };
-  const W_ = { room: null, brush: '.', placing: null };
+  // Worlds are built in the game: ✦ Create opens the world builder (js/build.js), which paints maps
+  // and places things with the game's own renderer. Here every piece of the world is a form, and
+  // "Open in the world builder" hands this draft's world to the builder (it comes back as a draft).
+  const thingsOf = () => [].concat(...S.cur.world.maps.map(m => m.things.map(t => ({ t, m }))));
+  const findThing = id => thingsOf().find(o => o.t.id === id);
+  const TP = o => `world.maps[${o.m.id}].things[${o.t.id}]`;
+  const THING_WORD = { person: 'Person', trainer: 'Trainer', sign: 'Sign', chest: 'Chest', warp: 'Warp', trigger: 'Trigger', block: 'Block' };
   V.world = {
     render(args) {
-      const tab = ['map', 'zones', 'trainers', 'people', 'starters', 'lines'].includes(args[0]) ? args[0] : 'map';
-      const t = tabs('world', [['map', 'Map'], ['zones', 'Zones'], ['trainers', 'Trainers'], ['people', 'People'], ['starters', 'Starters'], ['lines', 'Game lines']], tab);
+      const tab = ['maps', 'zones', 'themes', 'trainers', 'things', 'starters', 'story'].includes(args[0]) ? args[0] : 'maps';
+      const t = tabs('world', [['maps', 'Maps'], ['zones', 'Zones'], ['themes', 'Themes'], ['trainers', 'Trainers'], ['things', 'People and things'], ['starters', 'Starters'], ['story', 'Story and rules']], tab);
       let body = '';
-      if (tab === 'map') body = mapView(args[1]);
+      if (tab === 'maps') body = args[1] ? mapView(args[1]) : mapList();
       if (tab === 'zones') body = args[1] ? zoneView(args[1]) : zoneList();
-      if (tab === 'trainers') body = args[1] ? trainerView(args[1]) : trainerList();
-      if (tab === 'people') body = args[1] ? personView(args[1]) : personList();
+      if (tab === 'themes') body = args[1] ? themeView(args[1]) : themeList();
+      if (tab === 'trainers') body = args[1] ? thingView(args[1]) : thingList('trainer');
+      if (tab === 'things') body = args[1] ? thingView(args[1]) : thingList();
       if (tab === 'starters') body = args[1] ? starterView(args[1]) : starterList();
-      if (tab === 'lines') body = `<div class="card">${F.field('world.text.tutorial')}</div>`;
-      return `<div class="page">${head('World', 'The map, its zones and wild daemons, the trainers and people in it, and the starters you pick from.')}${t}${body}</div>`;
+      if (tab === 'story') body = storyView();
+      const builder = App.gameAround() ? `<div class="note"><b>The world builder</b> in the game paints maps, places people, trainers, doors and chests, and plays them right away. <button class="btn pri small" id="openBuilder">Open this world in the builder</button></div>` : '<div class="note">Maps are painted in the game: ✦ Create opens the world builder. Export a world there and ask Claude Code to make it the game\'s world.</div>';
+      return `<div class="page">${head('World', `"${S.cur.world.title}": ${plural(S.cur.world.maps.length, 'map')}, ${plural(thingsOf().length, 'thing')}, ${plural(S.cur.world.zones.length, 'zone')}.`)}${builder}${t}${body}</div>`;
     },
-    after(el, args) {
-      if ((args[0] || 'map') === 'map') drawMaps(el);
-      if (args[0] === 'people' && args[1]) drawMaps(el);
+    after(el) {
+      for (const c of el.querySelectorAll('canvas[data-mini]')) { try { window.WORLD_RENDER.mini(c, S.cur.world, c.dataset.mini, +c.dataset.k || 0); } catch (e) { /* half-made map */ } }
     },
   };
-  // --- map and rooms
-  function mapView(zone) {
-    const rooms = S.cur.world.rooms;
-    if (zone && rooms.find(r => r.zone === zone)) W_.room = zone;
-    const room = rooms.find(r => r.zone === W_.room);
-    const trainers = room ? S.cur.world.trainers.filter(x => x.zone === room.zone) : [];
-    const letters = trainers.map(x => x.slot);
-    const free = 'defghijklmnpqrstuvwyz'.split('').find(c => !(room && room.rows.join('').includes(c)) && !letters.includes(c));
-    return `<p class="dim">Tap a room to edit it. Trainers stand on their slot letter; people stand where their row and column say.${W_.placing ? ' <b>Tap the map where the person should stand.</b>' : ''}</p>
-      <div class="mapwrap"><canvas id="worldMap" data-kind="world"></canvas></div>
-      ${room ? `<div class="card"><div class="row spread"><h3>${esc((S.cur.world.zones.find(z => z.id === room.zone) || { name: room.zone }).name)} room</h3><span class="dim">${room.rows[0].length} × ${room.rows.length} tiles at ${room.x},${room.y}</span></div>
-        <div class="palette" style="margin:8px 0">${Object.entries(SC.TILES).map(([ch, [label]]) => `<button class="tilebtn${W_.brush === ch ? ' on' : ''}" data-brush="${esc(ch)}" title="${esc(label)}"><span class="tv" style="background:${TCOL[ch]}">${ch === '.' || ch === '#' ? '' : esc(ch)}</span>${esc(label.split(' (')[0])}</button>`).join('')}
-        ${trainers.map(x => `<button class="tilebtn${W_.brush === x.slot ? ' on' : ''}" data-brush="${esc(x.slot)}"><span class="tv" style="background:#ff5470">${esc(x.slot)}</span>${esc(x.name)}</button>`).join('')}</div>
-        <div class="mapwrap" style="background:var(--sunk)"><canvas id="roomMap" data-kind="room"></canvas></div>
-        <div class="row" style="margin-top:8px"><span class="dim">Paint by tapping or dragging. A trainer's letter moves them.</span>${free ? `<button class="btn small" data-new-trainer="${esc(room.zone)}" data-slot="${free}">+ New trainer in this room</button>` : ''}</div>
-        <span class="err" data-err="world.rooms[${esc(room.zone)}].rows"></span></div>` : ''}`;
+  document.addEventListener('click', e => { if (e.target.closest('#openBuilder')) App.openBuilder(); });
+  // --- maps
+  function mapList() {
+    return `<div class="cards">${S.cur.world.maps.map(m => `<button class="ecard" data-go="world/maps/${esc(m.id)}">${App.isChanged(`world.maps[${m.id}]`) ? '<span class="chg"></span>' : ''}<canvas data-mini="${esc(m.id)}" style="width:100%;height:120px;object-fit:contain;image-rendering:pixelated;background:#04060c;border-radius:8px"></canvas><div class="nm">${esc(m.name)}${S.cur.world.start.map === m.id ? ' ⚑' : ''}</div><div class="d">${m.tiles[0].length} × ${m.tiles.length} · ${plural(m.things.length, 'thing')} · ${esc((S.cur.world.zones.find(z => z.id === m.zone) || { name: m.zone }).name)}</div></button>`).join('')}</div>`;
   }
-  function drawMaps(el) {
-    const m = App.mods(); if (!m.C) return;
-    let map; try { map = m.C.buildMap(); } catch (e) { const c = el.querySelector('#worldMap'); if (c) c.insertAdjacentHTML('afterend', `<div class="note bad">${esc(e.message)}</div>`); return; }
-    const wm = el.querySelector('#worldMap');
-    if (wm) {
-      const u = Math.max(6, Math.min(14, Math.floor((el.querySelector('.mapwrap').clientWidth - 4) / map.w)));
-      wm.width = map.w * u; wm.height = map.h * u;
-      const g = wm.getContext('2d');
-      for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) { const ch = map.tiles[y][x]; g.fillStyle = TCOL[ch] || '#3b4768'; g.fillRect(x * u, y * u, u, u); }
-      g.strokeStyle = 'rgba(255,255,255,.08)';
-      for (const r of S.cur.world.rooms) { g.lineWidth = r.zone === W_.room ? 3 : 1; g.strokeStyle = r.zone === W_.room ? '#46f3ff' : 'rgba(255,255,255,.25)'; g.strokeRect(r.x * u + .5, r.y * u + .5, r.rows[0].length * u - 1, r.rows.length * u - 1); }
-      for (const n of map.npcs) { g.fillStyle = n.kind === 'folk' ? '#46f3ff' : n.kind === 'warden' ? '#ffd23d' : '#ff5470'; g.beginPath(); g.arc(n.x * u + u / 2, n.y * u + u / 2, u * 0.42, 0, 7); g.fill(); }
-      g.fillStyle = '#fff'; g.fillRect(map.spawn.x * u + u * .3, map.spawn.y * u + u * .3, u * .4, u * .4);
-      wm.onclick = e => {
-        const b = wm.getBoundingClientRect(), x = Math.floor((e.clientX - b.left) / b.width * map.w), y = Math.floor((e.clientY - b.top) / b.height * map.h);
-        if (W_.placing) { const id = W_.placing; W_.placing = null; App.batch([{ op: 'set', path: `world.npcs[${id}].x`, value: x }, { op: 'set', path: `world.npcs[${id}].y`, value: y }]); return; }
-        const z = map.zone[y] && map.zone[y][x];
-        if (z && S.cur.world.rooms.find(r => r.zone === z)) { W_.room = z; App.go('world/map/' + z); }
-      };
-    }
-    const rm = el.querySelector('#roomMap');
-    const room = S.cur.world.rooms.find(r => r.zone === W_.room);
-    if (rm && room) {
-      const rows = room.rows.map(r => r.split('')), u = Math.max(14, Math.min(30, Math.floor((el.querySelector('#roomMap').parentElement.clientWidth - 4) / rows[0].length)));
-      rm.width = rows[0].length * u; rm.height = rows.length * u;
-      const g = rm.getContext('2d');
-      const paint = () => {
-        for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[0].length; x++) {
-          const ch = rows[y][x], slot = SC.isSlotChar(ch);
-          g.fillStyle = slot ? TCOL['.'] : (TCOL[ch] || '#3b4768'); g.fillRect(x * u, y * u, u, u);
-          g.strokeStyle = 'rgba(0,0,0,.25)'; g.strokeRect(x * u + .5, y * u + .5, u - 1, u - 1);
-          if (slot) { g.fillStyle = '#ff5470'; g.beginPath(); g.arc(x * u + u / 2, y * u + u / 2, u * .4, 0, 7); g.fill(); g.fillStyle = '#fff'; g.font = `bold ${Math.round(u * .5)}px ui-monospace, monospace`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(ch, x * u + u / 2, y * u + u / 2 + 1); }
-          else if (ch !== '.' && ch !== '#' && ch !== ',') { g.fillStyle = 'rgba(255,255,255,.85)'; g.font = `bold ${Math.round(u * .45)}px ui-monospace, monospace`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(ch, x * u + u / 2, y * u + u / 2 + 1); }
-        }
-      };
-      paint();
-      let down = false, dirty = false;
-      const at = e => { const b = rm.getBoundingClientRect(); return [Math.floor((e.clientX - b.left) / b.width * rows[0].length), Math.floor((e.clientY - b.top) / b.height * rows.length)]; };
-      const put = e => {
-        const [x, y] = at(e); if (x < 0 || y < 0 || y >= rows.length || x >= rows[0].length) return;
-        const brush = W_.brush;
-        if (rows[y][x] === brush) return;
-        if (SC.isSlotChar(brush)) for (const r of rows) for (let i = 0; i < r.length; i++) if (r[i] === brush) r[i] = '.'; // a trainer stands in one place
-        rows[y][x] = brush; dirty = true; paint();
-      };
-      rm.onpointerdown = e => { down = true; rm.setPointerCapture(e.pointerId); put(e); };
-      rm.onpointermove = e => { if (down) put(e); };
-      rm.onpointerup = rm.onpointercancel = () => { down = false; if (dirty) { dirty = false; App.set(`world.rooms[${room.zone}].rows`, rows.map(r => r.join(''))); } };
-    }
+  function mapView(id) {
+    const m = S.cur.world.maps.find(x => x.id === id);
+    if (!m) return `<div class="empty">No map "${esc(id)}".</div>`;
+    const P = `world.maps[${id}]`;
+    return `<div class="dhead"><a class="btn small" href="#world/maps">← Maps</a><h2>${esc(m.name)}</h2></div>
+      <div class="card"><canvas data-mini="${esc(id)}" data-k="8" style="width:100%;max-height:60vh;object-fit:contain;image-rendering:pixelated;background:#04060c;border-radius:8px"></canvas></div>
+      <div class="card"><div class="grid g2">${F.field(P + '.name')}${F.field(P + '.zone')}</div></div>
+      <div class="card"><h3>Things on this map</h3><div class="cards">${m.things.map(t => thingCard({ t, m })).join('') || '<span class="dim">Nothing yet.</span>'}</div></div>
+      <details class="card"><summary><b>The tiles and zones as text</b> <span class="dim">(one letter per tile; the legend is in js/schema.js)</span></summary>${F.field(P + '.tiles')}${F.field(P + '.zones')}</details>`;
   }
-  document.addEventListener('click', e => {
-    const b = e.target.closest('[data-brush]');
-    if (b) { W_.brush = b.dataset.brush; document.querySelectorAll('[data-brush]').forEach(x => x.classList.toggle('on', x === b)); return; }
-    const nt = e.target.closest('[data-new-trainer]');
-    if (nt) {
-      const zone = nt.dataset.newTrainer, slot = nt.dataset.slot, ids = S.cur.world.trainers.map(x => x.id);
-      const id = idFrom(zone + '-' + slot, ids);
-      const room = S.cur.world.rooms.find(r => r.zone === zone);
-      // stand them on the first open floor tile
-      const rows = room.rows.map(r => r.split(''));
-      let placed = false;
-      for (let y = 1; y < rows.length - 1 && !placed; y++) for (let x = 1; x < rows[0].length - 1 && !placed; x++) if (rows[y][x] === '.' && rows[y - 1][x] === '.' && rows[y + 1][x] === '.') { rows[y][x] = slot; placed = true; }
-      const z = S.cur.world.zones.find(q => q.id === zone), key = z && z.wild[0] ? z.wild[0].key : S.cur.world.starters[0].key;
-      const trainer = { id, zone, slot, name: 'Operator New', facing: 'down', sight: 3, team: [{ key, level: z && z.wild[0] ? z.wild[0].max + 1 : 5 }], intro: 'Let\'s see what your daemons can do.', outro: 'Well fought.' };
-      if (App.batch([{ op: 'add', path: `world.trainers[${id}]`, value: trainer }, { op: 'set', path: `world.rooms[${zone}].rows`, value: rows.map(r => r.join('')) }])) App.go('world/trainers/' + id);
-    }
-  });
   // --- zones
   function zoneList() {
-    return `<div class="cards">${S.cur.world.zones.map(z => `<button class="ecard" data-go="world/zones/${z.id}">${App.isChanged(`world.zones[${z.id}]`) ? '<span class="chg"></span>' : ''}<div class="nm">${esc(z.name)}</div><div class="d">${z.element ? App.essChip(z.element) + ' · ' : ''}${plural(z.wild.length, 'wild daemon')} · levels ${Math.min(...z.wild.map(w => w.min))}-${Math.max(...z.wild.map(w => w.max))}</div><div class="row tight">${z.wild.slice(0, 8).map(w => App.sprite(w.key, 32)).join('')}</div></button>`).join('')}</div><p class="dim" style="margin-top:8px">A new zone needs map space and a gate: ask Claude Code.</p>`;
+    return `<div class="cards">${S.cur.world.zones.map(z => `<button class="ecard" data-go="world/zones/${z.id}">${App.isChanged(`world.zones[${z.id}]`) ? '<span class="chg"></span>' : ''}<div class="nm">${esc(z.name)}</div><div class="d">${z.element ? App.essChip(z.element) + ' · ' : ''}${esc((S.cur.world.themes.find(t => t.id === z.theme) || { name: z.theme }).name)} · ${plural(z.wild.length, 'wild daemon')}${z.wild.length ? ` · levels ${Math.min(...z.wild.map(w => w.min))}-${Math.max(...z.wild.map(w => w.max))}` : ''}</div><div class="row tight">${z.wild.slice(0, 8).map(w => App.sprite(w.key, 32)).join('')}</div></button>`).join('')}</div><p class="dim" style="margin-top:8px">New zones and where they are on the maps: the world builder's Zones layer.</p>`;
   }
   function zoneView(id) {
     const z = S.cur.world.zones.find(x => x.id === id);
     if (!z) return `<div class="empty">No zone "${esc(id)}".</div>`;
-    const P = `world.zones[${id}]`, tot = z.wild.reduce((a, w) => a + w.weight, 0);
-    return `<div class="dhead"><a class="btn small" href="#world/zones">← Zones</a><h2>${esc(z.name)}</h2><button class="btn small" data-go="world/map/${esc(id)}">Show on the map</button></div>
-      <div class="card"><div class="grid g2">${F.field(P + '.name')}${F.field(P + '.element')}</div></div>
+    const P = `world.zones[${id}]`, tot = z.wild.reduce((a, w) => a + w.weight, 0) || 1;
+    return `<div class="dhead"><a class="btn small" href="#world/zones">← Zones</a><h2>${esc(z.name)}</h2></div>
+      <div class="card"><div class="grid g2">${F.field(P + '.name')}${F.field(P + '.theme')}${F.field(P + '.element')}${F.field(P + '.rate')}${F.field(P + '.mark')}</div></div>
       <div class="card"><h3>Wild daemons</h3><p class="sub">Walking in static here meets one of these. 7% of wild daemons show up as rogue builds with an extra sub-essence.</p>
-        <div class="tablewrap"><table class="t"><thead><tr><th>Genome</th><th>Lowest</th><th>Highest</th><th>How common</th><th></th></tr></thead><tbody>${z.wild.map((w, i) => { const WP = `${P}.wild[${w.key}]`; return `<tr><td>${F.widget(F.node(WP + '.key') || { t: 'mergeKey' }, w.key, WP + '.key', false, {})}</td><td style="width:90px">${F.widget({ t: 'int', min: 1, max: 60 }, w.min, WP + '.min', false, {})}</td><td style="width:90px">${F.widget({ t: 'int', min: 1, max: 60 }, w.max, WP + '.max', false, {})}</td><td style="width:120px">${F.widget({ t: 'int', min: 1, max: 20 }, w.weight, WP + '.weight', false, {})}<div class="dim" style="font-size:11px">${Math.round(w.weight / tot * 100)}%</div></td><td><button class="btn small ghost" data-del-wild="${esc(WP)}" aria-label="Remove">✕</button></td></tr>`; }).join('')}</tbody></table></div>
+        <div class="tablewrap"><table class="t"><thead><tr><th>Genome</th><th>Lowest</th><th>Highest</th><th>How common</th><th></th></tr></thead><tbody>${z.wild.map(w => { const WP = `${P}.wild[${w.key}]`; return `<tr><td>${F.widget(F.node(WP + '.key') || { t: 'mergeKey' }, w.key, WP + '.key', false, {})}</td><td style="width:90px">${F.widget({ t: 'int', min: 1, max: 60 }, w.min, WP + '.min', false, {})}</td><td style="width:90px">${F.widget({ t: 'int', min: 1, max: 60 }, w.max, WP + '.max', false, {})}</td><td style="width:120px">${F.widget({ t: 'int', min: 1, max: 20 }, w.weight, WP + '.weight', false, {})}<div class="dim" style="font-size:11px">${Math.round(w.weight / tot * 100)}%</div></td><td><button class="btn small ghost" data-del-wild="${esc(WP)}" aria-label="Remove">✕</button></td></tr>`; }).join('')}</tbody></table></div>
         <div class="row" style="margin-top:8px"><button class="btn" data-add-wild="${esc(id)}">+ Add a wild daemon</button></div><span class="err" data-err="${esc(P)}.wild"></span></div>`;
   }
   document.addEventListener('click', e => {
@@ -426,21 +363,43 @@
       App.pickKey(z.wild[0] && z.wild[0].key, key => { if (z.wild.some(w => w.key === key)) return App.toast('That genome is already in this zone.', 'bad'); const last = z.wild[z.wild.length - 1] || { min: 5, max: 8 }; App.add(`world.zones[${z.id}].wild`, key, { key, min: last.min, max: last.max, weight: 1 }); });
     }
   });
-  // --- trainers
-  function trainerList() {
-    const rooms = S.cur.world.rooms.map(r => r.zone);
-    return rooms.map(z => { const list = S.cur.world.trainers.filter(t => t.zone === z); const zone = S.cur.world.zones.find(x => x.id === z); return `<div class="card"><div class="row spread"><h3>${esc(zone ? zone.name : z === 'core' ? 'The Core' : z)}</h3><button class="btn small" data-go="world/map/${esc(z)}">Room</button></div><div class="cards">${list.map(t => `<button class="ecard" data-go="world/trainers/${esc(t.id)}">${App.isChanged(`world.trainers[${t.id}]`) || !SC.resolve(S.base, `world.trainers[${t.id}]`).found ? '<span class="chg"></span>' : ''}<div class="nm">${esc(t.name)}</div><div class="d">${t.final ? 'Final boss' : t.warden ? 'Warden' : 'Operator'} · slot ${esc(t.slot)} · ${plural(t.team.length, 'daemon')}</div><div class="row tight">${t.team.map(m => App.sprite(m.key, 32)).join('')}</div></button>`).join('') || '<span class="dim">No trainers.</span>'}</div></div>`; }).join('');
+  // --- themes
+  const swatches = t => [t.floor[1], t.face, t.trim, t.static[1], t.accent].map(c => `<span style="display:inline-block;width:18px;height:18px;border-radius:5px;background:${esc(c)};border:1px solid #fff3"></span>`).join('');
+  function themeList() {
+    return `<div class="cards">${S.cur.world.themes.map(t => `<button class="ecard" data-go="world/themes/${esc(t.id)}">${App.isChanged(`world.themes[${t.id}]`) ? '<span class="chg"></span>' : ''}<div class="nm">${esc(t.name)}</div><div class="row tight">${swatches(t)}</div><div class="d">${esc(t.particles)} · used by ${plural(S.cur.world.zones.filter(z => z.theme === t.id).length, 'zone')}</div></button>`).join('')}</div>`;
   }
-  function trainerView(id) {
-    const t = S.cur.world.trainers.find(x => x.id === id);
-    if (!t) return `<div class="empty">No trainer "${esc(id)}".</div>`;
-    const P = `world.trainers[${id}]`, f = n => F.field(P + '.' + n);
-    const f2 = n => F.field(P + '.' + n, n === 'id' ? { readonly: true } : undefined);
-    return `<div class="dhead"><a class="btn small" href="#world/trainers">← Trainers</a><div><h2>${esc(t.name)}</h2><div class="dim">${t.final ? 'Final boss' : t.warden ? 'Warden' : 'Operator'} in the ${esc(t.zone)} room, slot ${esc(t.slot)}</div></div><button class="btn small" data-go="world/map/${esc(t.zone)}">Place on the map</button></div>
-      <div class="grid g2"><div class="card"><div class="form">${f('name')}${f2('id')}<div class="grid g2">${f('zone')}${f('slot')}</div><div class="grid g2">${f('facing')}${f('sight')}</div><div class="grid g2">${f('warden')}${f('final')}</div>${f('badge')}</div></div>
-      <div class="card"><h3>Team</h3>${teamEditor(P + '.team', t.team)}</div></div>
-      <div class="card"><div class="form">${f('intro')}${f('outro')}</div></div>
-      <div class="row"><button class="btn danger" data-del-trainer="${esc(id)}">Remove ${esc(t.name)}</button></div>`;
+  function themeView(id) {
+    const t = S.cur.world.themes.find(x => x.id === id);
+    if (!t) return `<div class="empty">No theme "${esc(id)}".</div>`;
+    const P = `world.themes[${id}]`;
+    return `<div class="dhead"><a class="btn small" href="#world/themes">← Themes</a><h2>${esc(t.name)}</h2><div class="row tight">${swatches(t)}</div></div>
+      <div class="card"><div class="grid g2">${['name', 'particles', 'floor', 'static', 'sky', 'speck', 'line', 'wall', 'face', 'trim', 'obstacle', 'accent'].map(k => F.field(P + '.' + k)).join('')}</div></div>`;
+  }
+  // --- trainers, people and everything else that stands on a map
+  function thingCard(o) {
+    const t = o.t, P = TP(o);
+    const sub = t.type === 'trainer' ? `${t.final ? 'Final boss' : t.warden ? 'Warden' : 'Trainer'} · ${plural(t.team.length, 'daemon')}` : t.type === 'warp' ? `${t.look} → ${esc((S.cur.world.maps.find(m => m.id === (t.to || {}).map) || { name: '?' }).name)}` : THING_WORD[t.type];
+    return `<button class="ecard" data-go="world/${t.type === 'trainer' ? 'trainers' : 'things'}/${esc(t.id)}">${App.isChanged(P) || !SC.resolve(S.base, P).found ? '<span class="chg"></span>' : ''}<div class="nm">${esc(t.name || THING_WORD[t.type] + ' ' + t.id)}</div><div class="d">${sub} · ${esc(o.m.name)} ${t.x},${t.y}${t.if ? ' · only while ' + esc(t.if) : ''}</div>${t.team ? `<div class="row tight">${t.team.map(mm => App.sprite(mm.key, 32)).join('')}</div>` : t.lines ? `<div class="d">${esc(t.lines[0] || '')}</div>` : ''}</button>`;
+  }
+  function thingList(only) {
+    const list = thingsOf().filter(o => only ? o.t.type === only : o.t.type !== 'trainer');
+    return S.cur.world.maps.map(m => { const here = list.filter(o => o.m === m); return here.length ? `<div class="card"><div class="row spread"><h3>${esc(m.name)}</h3><button class="btn small" data-go="world/maps/${esc(m.id)}">Map</button></div><div class="cards">${here.map(thingCard).join('')}</div></div>` : ''; }).join('') || `<div class="empty">None yet. Place ${only ? 'trainers' : 'people and things'} in the world builder.</div>`;
+  }
+  function thingView(id) {
+    const o = findThing(id);
+    if (!o) return `<div class="empty">No thing "${esc(id)}" in this world.</div>`;
+    const t = o.t, P = TP(o), node = F.node(P);
+    const fields = node && node.fields ? Object.entries(node.fields).filter(([k, f]) => k !== 'team' && (!f.when || f.when(t) || t[k] !== undefined)) : [];
+    const one = ([k, f]) => {
+      if (k === 'id' || k === 'type') return F.field(P + '.' + k, { readonly: true });
+      if (f.t === 'object') return `<div class="fld"><span class="lab">${esc(f.label)}</span><div class="grid g2">${Object.keys(f.fields).map(sk => F.field(P + '.' + k + '.' + sk)).join('')}</div></div>`;
+      if (f.t === 'bool') return F.field(P + '.' + k, { check: f.label });
+      return F.field(P + '.' + k);
+    };
+    return `<div class="dhead"><a class="btn small" href="#world/${t.type === 'trainer' ? 'trainers' : 'things'}">← ${t.type === 'trainer' ? 'Trainers' : 'People and things'}</a><div><h2>${esc(t.name || THING_WORD[t.type] + ' ' + t.id)}</h2><div class="dim">${THING_WORD[t.type]} on ${esc(o.m.name)} at ${t.x},${t.y}</div></div></div>
+      <div class="grid g2"><div class="card"><div class="form">${fields.map(one).join('')}</div></div>
+      ${t.type === 'trainer' ? `<div class="card"><h3>Team</h3>${teamEditor(P + '.team', t.team)}</div>` : ''}</div>
+      <div class="row"><button class="btn danger" data-del-thing="${esc(P)}">Remove it</button></div>`;
   }
   function teamEditor(path, team) {
     return `<div class="stack" data-team="${esc(path)}">${team.map((m, i) => `<div class="row" style="flex-wrap:nowrap">${App.sprite(m.key, 32)}<div style="min-width:0;flex:1"><div class="t">${esc((App.rec(m.key) || { dName: m.key }).dName)}</div><span class="key">${esc(m.key)}</span></div><label class="dim" style="font-size:12px">Lv <input type="number" min="1" max="60" value="${m.level}" data-team-level="${i}" style="width:70px"></label><button class="btn small" data-team-pick="${i}">Change</button><button class="btn small ghost" data-team-del="${i}" aria-label="Remove">✕</button></div>`).join('')}
@@ -456,15 +415,8 @@
       if (add) App.pickKey(team[team.length - 1] && team[team.length - 1].key, key => { team.push({ key, level: team.length ? team[team.length - 1].level : 5 }); App.set(path, team); });
       return;
     }
-    const dt = e.target.closest('[data-del-trainer]');
-    if (dt) {
-      const t = S.cur.world.trainers.find(x => x.id === dt.dataset.delTrainer);
-      if (!(await App.confirm(`Remove ${t.name}?`, 'Their slot in the room becomes floor again.', 'Remove', true))) return;
-      const room = S.cur.world.rooms.find(r => r.zone === t.zone);
-      const ops = [{ op: 'remove', path: `world.trainers[${t.id}]` }];
-      if (room) ops.push({ op: 'set', path: `world.rooms[${room.zone}].rows`, value: room.rows.map(r => r.split(t.slot).join('.')) });
-      if (App.batch(ops)) App.go('world/trainers');
-    }
+    const dt = e.target.closest('[data-del-thing]');
+    if (dt && await App.confirm('Remove it?', 'It is taken off its map. Undo brings it back.', 'Remove', true)) { App.remove(dt.dataset.delThing); App.go('world/things'); }
   });
   document.addEventListener('change', e => {
     const lv = e.target.closest('[data-team-level]');
@@ -473,35 +425,12 @@
     team[+lv.dataset.teamLevel].level = Math.max(1, Math.min(60, Math.round(Number(lv.value) || 1)));
     App.set(host.dataset.team, team);
   });
-  // --- people
-  function personList() {
-    return `<div class="row spread"><p class="dim">People stand in the world and say their lines when you talk to them.</p><button class="btn pri" id="addPerson">+ New person</button></div>
-      <div class="cards">${S.cur.world.npcs.map(n => `<button class="ecard" data-go="world/people/${esc(n.id)}">${App.isChanged(`world.npcs[${n.id}]`) || !SC.resolve(S.base, `world.npcs[${n.id}]`).found ? '<span class="chg"></span>' : ''}<div class="nm">${esc(n.name)}</div><div class="d">at ${n.x},${n.y} · ${plural(n.lines.length, 'line')}</div><div class="d">${esc(n.lines[0] || '')}</div></button>`).join('')}</div>`;
+  // --- story and rules
+  function storyView() {
+    return `<div class="card"><div class="form">${F.field('world.title')}${F.field('world.about')}${F.field('world.author')}</div></div>
+      <div class="card"><h3>Start</h3><div class="grid g2">${['map', 'x', 'y', 'facing'].map(k => F.field('world.start.' + k)).join('')}</div>${F.field('world.rules.mains')}</div>
+      <div class="card"><div class="form">${F.field('world.text.guide')}${F.field('world.text.tutorial')}${F.field('world.text.ending')}</div></div>`;
   }
-  function personView(id) {
-    const n = S.cur.world.npcs.find(x => x.id === id);
-    if (!n) return `<div class="empty">No person "${esc(id)}".</div>`;
-    const P = `world.npcs[${id}]`, f = k => F.field(P + '.' + k);
-    return `<div class="dhead"><a class="btn small" href="#world/people">← People</a><h2>${esc(n.name)}</h2></div>
-      <div class="grid g2"><div class="card"><div class="form">${f('name')}${F.field(P + '.id', { readonly: true })}<div class="grid g3">${f('x')}${f('y')}${f('facing')}</div><div><button class="btn" data-place="${esc(id)}">${W_.placing === id ? 'Tap the map…' : 'Place on the map'}</button></div></div></div>
-      <div class="card"><h3>Where</h3><div class="mapwrap"><canvas id="worldMap"></canvas></div></div></div>
-      <div class="card">${f('lines')}</div>
-      <div class="row"><button class="btn danger" data-del-person="${esc(id)}">Remove ${esc(n.name)}</button></div>`;
-  }
-  document.addEventListener('click', async e => {
-    if (e.target.closest('#addPerson')) {
-      const ids = S.cur.world.npcs.map(x => x.id), id = idFrom('person', ids);
-      const m = App.mods(), map = m.C.buildMap(), taken = new Set(map.npcs.map(q => q.x + ',' + q.y));
-      let spot = { x: 25, y: 26 };
-      outer: for (let y = 19; y < 27; y++) for (let x = 24; x < 35; x++) if (map.tiles[y][x] === '.' && !taken.has(x + ',' + y) && !(x === map.spawn.x && y === map.spawn.y)) { spot = { x, y }; break outer; }
-      if (App.add('world.npcs', id, { id, name: 'New Person', x: spot.x, y: spot.y, facing: 'down', lines: ['Hello there.'] })) App.go('world/people/' + id);
-      return;
-    }
-    const pl = e.target.closest('[data-place]');
-    if (pl) { W_.placing = pl.dataset.place; App.toast('Tap the map where they should stand.'); App.rerender(); return; }
-    const del = e.target.closest('[data-del-person]');
-    if (del && await App.confirm('Remove this person?', 'Their lines go with them.', 'Remove', true)) { App.remove(`world.npcs[${del.dataset.delPerson}]`); App.go('world/people'); }
-  });
   // --- starters
   function starterList() {
     return `<div class="row spread"><p class="dim">The daemons a new game offers. Each starts at level 5, attuned to its sub-essences.</p><button class="btn pri" id="addStarter">+ New starter</button></div>

@@ -24,6 +24,7 @@
       <div class="status" id="status"></div>
       <button class="btn" id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
       <button class="btn" id="redoBtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
+      <button class="btn" id="playBtn" title="Play this draft in the game" hidden>▶ Play</button>
       <button class="btn pri" id="changesBtn">Changes <b id="changesCount">0</b></button>
     </header>
     <main id="view" tabindex="-1"><div class="boot"><div class="bootbar"><i id="bootBar"></i></div><p id="bootText">Loading the content…</p></div></main>
@@ -40,6 +41,7 @@
 <script src="../js/engine.js"></script>
 <script src="../js/content.js"></script>
 <script src="../js/sprites.js"></script>
+<script src="../js/world-render.js"></script>
 <script src="app.js"></script>
 <script src="views.js"></script>
 <script src="views-content.js"></script>
