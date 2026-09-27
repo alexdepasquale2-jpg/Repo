@@ -219,7 +219,7 @@
     let dPassive = a;
     if (parts.length) dPassive = (parts.find(x => x.h === 1) || parts[0]).s;
 
-    return { key, p, pure, n, rx, T, parts, res, tri, anomaly, cls, power, acc, flux, prio, hits, instab, fx: fxList, rarity, tags, dStats, dPassive };
+    return { key, p, pure, n, rx, T, parts, res, tri, anomaly, cls, score, power, acc, flux, prio, hits, instab, fx: fxList, rarity, tags, dStats, dPassive };
   }
 
   function nounFor(ev, i) {
@@ -422,5 +422,21 @@
       'self.EP_DATA = {\n' + SC.FILES.map(f => JSON.stringify(f) + ': ' + JSON.stringify(d[f])).join(',\n') + '\n};\n';
   }
 
-  return { make, SCHEMA, BAKE_VERSION, FIELDS, evaluate, bakeOne, bakeAll, renderShard, renderAll, renderIndex, renderDataJs, utf8Length, fnv, OVERRIDE_TEXT, OVERRIDE_NUM };
+  // Why a merge came out the way it did, for people: its parts, what fired, and the class race.
+  function explain(key) {
+    const ev = evaluate(key), p = ev.p;
+    const round = v => Math.round(v * 100) / 100;
+    return {
+      key, lead: p.a, follow: p.b, pure: ev.pure,
+      pair: { id: E.pairId(p.a, p.b), name: ev.rx.names[p.a], volatile: !!ev.rx.volatile, line: ev.rx.line },
+      subs: ev.parts.map(x => ({ code: x.s, name: E.SUB[x.s].name, host: x.host, onLead: x.h === 1, weight: x.w, word: x.adj, facet: x.facet ? x.facet.name : null })),
+      resonances: ev.res.map(r => r.name), trinity: ev.tri ? ev.tri.name : null,
+      anomaly: ev.anomaly ? { id: ev.anomaly, desc: E.ANOMALY[ev.anomaly] } : null,
+      traits: Object.fromEntries(Object.entries(ev.T).filter(([, v]) => v).map(([k, v]) => [k, round(v)])),
+      classes: Object.entries(ev.score).map(([c, v]) => [c, round(v)]).sort((x, y) => y[1] - x[1]),
+      cls: ev.cls, rarity: ev.rarity,
+    };
+  }
+
+  return { make, SCHEMA, BAKE_VERSION, FIELDS, evaluate, explain, bakeOne, bakeAll, renderShard, renderAll, renderIndex, renderDataJs, utf8Length, fnv, OVERRIDE_TEXT, OVERRIDE_NUM };
 });

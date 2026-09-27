@@ -17,6 +17,24 @@ const path = require('path');
 const { bakeFiles, staleFiles } = require('./bake.js');
 const C = require('../js/content.js');
 
+// 0. The content in data/ passes its schema, and change sets round-trip.
+{
+  const SC = require('../js/schema.js');
+  const data = require('../data').data;
+  const ctx = { mechanics: Object.keys(ENG.MECHANICS), organs: Object.keys(require('../js/sprites.js').SPRITES.ORGANS), reactionKinds: Object.keys(ENG.REACTION_KINDS), validKey: E.validKey };
+  const issues = SC.validate(data, ctx).concat(SC.checkWorld(C)).filter(i => i.level === 'error');
+  assert(!issues.length, 'data/ has problems:\n  ' + issues.map(i => `${i.path}: ${i.msg}`).join('\n  ') + '\n(run node tools/content.js check)');
+  for (const f of SC.FILES) assert.strictEqual(fs.readFileSync(path.join(__dirname, '..', 'data', f + '.json'), 'utf8').replace(/\r\n/g, '\n'), SC.format(data[f]), `data/${f}.json is not in the canonical layout (run node tools/content.js format)`);
+  const edited = SC.clone(data);
+  edited.combos.resonances.push({ id: 'verify', name: 'Verify', subs: ['Mi', 'Fr'], traits: {}, effects: [] });
+  edited.essences.subs[0].adjectives = edited.essences.subs[0].adjectives.concat(['Verified']);
+  edited.overrides['FW'] = { name: 'Verified Scald' };
+  delete edited.world.npcs[0].lines;
+  const ops = SC.diff(data, edited), back = SC.applyOps(data, ops);
+  assert(SC.same(back.data, edited) && !back.conflicts.length, 'change sets must round-trip');
+  console.log(`ok: data/ passes its schema (${SC.FILES.length} files, canonical layout), change sets round-trip`);
+}
+
 function mulberry(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
 // 1
