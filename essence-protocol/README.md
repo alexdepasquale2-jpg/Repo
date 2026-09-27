@@ -21,7 +21,7 @@ That grammar gives **5,896** distinct merge identities: 12 cross pairs × 470 su
 
 ### Pre-baked into the merge database
 
-`tools/bake.js` runs every identity through a layered rule system and writes it, one merge at a time, as one record in the merge database (`db/`, one shard per pair of mains):
+`tools/bake.js` runs every identity through a layered rule system (`js/baker.js`, fed by the content in `data/`) and writes it, one merge at a time, as one record in the merge database (`db/`, one shard per pair of mains):
 
 1. The two mains form a **reaction** (Scald/Steam, Magma/Obsidian, Wildfire/Firestorm, Mire/Clay, Squall/Thunderhead, Dune/Sandstorm, or a pure Inferno/Deluge/Tectonic/Tempest). Opposites (Fire/Water, Earth/Air) are volatile.
 2. Each essence pushes a 10-axis trait vector (force, guard, mend, speed, precision, status, drain, spread, persistence, chaos). Subs on the lead weigh 1.0 and subs on the follow weigh 0.7.
@@ -130,21 +130,36 @@ Open `index.html` over HTTP: `python tools/serve.py` (add `--lan` to open it fro
 - Beat the Wardens of the Cirrus Array (Air), Cinder Foundry (Fire), Tidal Archive (Water) and Bedrock Vault (Earth). Each key opens the next gate, and all four open the Core, where the Architect waits.
 - The **Codex** tracks discovered merges, **Forms** the genomes you've seen, and the **Lexicon** the reactions, resonances and anomalies you've found.
 
+## Editing the content
+
+Every name, number and line in the game is plain JSON in `data/`: essences, combos, battle text, traits, items, word lists, the world, and hand edits of single merges. Three ways to change it, all checked by the same schema (`js/schema.js`) and baked by the same code:
+
+- **The content editor.** Run `python tools/serve.py` and open `http://127.0.0.1:8090/editor/`. It's a dashboard for everything: all 5,896 spells, daemons and items with why each came out the way it did, essences (including new sub-essences), combos, battle names, traits, every word list with how busy it is, and the world with a room painter. Every edit is validated and re-baked live, so the Changes page shows exactly which merges it changes before you save. Save writes `data/`, `db/` and `js/data.js`; reload the game to play it. It works on a phone too.
+- **Hosted on claude.ai.** A private copy of the editor keeps your edits as a draft in the page, on any device. Tell Claude Code "apply my Essence Protocol editor changes" and it applies them, re-bakes, checks and pushes. Requests for things that need new code (a new effect, zone or mechanic) go along with them.
+- **The command line** (for Claude Code and scripts): `node tools/content.js` with `list`, `get`, `set`, `add`, `remove`, `merge <key>`, `find`, `check`, `preview` and `apply <changes.json>`. Every write validates first, re-bakes and lists the merges it changed.
+
 ## Files
 
 | File | What it is |
 |---|---|
-| `js/essences.js` | Essence data and the merge-key grammar (shared by the game and the baker) |
-| `tools/bake.js` | The rule system. Pre-bakes every merge, one at a time, into `db/` |
+| `data/*.json` | The content: essences, combos, battle, traits, items, words, world, overrides |
+| `js/schema.js` | What every content field is (labels, help, rules), validation, change sets, the canonical JSON layout |
+| `js/essences.js` | Essence tables (from `data/`) and the merge-key grammar |
+| `js/baker.js` | The rule system: bakes every merge, one at a time (pure; Node and browser) |
+| `tools/bake.js` | Writes `db/` and `js/data.js` from `data/`; `--check` names stale merges |
+| `js/data.js` | Generated. `data/` bundled for the browser |
 | `db/` | Generated. The merge database: `index.json` and 16 shards holding all 5,896 records |
 | `js/db.js` | Loads the database (in the background in the browser, from disk in Node) |
 | `js/designs.js` | Seeds, the %RARITY% modulator, lineages and traits (pure functions) |
 | `js/engine.js` | Daemon model and battle engine (no DOM, runs in Node) |
-| `js/content.js` | Map, zones, operators, starters |
+| `js/content.js` | Map, zones, trainers, people and starters (from `data/world.json`) |
 | `js/sprites.js` | Procedural pixel sprites, a pure function of the genome |
 | `js/reveal.js` | Reveals: essences converge and fuse, the rarity dial rolls and the tier stamps in, then the name, powers and stats appear |
 | `js/game.js` | Overworld, battle UI, composer, menus, forge, splicing, traits, discovery toasts |
 | `tools/verify.js` | CI checks: the database is fresh and complete, records are sane, content keys exist, the map is connected, 450 headless battles finish, 6000 lineages and traits are deterministic and sane, and nothing references the retired bridge |
-| `tools/serve.py` | Local static server (`--lan` for phones) |
+| `tools/serve.py` | Local server (`--lan` for phones), with the content editor's save API |
+| `tools/content.js` | Read and change the content from the command line |
+| `editor/` | The content editor |
+| `tools/build-host.py` | Builds the claude.ai copies of the game and the editor |
 
-No build step and no dependencies. After changing any rule in `essences.js`, `bake.js` or `designs.js`, run `node tools/bake.js` and then `node tools/verify.js`.
+No build step and no dependencies. After changing `data/` by hand, or a rule in `js/baker.js` or `js/designs.js`, run `node tools/bake.js` and then `node tools/verify.js`.
