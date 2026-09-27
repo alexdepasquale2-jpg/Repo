@@ -49,6 +49,8 @@ Battles run live on a clock instead of taking turns, and every ability is color-
 | **Passive** | gold | Always on. One per daemon, from its genome. |
 | **Utility** | cyan | Rest (14s cooldown, big Flux refill), Swap (uses the GCD, 4s cooldown), Items (6s shared cooldown), Bind, Run, Pause. |
 
+The battle HUD is an action bar. A cast bar shows your global cooldown, and a hotbar holds your four memory slots (red square tiles are attacks, violet round tiles are actives, with cooldown sweeps and key numbers 1–4). A gold passive diamond sits beside it, and a cyan utility row sits below. Buff and debuff icons with live timers sit under each card. **Auto** (or the A key) hands your daemon to the same AI the foes use; tapping any tile takes control back.
+
 Flux regenerates continuously, and statuses, regen, echoes and delayed hits tick every 2 seconds. The foe's card has a wind-up bar that shows when it will act next. Opening Compose, Items, Swap or Info pauses the fight. Keys: 1–4 use memory slots, Space pauses, R rests.
 
 ### Battle depth

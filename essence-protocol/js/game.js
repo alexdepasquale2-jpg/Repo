@@ -29,7 +29,7 @@
   const npcs = map.npcs.map(n => Object.assign({}, n));
 
   function defaults(s) {
-    s.settings = Object.assign({ speed: 'normal', tips: 'compact' }, s.settings || {});
+    s.settings = Object.assign({ speed: 'normal', tips: 'compact', auto: false }, s.settings || {});
     s.tips = s.tips || [];
     s.quests = s.quests || [];
     s.stats = Object.assign({ reacts: 0, wild: 0, forged: 0, binds: 0 }, s.stats || {});
@@ -661,6 +661,7 @@
       else if (e.key === 'Escape' && open) { const bb = $('bpanel').querySelector('[data-back]'); if (bb) bb.click(); }
       else if (e.key === ' ') { e.preventDefault(); skipping = true; if (!open && B && B.rt) setPaused(!paused); }
       else if ((e.key === 'r' || e.key === 'R') && !open && B && B.rt) utility({ type: 'defrag' }, 'Rest is cooling down.');
+      else if ((e.key === 'a' || e.key === 'A') && !open && B && B.rt) { S.settings.auto = !S.settings.auto; toast(`Auto battle <b>${S.settings.auto ? 'on' : 'off'}</b>`); }
     } else if (e.key === 'Escape' && !$('sheet').classList.contains('hidden')) closeSheet();
   });
   addEventListener('keyup', e => { if (KEYMAP[e.key] === held) held = null; });
@@ -761,7 +762,7 @@
     await logMsg(`Go, ${dName(B.act(0))}!`);
     B.startRealtime();
     B.rt[0].queued = defaultAttack();
-    tip('battle', 'Combat is live. Red ATTACKS repeat on your global cooldown: tap one to queue it. Violet ACTIVES fire instantly and then cool down. Gold PASSIVES are always on. Space pauses.');
+    tip('battle', 'Combat is live. Your red auto-attack fires every time the cast bar fills; tap another red tile to switch it. Violet actives fire instantly, then cool down. Tap Auto to let the AI fight for you. Space pauses.');
     buildControls(); setPaused(false); startLoop();
   }
 
@@ -777,20 +778,15 @@
       const u = ui[i], el = i === 0 ? $('allyCard') : $('foeCard');
       const pct = clamp(u.hp / u.max, 0, 1), sh = clamp(u.shield / u.max, 0, 1);
       const col = pct > 0.5 ? 'var(--good)' : pct > 0.2 ? 'var(--warn)' : 'var(--bad)';
-      const chips = [];
-      if (u.status) chips.push(`<span class="st bad" data-tip="s:${u.status}">${ENG.STATUS[u.status].name}</span>`);
-      if (u.soak) chips.push('<span class="st inf">Soaked</span>');
-      if (u.regen) chips.push('<span class="st good">Regen</span>');
-      const nm = { atk: 'LOG', def: 'FWL', spd: 'CLK', acc: 'ACC', eva: 'EVA' };
-      for (const k in u.stages) if (u.stages[k]) chips.push(`<span class="st ${u.stages[k] > 0 ? 'good' : 'bad'}">${nm[k]}${u.stages[k] > 0 ? '▲' : '▼'}${Math.abs(u.stages[k])}</span>`);
       el.dataset.tip = 'd:' + i;
       el.innerHTML = `<span class="nm"><b>${esc(u.name)}${u.prism ? ' <em class="prism">✦</em>' : ''}</b><span>Lv ${u.level}</span></span>
         <span class="sub2">${genomeDots(u.key)}<span>${TIER[E.parseKey(u.key).subs.length]}</span></span>
         <span class="bar"><i style="width:${pct * 100}%;background:${col}"></i><b style="left:${pct * 100}%;width:${Math.min(sh, 1 - pct) * 100}%"></b></span>
         ${i === 0 ? `<span class="nums"><span>${u.hp}/${u.max} HP</span><span>${Math.floor(u.flux)}/${u.fmax} Flux</span></span>` : ''}
         <span class="bar flux"><i style="width:${clamp(u.flux / u.fmax, 0, 1) * 100}%"></i></span>
-        <span class="bar cast" title="${i === 0 ? 'Your global cooldown' : 'Foe is winding up its next action'}"><i id="cast${i}"></i></span>
-        ${chips.length ? `<span class="stat-chips">${chips.join('')}</span>` : ''}`;
+        ${i === 1 ? '<span class="bar cast" title="Foe is winding up its next action"><i id="cast1"></i></span>' : ''}
+        <span class="buffs" id="buffs${i}"></span>`;
+      if (B && B.rt) renderBuffs(i);
     }
   }
   $('allyCard').onclick = () => { if (B && !B.over && !$('bctrl').classList.contains('hidden')) panelInfo(0); };
@@ -1026,13 +1022,16 @@
   }
 
   // ---- the real-time loop
-  let loopOn = false, paused = false, lastT = 0, uiT = 0;
+  let loopOn = false, paused = false, lastT = 0, uiT = 0, autoT = 0;
   const pace = () => (S.settings.speed === 'fast' ? 1.15 : 0.85);
   function startLoop() { if (loopOn) return; loopOn = true; lastT = performance.now(); requestAnimationFrame(loop); }
   function loop(t) {
     if (!loopOn || !B) { loopOn = false; return; }
     const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
-    if (!paused && !B.over && !B.needSwitch) consume(B.tick(dt * pace()));
+    if (!paused && !B.over && !B.needSwitch) {
+      if (S.settings.auto) { autoT -= dt; if (autoT <= 0) { autoT = 0.25; autoPilot(); } }
+      consume(B.tick(dt * pace()));
+    }
     uiT -= dt; if (uiT <= 0) { uiT = 0.08; refreshControls(); }
     if (B.over) { loopOn = false; $('bctrl').classList.add('locked'); setTimeout(endBattle, B.result === 'bind' ? 1700 : 900); return; }
     if (B.needSwitch) { loopOn = false; panelSwitch(true); return; }
@@ -1041,7 +1040,20 @@
   function setPaused(p) { paused = p; $('battle').classList.toggle('paused', p); refreshControls(); }
   addEventListener('blur', () => { if (mode === 'battle' && B && !paused) setPaused(true); });
 
-  // ---- controls: color-coded ATTACK / ACTIVE / PASSIVE / UTILITY
+  // Auto battle: the same AI the foes use drives your daemon (picks the
+  // auto-attack, fires actives when they're worth it, rests when dry).
+  function autoPilot() {
+    if (!B || !B.rt || B.over) return;
+    const mirror = { sides: [B.sides[1], B.sides[0]], act: i => B.act(1 - i), wild: false, rng: Math.random, rt: [B.rt[1], B.rt[0]] };
+    const a = B.chooseEnemy.call(mirror);
+    const rt = B.rt[0];
+    if (a.type === 'merge') {
+      if (ENG.isAttack(a.key)) { if (rt.queued !== a.key && rt.gcd <= 0.3) rt.queued = a.key; }
+      else { const ev = B.useActive(a.key); if (ev) consume(ev); }
+    } else if (!rt.cds.defrag && B.sides[0].v.flux < B.sides[0].v.stats.flux * 0.35) { const ev = B.useUtility({ type: 'defrag' }); if (ev) consume(ev); }
+  }
+
+  // ---- controls: an action-bar HUD (hotbar + cast bar + buff icons)
   function chanceWith(lat) { const t = B.act(1), v = B.sides[1].v; return ENG.captureChance(t, t.hp, v.stats.hp, lat, !!v.status); }
   function bestLattice() {
     let best = null, bc = -1;
@@ -1053,43 +1065,43 @@
     return best;
   }
   const defaultAttack = () => { const d = B.act(0); return d.memory.find(k => k && ENG.isAttack(k)) || null; };
-  function kindBadge(k) { return ENG.isAttack(k) ? '<span class="kb atk">Attack · GCD</span>' : `<span class="kb act">Active · ${ENG.cooldownFor(ENG.rec(k))}s CD</span>`; }
+  function kindBadge(k) { return ENG.isAttack(k) ? '<span class="kb atk">Attack · auto-repeats</span>' : `<span class="kb act">Active · ${ENG.cooldownFor(ENG.rec(k))}s CD</span>`; }
+  const CLASS_ICON = { Strike: '⚔', Barrage: '⁂', Siphon: '☍', Hex: '✴', Ward: '⛨', Mend: '✚', Field: '◎' };
 
-  function abilityBtn(k, i) {
+  function hotTile(k, i) {
     const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k), atk = ENG.isAttack(k);
     const eff = ENG.effectiveness(k, ui[1].key);
     const effTxt = r.damaging && eff >= 1.2 ? '<span class="eff up">▲</span>' : r.damaging && eff <= 0.83 ? '<span class="eff dn">▼</span>' : '';
-    return `<button class="ab ${atk ? 'atk' : 'act'} ${known ? '' : 'unk'}" data-slot="${i}" data-key="${k}" data-tip="m:${k}" style="--c:${MAINC(p.a)};--c2:${MAINC(p.b)}">
-      <span class="cdo" id="cd${i}"></span>
-      <span class="an">${known ? esc(r.name) : '? ? ?'}${effTxt}</span>
-      <span class="am">${genomeDots(k)}<span>${known ? r.cls : 'Unknown'}</span><span class="fl">${r.flux}◆</span></span>
-      <span class="ak">${atk ? '<em class="qtag">Queued</em><em class="rtag">Tap to queue</em>' : `<em>Instant · ${ENG.cooldownFor(r)}s cooldown</em>`}</span></button>`;
+    return `<button class="hb ${atk ? 'atk' : 'act'} ${known ? '' : 'unk'}" data-slot="${i}" data-key="${k}" data-tip="m:${k}" style="--c:${MAINC(p.a)};--c2:${MAINC(p.b)}">
+      <span class="face"><span class="ico">${known ? CLASS_ICON[r.cls] : '?'}</span><span class="cdo"></span><span class="key">${i + 1}</span><span class="cost">${r.flux}</span>${effTxt}<span class="auto">AUTO</span></span>
+      <span class="lbl">${known ? esc(r.name) : 'Unknown'}</span></button>`;
   }
 
   function buildControls() {
     const d = B.act(0), r = ENG.rec(d.key), pv = ENG.PASSIVES[r.dPassive];
-    const slots = d.memory.map((k, i) => ({ k, i }));
-    const atks = slots.filter(x => x.k && ENG.isAttack(x.k)), acts = slots.filter(x => x.k && !ENG.isAttack(x.k));
-    const empties = slots.filter(x => !x.k);
-    const uts = [['compose', '⚗', 'Compose'], ['swap', '⇄', 'Swap'], ['bag', '✚', 'Items'], ['rest', '↻', 'Rest'], ['pause', '❚❚', 'Pause']].concat(bctx.wild ? [['run', '↩', 'Run']] : [['info', 'ⓘ', 'Info']]);
-    $('bctrl').classList.remove('locked');
+    const tiles = d.memory.map((k, i) => (k ? hotTile(k, i) : `<button class="hb empty" data-empty="${i}"><span class="face"><span class="ico">＋</span><span class="key">${i + 1}</span></span><span class="lbl">Compose</span></button>`)).join('');
+    const uts = (bctx.wild ? [['bind', '◇', 'Bind']] : []).concat([['compose', '⚗', 'Mix'], ['swap', '⇄', 'Swap'], ['bag', '✚', 'Items'], ['rest', '↻', 'Rest'], ['auto', '⟳', 'Auto'], ['pause', '❚❚', 'Pause']]).concat(bctx.wild ? [['run', '↩', 'Run']] : []);
+    $('bctrl').classList.remove('locked', 'hidden'); $('bpanel').classList.add('hidden');
     $('bctrl').innerHTML = `
-      <div class="lane atk"><span class="lbl">Attack</span><div class="gcd"><i id="gcdFill"></i><span id="gcdText"></span></div></div>
-      <div class="abgrid">${atks.map(x => abilityBtn(x.k, x.i)).join('') || '<p class="fine">No attacks in memory. Compose one.</p>'}</div>
-      <div class="lane act"><span class="lbl">Active</span><div class="abgrid acts">${acts.map(x => abilityBtn(x.k, x.i)).join('')}${empties.map(x => `<button class="ab empty" data-empty="${x.i}"><span class="an">＋ Empty slot</span><span class="am">Compose an attack or active</span></button>`).join('') || (acts.length ? '' : '<p class="fine">Hex, Ward, Mend and Field merges become actives.</p>')}</div></div>
-      <div class="lane pas"><span class="lbl">Passive</span><span class="pchip" data-tip="p:${r.dPassive}"><b>${pv[0]}</b> ${esc(pv[1])}</span></div>
-      ${bctx.wild ? '<button class="bind utl" id="bindBtn"></button>' : ''}
-      <div class="utils">${uts.map(([id, ic, lb]) => `<button class="ub" data-u="${id}"><span class="cdo" id="cdu-${id}"></span><i>${ic}</i>${lb}</button>`).join('')}</div>`;
+      <div class="castbar" id="castbar"><i id="gcdFill"></i><span class="cb-l" id="gcdText"></span><span class="cb-r" id="gcdTime"></span></div>
+      <div class="hotbar">
+        <span class="pas-ico" data-tip="p:${r.dPassive}" title="${esc(pv[0])}"><b>✦</b><small>${esc(pv[0])}</small></span>
+        ${tiles}
+      </div>
+      <div class="hudrow">
+        <div class="utils">${uts.map(([id, ic, lb]) => `<button class="ub" data-u="${id}" ${id === 'bind' ? 'id="bindBtn"' : ''} title="${lb}"><span class="cdo"></span><i>${ic}</i><small>${lb}</small></button>`).join('')}</div>
+      </div>
+      <div class="legend"><span class="lg atk">■ Auto-attack</span><span class="lg act">■ Active</span><span class="lg pas">■ Passive</span><span class="lg utl">■ Utility</span></div>`;
     const c = $('bctrl');
-    c.querySelectorAll('.ab[data-key]').forEach(b => { b.onclick = () => useSlot(+b.dataset.slot); });
+    c.querySelectorAll('.hb[data-key]').forEach(b => { b.onclick = () => useSlot(+b.dataset.slot); });
     c.querySelectorAll('[data-empty]').forEach(b => { b.onclick = () => panelCompose(); });
     c.querySelector('[data-u=compose]').onclick = () => panelCompose();
     c.querySelector('[data-u=swap]').onclick = () => panelSwitch(false);
     c.querySelector('[data-u=bag]').onclick = () => panelBag();
     c.querySelector('[data-u=rest]').onclick = () => utility({ type: 'defrag' }, 'Rest is cooling down.');
     c.querySelector('[data-u=pause]').onclick = () => setPaused(!paused);
-    const last = c.querySelector('[data-u=run]') || c.querySelector('[data-u=info]');
-    last.onclick = () => (bctx.wild ? utility({ type: 'run' }, 'Wait for your global cooldown.') : panelInfo(1));
+    c.querySelector('[data-u=auto]').onclick = () => { S.settings.auto = !S.settings.auto; toast(`Auto battle <b>${S.settings.auto ? 'on' : 'off'}</b>`); refreshControls(); };
+    const run = c.querySelector('[data-u=run]'); if (run) run.onclick = () => utility({ type: 'run' }, 'Wait for your global cooldown.');
     if (bctx.wild) $('bindBtn').onclick = () => {
       const lat = bestLattice(); if (!lat) return;
       const ev = B.useUtility({ type: 'bind', item: lat });
@@ -1103,10 +1115,12 @@
   function useSlot(i) {
     if (!B || B.over || !B.rt) return;
     const k = B.act(0).memory[i]; if (!k) return;
+    if (S.settings.auto) { S.settings.auto = false; toast('Auto battle off. You have control.'); }
     if (ENG.isAttack(k)) { B.rt[0].queued = k; refreshControls(); beep(520, 0.03, 'square', 0.02); return; }
     if (paused) setPaused(false);
     const ev = B.useActive(k);
     if (!ev) { toast(B.rt[0].cds[k] > 0 ? 'That active is cooling down.' : 'Not enough Flux.'); return; }
+    const tile = document.querySelector(`#bctrl .hb[data-slot="${i}"]`); if (tile) { tile.classList.remove('fired'); void tile.offsetWidth; tile.classList.add('fired'); }
     consume(ev);
   }
   function utility(action, busyMsg) {
@@ -1117,53 +1131,80 @@
     return true;
   }
 
+  // Buff / debuff icons with live timers, drawn under each card.
+  const STATUS_ICO = { burn: '♨', frozen: '❄', static: 'ϟ', rooted: '⚘', corrupt: '☣', dormant: 'z' };
+  function renderBuffs(i) {
+    const el = $('buffs' + i); if (!el) return;
+    const v = B.sides[i].v, P = ENG.PULSE, pulseLeft = B.rt ? B.rt[i].pulse : P;
+    const t = n => Math.max(0, Math.ceil((n - 1) * P + pulseLeft)) + 's';
+    const out = [];
+    if (v.status) out.push(`<span class="bf dn" data-tip="s:${v.status.id}"><b>${STATUS_ICO[v.status.id]}</b><i>${t(v.status.turns)}</i></span>`);
+    if (v.soak > 0) out.push(`<span class="bf dn" title="Soaked: Fire hits ×0.6, Air hits ×1.3"><b>≈</b><i>${t(v.soak)}</i></span>`);
+    if (v.petrify) out.push('<span class="bf dn" title="Petrified: loses its next action"><b>◼</b></span>');
+    if (v.regen > 0) out.push(`<span class="bf up" title="Regenerating"><b>✚</b><i>${t(v.regen)}</i></span>`);
+    if (v.shield > 0) out.push(`<span class="bf up" title="Shield"><b>⛨</b><i>${v.shield}</i></span>`);
+    if (v.phase > 0) out.push('<span class="bf up" title="Phased: dodges everything"><b>◌</b></span>');
+    if (v.mirror) out.push('<span class="bf up" title="Mirror: reflects half the next hit"><b>◐</b></span>');
+    if (v.echo) out.push('<span class="bf up" title="An echo is about to ring out"><b>)))</b></span>');
+    if (v.delayed.length) out.push(`<span class="bf up" title="Delayed hit incoming"><b>⌛</b><i>${v.delayed.length}</i></span>`);
+    const nm = { atk: 'LOG', def: 'FWL', spd: 'CLK', acc: 'ACC', eva: 'EVA' };
+    for (const k in v.stages) if (v.stages[k]) out.push(`<span class="bf ${v.stages[k] > 0 ? 'up' : 'dn'} st" title="${nm[k]} ${v.stages[k] > 0 ? '+' : ''}${v.stages[k]}"><b>${nm[k]}</b><i>${v.stages[k] > 0 ? '▲' : '▼'}${Math.abs(v.stages[k])}</i></span>`);
+    const html = out.join('');
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+
   function refreshControls() {
     if (!B || !B.rt || !ui) return;
-    const rt = B.rt[0], d = B.act(0), flux = B.sides[0].v.flux;
+    const rt = B.rt[0], flux = B.sides[0].v.flux;
     const q = rt.queued, qr = q && ENG.rec(q);
     const full = B.gcdFor(0, qr);
-    const fill = $('gcdFill'), txt = $('gcdText');
+    const fill = $('gcdFill');
     if (fill) {
       fill.style.width = (clamp(1 - rt.gcd / full, 0, 1) * 100) + '%';
-      fill.classList.toggle('ready', rt.gcd <= 0);
-      txt.textContent = paused ? 'Paused · tap Pause or press Space to resume'
-        : !q ? 'Tap a red attack to queue it'
-        : rt.starved ? `${mergeLabel(q)}: waiting for Flux (${Math.floor(flux)}/${qr.flux})`
-        : rt.gcd > 0 ? `Next: ${mergeLabel(q)} in ${rt.gcd.toFixed(1)}s` : `Firing ${mergeLabel(q)}`;
-      if (rt.starved) tip('flux', 'Your queued attack needs more Flux. Rest (↻) refills a big chunk, or queue a cheaper attack.');
+      $('castbar').classList.toggle('ready', rt.gcd <= 0);
+      $('castbar').classList.toggle('starved', !!rt.starved);
+      $('gcdText').textContent = paused ? 'Paused' : !q ? 'Tap a red tile to set your auto-attack' : rt.starved ? `${mergeLabel(q)} · needs ${qr.flux} Flux` : `${S.settings.auto ? 'Auto · ' : ''}${mergeLabel(q)}`;
+      $('gcdTime').textContent = paused ? 'Space to resume' : rt.gcd > 0 ? rt.gcd.toFixed(1) + 's' : rt.starved ? `${Math.floor(flux)}/${qr.flux}` : 'now';
+      if (rt.starved) tip('flux', 'Your auto-attack needs more Flux. Rest (↻) refills a big chunk, or pick a cheaper attack.');
     }
-    document.querySelectorAll('#bctrl .ab[data-key]').forEach(b => {
+    document.querySelectorAll('#bctrl .hb[data-key]').forEach(b => {
       const k = b.dataset.key, r = ENG.rec(k), cdEl = b.querySelector('.cdo');
       const short = r.flux > flux;
-      if (ENG.isAttack(k)) { b.classList.toggle('q', k === q); b.classList.toggle('short', short); }
-      else {
+      b.classList.toggle('short', short);
+      if (ENG.isAttack(k)) {
+        b.classList.toggle('q', k === q);
+        cdEl.style.setProperty('--p', k === q && rt.gcd > 0 ? (rt.gcd / full * 360) + 'deg' : '0deg');
+        cdEl.textContent = '';
+      } else {
         const cd = rt.cds[k] || 0, tot = ENG.cooldownFor(r);
-        b.classList.toggle('cooling', cd > 0); b.classList.toggle('short', short); b.classList.toggle('ready', !cd && !short);
+        b.classList.toggle('cooling', cd > 0); b.classList.toggle('ready', !cd && !short);
         cdEl.style.setProperty('--p', cd > 0 ? (cd / tot * 360) + 'deg' : '0deg');
-        cdEl.textContent = cd > 0 ? Math.ceil(cd) + 's' : '';
+        cdEl.textContent = cd > 0 ? Math.ceil(cd) : '';
       }
     });
     const cdu = (id, key, lock) => {
-      const el = $('cdu-' + id); if (!el) return;
-      const cd = key ? rt.cds[key] || 0 : 0, tot = key ? ENG.UTIL_CD[key] || 1 : 1;
+      const b = document.querySelector(`#bctrl [data-u=${id}]`); if (!b) return;
+      const el = b.querySelector('.cdo'), cd = key ? rt.cds[key] || 0 : 0, tot = key ? ENG.UTIL_CD[key] || 1 : 1;
       el.style.setProperty('--p', cd > 0 ? (cd / tot * 360) + 'deg' : '0deg');
-      el.textContent = cd > 0 ? Math.ceil(cd) + 's' : '';
-      el.parentElement.classList.toggle('cooling', cd > 0 || !!lock);
+      el.textContent = cd > 0 ? Math.ceil(cd) : '';
+      b.classList.toggle('cooling', cd > 0 || !!lock);
     };
     cdu('rest', 'defrag'); cdu('bag', 'item'); cdu('swap', 'switch', rt.gcd > 0);
-    const pb = document.querySelector('#bctrl [data-u=pause]'); if (pb) pb.classList.toggle('on', paused);
+    const tg = (id, on) => { const b = document.querySelector(`#bctrl [data-u=${id}]`); if (b) b.classList.toggle('on', on); };
+    tg('pause', paused); tg('auto', !!S.settings.auto);
     const rb = document.querySelector('#bctrl [data-u=rest]'); if (rb) rb.classList.toggle('hot', flux < (qr ? qr.flux : 0) && !rt.cds.defrag);
     const bind = $('bindBtn');
     if (bind) {
       const lat = bestLattice(), ch = lat ? chanceWith(lat) : 0;
       bind.disabled = !lat || rt.gcd > 0;
       bind.classList.toggle('hot', ch >= 0.35);
-      bind.innerHTML = lat ? `<span>◇ Bind</span><b>${Math.round(ch * 100)}%</b><small>${esc(lat.name)} ×${lat.count}${rt.gcd > 0 ? ' · after GCD' : ''}</small>` : '<span>◇ Bind</span><small>No lattices left</small>';
+      const html = `<span class="cdo"></span><i>◇</i><small>${lat ? Math.round(ch * 100) + '%' : 'none'}</small>`;
+      if (bind.innerHTML !== html) bind.innerHTML = html;
+      bind.title = lat ? `${lat.name} ×${lat.count}` : 'No lattices left';
       if (ui[1].hp / ui[1].max < 0.5) tip('bind', 'The foe is weak. Tap Bind to capture it. Lower HP and status effects raise the odds.');
     }
-    // foe cast bar telegraphs its next action
+    renderBuffs(0); renderBuffs(1);
     const fc = $('cast1'); if (fc) { const e = B.rt[1]; fc.style.width = (clamp(1 - e.gcd / B.gcdFor(1, null), 0, 1) * 100) + '%'; }
-    const pc = $('cast0'); if (pc) pc.style.width = (clamp(1 - rt.gcd / full, 0, 1) * 100) + '%';
   }
 
   function panel(title, html, back) {
