@@ -10,7 +10,10 @@
 (function (root) {
   'use strict';
   const TIER = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
-  const TC = ['#aab4c8', '#9fe', '#ffd23d', '#ff5cf0', '#46f3ff'];
+  const TC = ['#aab4c8', '#99ffee', '#ffd23d', '#ff5cf0', '#46f3ff'];
+  // '#rgb' or '#rrggbb' plus a two-digit alpha. Appending alpha to a 3-digit color makes an
+  // invalid one, which throws inside the canvas calls and froze reveals at the Uncommon tier.
+  const alpha = (hex, aa) => (hex.length === 4 ? '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3] : hex.slice(0, 7)) + aa;
   const q = [];
   let busy = false;
   const ease = t => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
@@ -87,8 +90,13 @@
         }
       }
 
+      // A reveal can never freeze on screen: if a frame throws, the reveal closes and the game goes on.
       function frame(now) {
         if (closed) return;
+        try { draw(now); } catch (err) { console.error('reveal', err); close(); return; }
+        requestAnimationFrame(frame);
+      }
+      function draw(now) {
         const t = now - t0;
         g.clearRect(0, 0, W, H);
         g.fillStyle = 'rgba(5,8,16,0.82)'; g.fillRect(0, 0, W, H);
@@ -98,7 +106,7 @@
           for (const ob of orbs) {
             const r = ob.r0 * (1 - k) + 70 * k, a = ob.a + k * 1.2;
             const x = cx + Math.cos(a) * r, y = cy + Math.sin(a) * r;
-            g.strokeStyle = ob.color + '55'; g.lineWidth = 2; g.beginPath(); g.moveTo(cx + Math.cos(a - 0.25) * (r + 60), cy + Math.sin(a - 0.25) * (r + 60)); g.lineTo(x, y); g.stroke();
+            g.strokeStyle = alpha(ob.color, '55'); g.lineWidth = 2; g.beginPath(); g.moveTo(cx + Math.cos(a - 0.25) * (r + 60), cy + Math.sin(a - 0.25) * (r + 60)); g.lineTo(x, y); g.stroke();
             orb(x, y, ob.size, ob.color);
           }
           if (k >= 1) { phase = 'fuse'; t0 = now; }
@@ -137,7 +145,7 @@
         }
         if (rays > 0) {
           g.save(); g.translate(cx, cy); g.rotate(now / 3000);
-          for (let i = 0; i < 12; i++) { g.rotate(Math.PI / 6); const grd = g.createLinearGradient(0, 0, 0, -Math.max(W, H)); grd.addColorStop(0, TC[tier] + '66'); grd.addColorStop(1, TC[tier] + '00'); g.fillStyle = grd; g.beginPath(); g.moveTo(-14, 0); g.lineTo(14, 0); g.lineTo(0, -Math.max(W, H)); g.fill(); }
+          for (let i = 0; i < 12; i++) { g.rotate(Math.PI / 6); const grd = g.createLinearGradient(0, 0, 0, -Math.max(W, H)); grd.addColorStop(0, alpha(TC[tier], '66')); grd.addColorStop(1, alpha(TC[tier], '00')); g.fillStyle = grd; g.beginPath(); g.moveTo(-14, 0); g.lineTo(14, 0); g.lineTo(0, -Math.max(W, H)); g.fill(); }
           g.restore();
         }
         for (let i = sparks.length - 1; i >= 0; i--) {
@@ -147,12 +155,11 @@
         }
         g.globalAlpha = 1;
         if (flash > 0) { g.fillStyle = `rgba(255,255,255,${flash * 0.5})`; g.fillRect(0, 0, W, H); flash = Math.max(0, flash - 0.05); }
-        requestAnimationFrame(frame);
       }
       let flash = 0;
       function orb(x, y, r, color) {
         const grd = g.createRadialGradient(x, y, 0, x, y, r * 2.4);
-        grd.addColorStop(0, '#ffffff'); grd.addColorStop(0.25, color); grd.addColorStop(1, color + '00');
+        grd.addColorStop(0, '#ffffff'); grd.addColorStop(0.25, color); grd.addColorStop(1, alpha(color, '00'));
         g.fillStyle = grd; g.beginPath(); g.arc(x, y, r * 2.4, 0, Math.PI * 2); g.fill();
       }
       function core(x, y, r, color, alpha) {

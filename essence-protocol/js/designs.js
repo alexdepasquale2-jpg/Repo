@@ -9,12 +9,15 @@
  * Splices (17 million genome pairs) and individual daemons (a 32-bit seed each) can't be
  * enumerated, so their designs are computed from the pre-baked records they are made of.
  * Seeds and the %RARITY% modulator keep the exact formulas of the bridge era, so rolls in
- * existing saves stay the same. Loaded by the game (global DESIGNS) and by tools/bake.js. */
+ * existing saves stay the same. Loaded by the game (global DESIGNS) and by tools/bake.js.
+ * The words and numbers (traits, item types, lineage names) come from data/ through E.data;
+ * DESIGNS.make(E) builds a copy for other data. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./essences.js'));
   else root.DESIGNS = factory(root.ESSENCE);
-})(typeof self !== 'undefined' ? self : this, function (E) {
+})(typeof self !== 'undefined' ? self : this, function make(E) {
   'use strict';
+  const data = E.data;
 
   const clampN = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const cap = s => s ? s[0].toUpperCase() + s.slice(1) : s;
@@ -24,6 +27,19 @@
   const RARITY_CUTS = [40, 15, 5, 1]; // a roll at or below 40% is uncommon, 15% rare, 5% epic, 1% legendary
   function hash32(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193); } return h >>> 0; }
   const seedOf = str => hash32('ep|' + str).toString(16).padStart(8, '0');
+  // Stable word picks (rendezvous hashing): every word in a list gets a score from the seed, and
+  // the highest score wins. Adding a word only moves the picks where the new word scores highest,
+  // removing one only moves the picks that had it, and the order of a list doesn't matter.
+  function mix32(h) { h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b); h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35); h ^= h >>> 16; return h >>> 0; }
+  const wordScore = (seed, w) => mix32(hash32(seed + '|' + w));
+  function stableRank(list, seed) {
+    return list.map(w => [w, wordScore(seed, w)]).sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : x[0] > y[0] ? 1 : 0)).map(x => x[0]);
+  }
+  function stablePick(list, seed) {
+    let best = list[0], top = -1;
+    for (const w of list) { const sc = wordScore(seed, w); if (sc > top || (sc === top && w < best)) { top = sc; best = w; } }
+    return best;
+  }
   const unit = (seed, salt) => (hash32(seed + '|' + salt) + 0.5) / 4294967296;
   // `boost` (0 to 0.9) is how strongly the makeup favors rare outcomes; `pct` is the share of
   // designs at least this rare, so lower is rarer (2.7% is about 1 in 37).
@@ -34,14 +50,9 @@
     while (tier < 4 && pct <= RARITY_CUTS[tier]) tier++;
     return { seed, boost: Math.round(b * 100) / 100, pct, tier, rarity: RARITY_NAMES[tier], odds: Math.max(1, Math.round(100 / pct)) };
   }
-  const ITEM_TYPES = {
-    patch: ['Patch', 'a consumable that restores a daemon\'s HP'],
-    ward: ['Module', 'a battle item that raises a shield'],
-    lattice: ['Lattice', 'a lattice for binding wild daemons'],
-    catalyst: ['Catalyst', 'a battle item that floods the arena with an essence field'],
-    script: ['Script', 'a script that attunes a daemon to a new sub-essence'],
-    cell: ['Flux Cell', 'a battle item that refills Flux'],
-  };
+  // kind: [name, what it is]
+  const ITEM_TYPES = {};
+  for (const k of data.items.kinds) ITEM_TYPES[k.kind] = [k.name, k.desc];
   const itemType = kind => (typeof kind === 'string' && kind.startsWith('item.') && ITEM_TYPES[kind.slice(5)] ? kind.slice(5) : null);
   // info: items use the baked rarity (0-4); traits use generation, parents' trait tier and prism.
   function modFor(kind, key, info) {
@@ -65,53 +76,23 @@
   }
 
   // ---- traits ----
-  // code: [category, name nouns, magnitude by rarity tier]
-  const TRAITS = {
-    forage: ['utility', ['Gleaner', 'Scavenger', 'Magpie'], [10, 15, 22, 30, 40]],
-    tutor: ['utility', ['Mentor', 'Sage', 'Tutor'], [5, 8, 12, 16, 22]],
-    binder: ['utility', ['Tether', 'Snare', 'Binder'], [5, 8, 12, 16, 22]],
-    smith: ['utility', ['Anvil', 'Forgehand', 'Temper'], [8, 12, 18, 25, 35]],
-    nurture: ['utility', ['Cradle', 'Hearth', 'Brood'], [10, 15, 22, 30, 40]],
-    mender: ['utility', ['Medic', 'Salve', 'Mender'], [2, 3, 4, 6, 8]], // % HP every 25 steps
-    fortune: ['utility', ['Omen', 'Charm', 'Fortune'], [20, 35, 50, 75, 100]],
-    archive: ['utility', ['Archivist', 'Ledger', 'Scholar'], [10, 15, 22, 30, 40]],
-    lure: ['utility', ['Beacon', 'Siren', 'Lure'], [10, 15, 20, 25, 30]],
-    shroud: ['utility', ['Shroud', 'Hush', 'Shade'], [10, 15, 20, 25, 30]],
-    logic: ['passive', ['Fury', 'Might', 'Edge'], [4, 6, 8, 11, 15]],
-    firewall: ['passive', ['Bulwark', 'Aegis', 'Rampart'], [4, 6, 8, 11, 15]],
-    clock: ['passive', ['Sprint', 'Quickstep', 'Dash'], [4, 6, 8, 11, 15]],
-    vitality: ['passive', ['Vigor', 'Heart', 'Lifeline'], [4, 6, 8, 11, 15]],
-    capacity: ['passive', ['Reservoir', 'Battery', 'Wellspring'], [4, 6, 8, 11, 15]],
-    coherence: ['passive', ['Focus', 'Clarity', 'Resolve'], [4, 6, 8, 11, 15]],
-    pulse: ['active', ['Pulse', 'Rally', 'Heartbeat'], [20, 30, 40, 55, 75]], // % party HP
-    warp: ['active', ['Homing', 'Recall', 'Waypoint'], [400, 320, 250, 180, 120]], // its own cooldown in steps
-    repel: ['active', ['Deterrent', 'Ward', 'Hiss'], [30, 45, 60, 80, 110]], // steps without wild encounters
-    hasten: ['active', ['Quickening', 'Spur', 'Catalyst'], [10, 15, 22, 30, 45]], // kernel steps
-    transmute: ['active', ['Alchemy', 'Crucible', 'Refinery'], [5, 4, 4, 3, 2]], // motes in per mote out
-  };
-  const EPITHET = { forage: 'Plenty', tutor: 'Lessons', binder: 'Tethers', smith: 'the Anvil', nurture: 'the Hearth', mender: 'Mending', fortune: 'Omens', archive: 'Records', lure: 'the Call', shroud: 'Silence',
-    logic: 'Force', firewall: 'the Wall', clock: 'Haste', vitality: 'Vigor', capacity: 'Reserves', coherence: 'Focus', pulse: 'the Pulse', warp: 'Return', repel: 'Warding', hasten: 'Quickening', transmute: 'Change' };
-  const DOES = { forage: 'turns up extra motes after every fight', tutor: 'teaches the whole party as it fights', binder: 'steadies the lattice when you bind', smith: 'has a knack for the forge',
-    nurture: 'keeps kernels warm while they compile', mender: 'patches the party up on the road', fortune: 'draws prismatic daemons out of the static', archive: 'files away a mote from every new merge',
-    lure: 'calls wild daemons out of the static', shroud: 'keeps the party hidden in the static', logic: 'hits harder than its form suggests', firewall: 'shrugs off hits other forms would feel',
-    clock: 'runs a few cycles faster than its kin', vitality: 'carries more HP than its kin', capacity: 'holds more Flux than its kin', coherence: 'keeps unstable merges together',
-    pulse: 'can pulse restoring light over the party', warp: 'can pull the party back to the last terminal', repel: 'can drive wild daemons away for a while', hasten: 'can hurry kernels along', transmute: 'can refine motes into its own essence' };
+  // code: [category, name nouns, magnitude by rarity tier]. Utility magnitudes are percents
+  // (mender: % HP every 25 steps); pulse is % party HP, warp its own cooldown in steps, repel
+  // steps without wild encounters, hasten kernel steps, transmute motes in per mote out.
+  const TRAITS = {}, EPITHET = {}, DOES = {}, EFFECT_TEXT = {}, ACTIVE_CD = {}, PASSIVE_STAT = {};
+  for (const t of data.traits.traits) {
+    TRAITS[t.code] = [t.category, t.nouns, t.magnitude];
+    EPITHET[t.code] = t.epithet; DOES[t.code] = t.does; EFFECT_TEXT[t.code] = t.effect;
+    if (t.cooldown != null) ACTIVE_CD[t.code] = t.cooldown; // steps (warp's magnitude is its cooldown)
+    if (t.stat) PASSIVE_STAT[t.code] = t.stat;
+  }
   const TRAIT_SCOPE = [1, 1, 2, 2, 3]; // trait effects by rarity tier
-  const ACTIVE_CD = { pulse: 150, repel: 200, hasten: 180, transmute: 60 }; // steps (warp's magnitude is its cooldown)
-  const PASSIVE_STAT = { logic: 'atk', firewall: 'def', clock: 'spd', vitality: 'hp', capacity: 'flux', coherence: 'coh' };
-  // How each trait axis of a merge leans toward trait codes (used by the baker for `aff`).
-  const AXIS_AFF = {
-    pow: { logic: 1, hasten: 0.3 }, grd: { firewall: 1, shroud: 0.5, vitality: 0.3 }, mnd: { mender: 1, pulse: 0.7, vitality: 0.5 },
-    spd: { clock: 1, warp: 0.5, lure: 0.3 }, prc: { coherence: 0.8, binder: 0.6, archive: 0.5 }, hex: { binder: 0.8, repel: 0.6, shroud: 0.4 },
-    drn: { forage: 0.8, transmute: 0.6, capacity: 0.3 }, spr: { lure: 0.6, forage: 0.5, capacity: 0.5 }, per: { nurture: 0.8, tutor: 0.6, vitality: 0.4 },
-    cha: { fortune: 0.8, transmute: 0.5, warp: 0.4 },
-  };
-  const ESS_AFF = {
-    F: { smith: 2 }, W: { mender: 1.5 }, E: { nurture: 1.5 }, A: { warp: 1.5 },
-    Em: { smith: 0.5 }, Pl: { logic: 1 }, As: { repel: 1 }, Ti: { forage: 1 }, Fr: { repel: 0.5, firewall: 0.5 }, Mi: { shroud: 1 },
-    St: { firewall: 1 }, Me: { smith: 1 }, Ro: { nurture: 1 }, Sp: { capacity: 1 }, Ga: { clock: 1 }, Ec: { lure: 1 },
-    Li: { fortune: 1, pulse: 1 }, Vo: { transmute: 1.5 }, Si: { archive: 1.5, tutor: 1 }, Tm: { hasten: 1.5 },
-  };
+  // How each trait axis of a merge, and each essence in it, leans toward trait codes (used by the
+  // baker for `aff`).
+  const AXIS_AFF = data.traits.axisLean;
+  const ESS_AFF = {}, MAIN_ADJ = {};
+  for (const m of data.essences.mains) { ESS_AFF[m.code] = m.traitLean || {}; MAIN_ADJ[m.code] = m.traitNameAdjectives; }
+  for (const x of data.essences.subs) ESS_AFF[x.code] = x.traitLean || {};
   // Baker: the four trait codes a genome leans toward, as [code, weight 1-99], strongest first.
   function affinity(T, key) {
     const p = E.parseKey(key), w = {};
@@ -139,11 +120,10 @@
     for (const f of fx) if (f.cat === 'passive') stats[PASSIVE_STAT[f.code]] = f.mag;
     return { fx, stats };
   }
-  const MAIN_ADJ = { F: ['Blazing', 'Kindled', 'Searing'], W: ['Tidal', 'Deep', 'Flowing'], E: ['Stone', 'Rooted', 'Iron'], A: ['Gale', 'Soaring', 'Cirrus'] };
   function genomeAdj(key, seed) {
     const p = E.parseKey(key), lead = p.subs.find(t => t.h === 1) || p.subs[0];
     const list = lead ? E.SUB[lead.s].adj : MAIN_ADJ[p.a];
-    return list[hash32(seed + '|adj') % list.length];
+    return stablePick(list, seed + '|adj');
   }
   const traitKey = (genome, seed) => genome + '@' + seed;
   // One individual daemon's trait. info: { gen, parentTier, prism, ancestry: [{ name, codes }] }.
@@ -158,7 +138,7 @@
     if (!codes.length) { const all = Object.keys(TRAITS); codes = [all[hash32(seed + '|trait') % all.length]]; weight[codes[0]] = 1; }
     const { fx, stats } = traitEffects(codes, weight, tier);
     const nouns = TRAITS[codes[0]][1], adj = genomeAdj(genome, seed);
-    let name = `${adj} ${nouns[hash32(seed + '|noun') % nouns.length]}`;
+    let name = `${adj} ${stablePick(nouns, seed + '|noun')}`;
     if (codes.length === 2) name += ` of ${EPITHET[codes[1]]}`;
     else if (codes.length === 3) name += ` of ${EPITHET[codes[1]]} and ${EPITHET[codes[2]]}`;
     const who = r.dName || 'This daemon';
@@ -170,35 +150,18 @@
     if (anc && anc.codes && anc.codes.some(c => codes.includes(c))) desc += ` It carries on ${anc.name}.`;
     return { key: tkey, name: name.slice(0, 48), desc: desc.slice(0, 400), tier, rarity: RARITY_NAMES[tier], pct: mod.pct, odds: mod.odds, fx, stats };
   }
-  const PASSIVE_NAME = { logic: 'Logic', firewall: 'Firewall', clock: 'Clock', vitality: 'HP', capacity: 'Flux', coherence: 'Coherence' };
+  // What a trait effect does, from its text in data/traits.json ({m} magnitude, {cd} cooldown).
   function describeTrait(f) {
-    const m = f.mag;
-    switch (f.code) {
-      case 'forage': return `Each mote from a battle has a ${m}% chance to double`;
-      case 'tutor': return `+${m}% XP for the whole party`;
-      case 'binder': return `+${m}% bind chance`;
-      case 'smith': return `${m}% chance a forge costs no motes`;
-      case 'nurture': return `Kernels compile ${m}% faster`;
-      case 'mender': return `Heals the party ${m}% HP every 25 steps`;
-      case 'fortune': return `Prismatic daemons are ${m}% more likely`;
-      case 'archive': return `${m}% chance a new merge also gives a mote of its lead essence`;
-      case 'lure': return `${m}% more wild encounters`;
-      case 'shroud': return `${m}% fewer wild encounters`;
-      case 'pulse': return `Heal the party ${m}% HP (every ${ACTIVE_CD.pulse} steps)`;
-      case 'warp': return `Return to the last terminal (every ${m} steps)`;
-      case 'repel': return `No wild encounters for ${m} steps (every ${ACTIVE_CD.repel} steps)`;
-      case 'hasten': return `Compiling kernels advance ${m} steps (every ${ACTIVE_CD.hasten} steps)`;
-      case 'transmute': return `Turn ${m} motes of your most plentiful essence into 1 of its lead essence (every ${ACTIVE_CD.transmute} steps)`;
-      default: return PASSIVE_NAME[f.code] ? `+${m}% ${PASSIVE_NAME[f.code]} in battle` : '';
-    }
+    const t = EFFECT_TEXT[f.code];
+    return t ? t.replace(/\{m\}/g, f.mag).replace(/\{cd\}/g, ACTIVE_CD[f.code]) : '';
   }
 
   // ---- splicing ----
   const PEDIGREE = [4, 6, 8, 11, 15]; // total % stat bonus by lineage rarity
   const INHERIT = [1, 1, 2, 2, 3]; // sub-essences inherited as attunements by lineage rarity
-  const LINE_NOUN = ['Line', 'Strain', 'House', 'Dynasty', 'Legacy'];
+  const LINE_NOUN = data.traits.lineage.nouns;
   const STAT_KEYS = ['hp', 'atk', 'def', 'spd', 'flux', 'coh'];
-  const STAT_WORD = { hp: 'endurance', atk: 'raw Logic', def: 'firewalls', spd: 'speed', flux: 'deep Flux', coh: 'coherence' };
+  const STAT_WORD = data.traits.lineage.statWords;
   const breedKey = (x, y) => [x, y].sort().join('~');
   // What a pair of parents can pass on, in the lattice's order of preference.
   function spliceOptions(pair) {
@@ -237,7 +200,7 @@
   }
 
   return {
-    hash32, seedOf, unit, modulate, modFor, RARITY_NAMES, ITEM_TYPES, itemType, itemKind,
+    make, hash32, seedOf, stableRank, stablePick, unit, modulate, modFor, RARITY_NAMES, ITEM_TYPES, itemType, itemKind,
     TRAITS, TRAIT_SCOPE, ACTIVE_CD, affinity, traitEffects, traitKey, trait, describeTrait,
     PEDIGREE, INHERIT, breedKey, spliceOptions, lineage,
   };

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* Essence Protocol: consistency checks for CI.
- *  1. The committed merge database (db/) matches a fresh bake (deterministic, not stale).
+ *  0. The content in data/ passes its schema (js/schema.js).
+ *  1. The committed merge database (db/) and js/data.js match a fresh bake of data/ (not stale).
  *  2. Every legal merge identity is present, and nothing else is.
  *  3. Every record is sane (ranges, known effects, unique names).
  *  4. A few hundred seeded headless battles run to completion without throwing.
@@ -13,16 +14,44 @@ const DB = require('../js/db.js');
 const ENG = require('../js/engine.js');
 const D = require('../js/designs.js');
 const path = require('path');
-const { bakeAll, render, OUT } = require('./bake.js');
+const { bakeFiles, staleFiles } = require('./bake.js');
 const C = require('../js/content.js');
+
+// 0. The content in data/ passes its schema, and change sets round-trip.
+{
+  const SC = require('../js/schema.js');
+  const data = require('../data').data;
+  const ctx = { mechanics: Object.keys(ENG.MECHANICS), organs: Object.keys(require('../js/sprites.js').SPRITES.ORGANS), reactionKinds: Object.keys(ENG.REACTION_KINDS), validKey: E.validKey };
+  const issues = SC.validate(data, ctx).concat(SC.checkWorld(C)).filter(i => i.level === 'error');
+  assert(!issues.length, 'data/ has problems:\n  ' + issues.map(i => `${i.path}: ${i.msg}`).join('\n  ') + '\n(run node tools/content.js check)');
+  for (const f of SC.FILES) assert.strictEqual(fs.readFileSync(path.join(__dirname, '..', 'data', f + '.json'), 'utf8').replace(/\r\n/g, '\n'), SC.format(data[f]), `data/${f}.json is not in the canonical layout (run node tools/content.js format)`);
+  const edited = SC.clone(data);
+  edited.combos.resonances.push({ id: 'verify', name: 'Verify', subs: ['Mi', 'Fr'], traits: {}, effects: [] });
+  edited.essences.subs[0].adjectives = edited.essences.subs[0].adjectives.concat(['Verified']);
+  edited.overrides['FW'] = { name: 'Verified Scald' };
+  delete edited.world.maps[0].things.find(t => t.type === 'person').lines;
+  edited.world.maps[0].things.push({ id: 'verify-sign', type: 'sign', x: 1, y: 1, lines: ['Verified.'] });
+  const ops = SC.diff(data, edited), back = SC.applyOps(data, ops);
+  assert(SC.same(back.data, edited) && !back.conflicts.length, 'change sets must round-trip');
+  console.log(`ok: data/ passes its schema (${SC.FILES.length} files, canonical layout), change sets round-trip`);
+}
 
 function mulberry(seed) { return function () { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
 // 1
-for (const [f, text] of Object.entries(render(bakeAll()))) assert.strictEqual(fs.readFileSync(path.join(OUT, f), 'utf8').replace(/\r\n/g, '\n'), text, `db/${f} is stale: run node tools/bake.js`);
+{
+  const stale = staleFiles(bakeFiles());
+  assert(!stale.length, 'stale: ' + stale.map(s => s.file).join(', ') + ' (run node tools/bake.js)');
+}
 // 2
 const all = E.enumerateAll();
-assert.strictEqual(all.length, 5896);
+{
+  // the count from the grammar alone: per ordered pair of mains, every way to pick up to 3 legal slots
+  const choose = (n, k) => { let r = 1; for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1); return r; };
+  let expect = 0;
+  for (const a of E.MAINS) for (const b of E.MAINS) { const n = E.slotsFor(a, b).length; for (let k = 0; k <= E.MAX_SUBS; k++) expect += choose(n, k); }
+  assert.strictEqual(all.length, expect);
+}
 assert.strictEqual(DB.count, all.length);
 assert.deepStrictEqual(DB.keys(), all, 'the database holds every merge, in enumeration order');
 // 3
@@ -160,24 +189,40 @@ console.log(`ok: ${all.length} merges verified, 300 battles / ${turns} turns`, r
   console.log(`ok: ${shipped.length} shipped files make no bridge or model requests`);
 }
 
-// 6. Map: every room row is well-formed and every NPC, terminal and gate is reachable from spawn
-//    when gates are treated as open.
+// 5d. Reveal tier colors are full #rrggbb: the reveal appends alpha digits to them, and a 3-digit
+//     color turned into an invalid one that froze every Uncommon reveal on screen.
 {
-  const map = C.buildMap();
-  const passable = (x, y) => { const ch = map.tiles[y][x]; return !C.SOLID.has(ch) || C.GATES[ch]; };
-  const npcAt = new Set(map.npcs.map(n => n.x + ',' + n.y));
-  const seen = new Set([map.spawn.x + ',' + map.spawn.y]);
-  const q = [map.spawn];
-  while (q.length) {
-    const { x, y } = q.shift();
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = x + dx, ny = y + dy, id = nx + ',' + ny;
-      if (seen.has(id) || !passable(nx, ny) || npcAt.has(id)) continue;
-      seen.add(id); q.push({ x: nx, y: ny });
-    }
+  const { REVEAL } = require('../js/reveal.js');
+  assert(REVEAL.TC.length === 5 && REVEAL.TC.every(c => /^#[0-9a-f]{6}$/i.test(c)), 'reveal tier colors must be #rrggbb: ' + REVEAL.TC);
+  console.log('ok: reveal tier colors are valid for every rarity');
+}
+
+// 6. The world: every map is reachable from the start through its warps, every thing and terminal can
+//    be reached (SC.checkWorld, in step 0), the Wardens hand out the four keys the gates ask for,
+//    and there is one final boss.
+{
+  const maps = Object.values(C.MAPS);
+  assert(C.START && C.MAPS[C.START.map], 'the start is on a map');
+  assert.strictEqual(C.OPERATORS.filter(o => o.final).length, 1, 'exactly one final boss');
+  assert.deepStrictEqual(C.GATE_KEYS, [1, 2, 3, 4], 'the gates ask for one to four keys');
+  assert.strictEqual(C.KEYS, 4, 'four Wardens give the gate keys');
+  assert(!C.problems.length, 'the world builds without problems: ' + JSON.stringify(C.problems));
+  const walk = maps.reduce((n, m) => n + m.tiles.join('').split('').filter(ch => !C.SOLID.has(ch)).length, 0);
+  console.log(`ok: world "${C.TITLE}": ${maps.length} map(s), ${Object.keys(C.THINGS).length} things, ${walk} walkable tiles, everything reachable`);
+}
+
+// 7. The worlds a player can start from in the builder (js/worlds.js templates) pass the schema.
+{
+  const SC = require('../js/schema.js');
+  const data = require('../data').data;
+  global.window = { EP_GAME: { esc: s => s }, CONTENT_SCHEMA: SC, CONTENT: C, WORLD_RENDER: {}, EP_DATA: data };
+  require('../js/worlds.js');
+  const T = window.WORLDS.templates;
+  const ctx = { mechanics: Object.keys(ENG.MECHANICS), organs: Object.keys(require('../js/sprites.js').SPRITES.ORGANS), reactionKinds: Object.keys(ENG.REACTION_KINDS), validKey: E.validKey };
+  for (const [name, make] of Object.entries(T)) {
+    const w = make(), issues = SC.validateWorld(w, data, ctx, C.withWorld(w)).filter(i => i.level === 'error');
+    assert(!issues.length, `the "${name}" world template has problems:\n  ` + issues.map(i => `${i.path}: ${i.msg}`).join('\n  '));
   }
-  const adj = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => seen.has((x + dx) + ',' + (y + dy)));
-  for (const n of map.npcs) assert(adj(n.x, n.y), 'unreachable npc ' + n.name);
-  for (let y = 0; y < map.h; y++) for (let x = 0; x < map.w; x++) if ('HFR'.includes(map.tiles[y][x])) assert(adj(x, y), 'unreachable terminal at ' + x + ',' + y);
-  console.log(`ok: map ${map.w}x${map.h}, ${map.npcs.length} npcs reachable, ${seen.size} walkable tiles`);
+  delete global.window;
+  console.log(`ok: ${Object.keys(T).length} world templates (${Object.keys(T).join(', ')}) pass the schema`);
 }

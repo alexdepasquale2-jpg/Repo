@@ -28,10 +28,39 @@
   }
 
   let opening = null;
+  // The content editor's draft (js/draft.js): its records were baked in the editor and left in
+  // IndexedDB; they stand in for db/.
+  function openDraft() {
+    return new Promise((res, rej) => {
+      const req = indexedDB.open('ep-play', 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('draft');
+      req.onerror = () => rej(req.error);
+      req.onsuccess = () => {
+        const get = req.result.transaction('draft').objectStore('draft').get('rows');
+        get.onerror = () => rej(get.error);
+        get.onsuccess = () => {
+          const v = get.result;
+          req.result.close();
+          if (!v || !v.rows) return rej(new Error('the draft\'s records are gone: press Play in the editor again'));
+          db.schema = 'draft'; db.version = 0; db.fields = v.fields; db.count = v.keys.length; db.rarity = []; db.shards = [];
+          put({ rows: v.rows });
+          order = v.keys.slice();
+          db.bytes = 0; db.ready = true; db.draft = true;
+          res(db);
+        };
+      };
+    });
+  }
   // Browser: loads index.json, then every shard in parallel. onProgress(loadedShards, totalShards).
   db.open = function (opts) {
     opts = opts || {};
     if (opening) return opening;
+    if (typeof self !== 'undefined' && self.EP_DRAFT && self.EP_DRAFT.rows) {
+      if (opts.onProgress) opts.onProgress(0, 1);
+      opening = openDraft();
+      opening.catch(() => { opening = null; });
+      return opening;
+    }
     const base = opts.base || 'db/';
     const get = f => fetch(base + f).then(r => { if (!r.ok) throw new Error(`${base}${f}: HTTP ${r.status}`); return r.json(); });
     opening = get('index.json').then(index => {

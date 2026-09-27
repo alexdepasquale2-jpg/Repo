@@ -1,0 +1,115 @@
+name: Essence Protocol apps
+
+# Builds the game for Android (APK), Windows (EXE), Linux and macOS, tests each one, and on main
+# publishes them as the release "essence-protocol-latest".
+on:
+  push:
+    branches: [main, 'claude/**']
+    paths: ['essence-protocol/**', '.github/workflows/essence-apps.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: essence-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: Windows, Linux and macOS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: false
+      - name: Build
+        run: essence-protocol/platforms/desktop/build.sh dist
+      - name: The Linux build serves the game and the editor
+        run: |
+          ./dist/EssenceProtocol-linux-x64 --no-open --port 47900 &
+          sleep 2
+          curl -fsS http://127.0.0.1:47900/ | grep -q '<title>Essence Protocol</title>'
+          curl -fsS http://127.0.0.1:47900/db/index.json | grep -q '"shards"'
+          curl -fsS http://127.0.0.1:47900/js/build.js | grep -q 'world builder'
+          curl -fsS http://127.0.0.1:47900/editor/ | grep -q 'Essence Protocol Editor'
+          file dist/EssenceProtocol-windows-x64.exe | grep -q 'PE32+ executable (GUI) x86-64'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop
+          path: dist/*
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Build
+        run: essence-protocol/platforms/android/build.sh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/EssenceProtocol.apk
+
+  android-test:
+    name: Android (emulator)
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: dist
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install, start and check the game
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash essence-protocol/platforms/android/smoke.sh dist/EssenceProtocol.apk
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-screenshot
+          path: android-title.png
+          if-no-files-found: ignore
+
+  release:
+    name: Publish the latest build
+    if: github.ref == 'refs/heads/main'
+    needs: [desktop, android, android-test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop
+          path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: android
+          path: out
+      - name: Replace the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete essence-protocol-latest --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+          gh release create essence-protocol-latest out/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Essence Protocol (latest build)" --notes-file essence-protocol/platforms/RELEASE.md

@@ -1,0 +1,258 @@
+{
+  "resonances": [
+    {
+      "id": "conduction",
+      "name": "Conduction",
+      "subs": ["Sp", "Ti"],
+      "traits": { "spr": 1, "hex": 1 },
+      "effects": [{ "effect": "static", "chance": 30 }]
+    },
+    {
+      "id": "rod",
+      "name": "Lightning Rod",
+      "subs": ["Sp", "Me"],
+      "traits": { "prc": 2, "pow": 1 },
+      "effects": [{ "effect": "crit", "chance": 100 }]
+    },
+    {
+      "id": "firewhirl",
+      "name": "Firewhirl",
+      "subs": ["Em", "Ga"],
+      "traits": { "spr": 2 },
+      "effects": [{ "effect": "burn", "chance": 20 }]
+    },
+    {
+      "id": "permafrost",
+      "name": "Permafrost",
+      "subs": ["Fr", "St"],
+      "traits": { "grd": 2 },
+      "effects": [{ "effect": "freeze", "chance": 15 }]
+    },
+    {
+      "id": "photosynth",
+      "name": "Photosynthesis",
+      "subs": ["Ro", "Li"],
+      "traits": { "mnd": 2 },
+      "effects": [{ "effect": "regen", "chance": 100 }]
+    },
+    {
+      "id": "paradox",
+      "name": "Paradox",
+      "subs": ["Li", "Vo"],
+      "traits": { "cha": 4, "pow": 3 },
+      "effects": []
+    },
+    {
+      "id": "feedback",
+      "name": "Feedback Loop",
+      "subs": ["Si", "Ec"],
+      "traits": { "spr": 1, "per": 1 },
+      "effects": [{ "effect": "echo", "chance": 40 }]
+    },
+    {
+      "id": "recursion",
+      "name": "Recursion",
+      "subs": ["Tm", "Ec"],
+      "traits": { "per": 2 },
+      "effects": [{ "effect": "echo", "chance": 30 }]
+    },
+    {
+      "id": "forgefire",
+      "name": "Forgefire",
+      "subs": ["Pl", "Me"],
+      "traits": { "pow": 2 },
+      "effects": [{ "effect": "pierce", "chance": 100 }]
+    },
+    {
+      "id": "phantom",
+      "name": "Phantom",
+      "subs": ["Mi", "Vo"],
+      "traits": { "hex": 1 },
+      "effects": [{ "effect": "veil", "chance": 50 }]
+    },
+    {
+      "id": "smokescreen",
+      "name": "Smokescreen",
+      "subs": ["As", "Ga"],
+      "traits": { "hex": 2 },
+      "effects": [{ "effect": "blind", "chance": 35 }]
+    },
+    {
+      "id": "mangrove",
+      "name": "Mangrove",
+      "subs": ["Ti", "Ro"],
+      "traits": { "drn": 1, "grd": 1 },
+      "effects": [{ "effect": "root", "chance": 25 }]
+    },
+    {
+      "id": "blizzard",
+      "name": "Blizzard",
+      "subs": ["Fr", "Ga"],
+      "traits": { "spr": 1, "hex": 1 },
+      "effects": [{ "effect": "freeze", "chance": 15 }, { "effect": "chill", "chance": 30 }]
+    },
+    {
+      "id": "virus",
+      "name": "Virus",
+      "subs": ["Si", "Vo"],
+      "traits": { "hex": 2, "drn": 1 },
+      "effects": [{ "effect": "corrupt", "chance": 40 }]
+    },
+    {
+      "id": "fossilize",
+      "name": "Fossilize",
+      "subs": ["Tm", "St"],
+      "traits": { "hex": 1, "grd": 1 },
+      "effects": [{ "effect": "petrify", "chance": 25 }]
+    },
+    {
+      "id": "brushfire",
+      "name": "Brushfire",
+      "subs": ["Em", "Ro"],
+      "traits": { "per": 2 },
+      "effects": [{ "effect": "burn", "chance": 25 }]
+    },
+    {
+      "id": "arc",
+      "name": "Arc",
+      "subs": ["Pl", "Sp"],
+      "traits": { "pow": 2 },
+      "effects": [{ "effect": "static", "chance": 20 }]
+    },
+    {
+      "id": "beacon",
+      "name": "Beacon",
+      "subs": ["Li", "Si"],
+      "traits": { "prc": 2 },
+      "effects": [{ "effect": "focus", "chance": 40 }]
+    },
+    {
+      "id": "geyser",
+      "name": "Geyser",
+      "subs": ["Ti", "Pl"],
+      "traits": { "pow": 2, "cha": 1 },
+      "effects": [{ "effect": "wash", "chance": 30 }]
+    },
+    {
+      "id": "sirocco",
+      "name": "Sirocco",
+      "subs": ["As", "Ec"],
+      "traits": { "hex": 1, "spr": 1 },
+      "effects": [{ "effect": "blind", "chance": 25 }]
+    },
+    {
+      "id": "hoarfrost",
+      "name": "Hoarfrost",
+      "subs": ["Fr", "Tm"],
+      "traits": { "hex": 2 },
+      "effects": [{ "effect": "freeze", "chance": 20 }]
+    },
+    {
+      "id": "eclipse",
+      "name": "Eclipse",
+      "subs": ["As", "Vo"],
+      "traits": { "hex": 2, "cha": 1 },
+      "effects": [{ "effect": "blind", "chance": 30 }, { "effect": "corrupt", "chance": 20 }]
+    }
+  ],
+  "trinities": [
+    {
+      "id": "phoenix",
+      "name": "Phoenix Protocol",
+      "subs": ["Em", "Pl", "As"],
+      "traits": { "pow": 3, "mnd": 2 },
+      "effects": [{ "effect": "burn", "chance": 60 }, { "effect": "heal", "chance": 20 }]
+    },
+    {
+      "id": "glacier",
+      "name": "Glacier Mind",
+      "subs": ["Ti", "Fr", "Mi"],
+      "traits": { "hex": 3, "grd": 2 },
+      "effects": [{ "effect": "freeze", "chance": 35 }, { "effect": "veil", "chance": 60 }]
+    },
+    {
+      "id": "worldroot",
+      "name": "Worldroot",
+      "subs": ["St", "Me", "Ro"],
+      "traits": { "grd": 3, "drn": 2 },
+      "effects": [{ "effect": "root", "chance": 60 }, { "effect": "guard", "chance": 60 }]
+    },
+    {
+      "id": "thunderclap",
+      "name": "Thunderclap",
+      "subs": ["Sp", "Ga", "Ec"],
+      "traits": { "spd": 3, "pow": 2 },
+      "effects": [{ "effect": "static", "chance": 45 }, { "effect": "priority", "chance": 100 }]
+    },
+    {
+      "id": "superconductor",
+      "name": "Superconductor",
+      "subs": ["Me", "Sp", "Si"],
+      "traits": { "pow": 3, "prc": 2 },
+      "effects": [{ "effect": "static", "chance": 50 }, { "effect": "pierce", "chance": 100 }]
+    },
+    {
+      "id": "maelstrom",
+      "name": "Maelstrom",
+      "subs": ["Ti", "Ga", "Vo"],
+      "traits": { "spr": 3, "drn": 2 },
+      "effects": [{ "effect": "wash", "chance": 60 }, { "effect": "drain", "chance": 100 }]
+    },
+    {
+      "id": "eruption",
+      "name": "Eruption",
+      "subs": ["Pl", "St", "Tm"],
+      "traits": { "pow": 4, "per": 1 },
+      "effects": [{ "effect": "delay", "chance": 80 }]
+    },
+    {
+      "id": "singularity",
+      "name": "Singularity",
+      "subs": ["Li", "Vo", "Tm"],
+      "traits": { "pow": 5, "cha": 2 },
+      "effects": [{ "effect": "corrupt", "chance": 50 }, { "effect": "delay", "chance": 60 }]
+    },
+    {
+      "id": "infiniteloop",
+      "name": "Infinite Loop",
+      "subs": ["Ec", "Si", "Tm"],
+      "traits": { "per": 3, "spr": 2 },
+      "effects": [{ "effect": "echo", "chance": 80 }]
+    },
+    {
+      "id": "oracle",
+      "name": "Oracle",
+      "subs": ["Li", "Si", "Tm"],
+      "traits": { "prc": 4, "mnd": 2 },
+      "effects": [{ "effect": "focus", "chance": 80 }, { "effect": "cleanse", "chance": 100 }]
+    }
+  ],
+  "anomalies": [
+    {
+      "id": "mirror",
+      "desc": "Reflects half of the next hit back at the attacker.",
+      "magnitude": 50
+    },
+    { "id": "swap", "desc": "Swaps every stat change with the target.", "magnitude": 0 },
+    { "id": "overflow", "desc": "Power grows with the caster's remaining Flux.", "magnitude": 60 },
+    { "id": "lullaby", "desc": "Sends the target into Dormant mode.", "magnitude": 0 },
+    { "id": "fork", "desc": "Forks the process and strikes twice at full power.", "magnitude": 0 },
+    { "id": "rewind", "desc": "Restores the caster to its HP from two turns ago.", "magnitude": 0 },
+    { "id": "invert", "desc": "Inverts every stat change on the target.", "magnitude": 0 },
+    {
+      "id": "nullify",
+      "desc": "Wipes residue and stat changes from the whole field.",
+      "magnitude": 0
+    },
+    {
+      "id": "phase",
+      "desc": "The caster phases out and dodges everything next turn.",
+      "magnitude": 0
+    },
+    {
+      "id": "overwrite",
+      "desc": "Copies the target's stat boosts onto the caster.",
+      "magnitude": 0
+    }
+  ]
+}

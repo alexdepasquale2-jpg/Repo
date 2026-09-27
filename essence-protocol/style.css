@@ -38,7 +38,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
 /* Toasts */
 #toasts { position: fixed; top: calc(56px + var(--safe-t)); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; align-items: center; z-index: 60; pointer-events: none; width: min(460px, calc(100% - 24px)); }
-.toast { background: #141a2bf2; border: 1px solid var(--line); border-left: 4px solid var(--acc); padding: 8px 12px; border-radius: 10px; font-size: 13px; animation: toast 3.2s forwards; width: 100%; }
+.toast { background: #141a2bf2; border: 1px solid var(--line); border-left: 4px solid var(--acc); padding: 8px 12px; border-radius: 10px; font-size: 13px; animation: toast 3.2s forwards; width: 100%; pointer-events: auto; cursor: pointer; } /* tap to dismiss */
 .toast.rare { border-left-color: var(--warn); } .toast.myth { border-left-color: #ff5cf0; } .toast.quest { border-left-color: var(--good); } .toast.tip { border-left-color: var(--warn); background: #1d1a0ff2; } .toast.tip b { color: var(--warn); margin-right: 4px; }
 @keyframes toast { 0% { opacity: 0; transform: translateY(-8px); } 8%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; } }
 /* discovery toast: a live-baked design that is rare or statistically unique */
@@ -442,7 +442,6 @@ button[data-tip] { cursor: pointer; }
 .hudrow .ub#bindBtn.on { background: #46f3ff33; border-color: var(--utl); box-shadow: 0 0 14px #46f3ffaa; }
 body.inbattle #toasts { top: auto; bottom: calc(50% + 20px); width: min(340px, calc(100% - 24px)); left: auto; right: 12px; transform: none; gap: 4px; }
 body.inbattle .toast { font-size: 11px; padding: 5px 9px; opacity: .92; }
-body.inbattle .toast:nth-last-child(n+4) { display: none; }
 body.inbattle .toast.tip { font-size: 12px; }
 body.inbattle .toast.discovery { font-size: 12px; opacity: 1; } body.inbattle .toast.discovery .dt-n { font-size: 15px; }
 
@@ -524,3 +523,30 @@ input, textarea { -webkit-user-select: text; user-select: text; font-size: 16px 
   #dialog { bottom: calc(12px + var(--safe-b)); width: min(480px, calc(100% - 300px)); }
   .title-card { padding-top: 12px; }
 }
+
+/* holding a touch anywhere never selects text, magnifies, or opens the long-press menu */
+*, *::before, *::after { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+canvas, img { -webkit-user-drag: none; }
+#world, .arena, .hotbar, .hudrow, .castbar { touch-action: none; }
+/* landscape battles: toasts sit over the arena, not over the controls */
+@media (orientation: landscape) and (max-height: 540px) {
+  body.inbattle #toasts { right: auto; left: calc(12px + var(--safe-l)); width: min(320px, calc(56vw - 24px)); bottom: 50%; }
+}
+
+/* Map changes: a quick fade, and the name of the map you arrive on */
+#fade { position: fixed; inset: 0; z-index: 44; background: #02030a; opacity: 0; pointer-events: none; transition: opacity .18s ease; }
+#fade.on { opacity: 1; }
+#mapBanner { position: fixed; top: calc(58px + var(--safe-t)); left: 50%; transform: translateX(-50%); z-index: 6; pointer-events: none; opacity: 0; text-align: center; background: #0b0e18dd; border: 1px solid var(--line); border-radius: 14px; padding: 8px 18px; font-family: var(--display); }
+#mapBanner b { display: block; font-size: 17px; letter-spacing: .06em; }
+#mapBanner small { display: block; color: var(--dim); font-size: 12px; }
+#mapBanner.go { animation: banner 2.6s ease forwards; }
+@keyframes banner { 0% { opacity: 0; transform: translate(-50%, -8px); } 12%, 78% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, 0); } }
+#buildBtn { color: var(--warn); }
+
+/* Title: the way into the world builder */
+.create-btn { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 4px auto 10px; padding: 10px 18px; border-radius: 14px; border: 1px dashed #ffd23d88; background: #ffd23d12; color: var(--warn); }
+.create-btn b { font-family: var(--display); font-size: 17px; letter-spacing: .06em; }
+.create-btn span { font-size: 12px; color: var(--dim); }
+.create-btn:disabled { opacity: .5; }
+.title-card a { color: var(--acc); }
+#draftNote { color: var(--warn); }

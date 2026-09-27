@@ -1,21 +1,33 @@
 /* Essence Protocol: procedural daemon sprites.
    A sprite is a pure function of its genome key. The lead main sets the body
    plan, the second main sets the belly and a secondary feature, and every
-   bound sub adds a visible organ. Sprites are drawn once to a 32x32 canvas
-   and cached. */
+   bound sub adds a visible organ (its `sprite` shape and `color` in
+   data/essences.json). Sprites are drawn once to a 32x32 canvas and cached.
+   SPRITES.setEssence(E) redraws from other data (the content editor). */
 (function (root) {
   'use strict';
-  const E = root.ESSENCE;
   const S = 32;
   const cache = new Map();
+  let E = null;
+  // Organ shapes a sub-essence can have. fins and wings grow out of the body outline.
+  const ORGANS = {
+    embers: 'Three sparks rising from one shoulder', core: 'A glowing core in the chest', ash: 'A haze of motes above the head',
+    fins: 'Fins at the hips', crown: 'A spiked crown', mist: 'A drifting mist around the body', plates: 'Armor plates on the body',
+    band: 'A metal band around the middle', roots: 'Roots trailing from the feet', antenna: 'A zig-zag antenna',
+    wings: 'Wings (Air-led daemons always have them)', rings: 'Echo rings down both sides', halo: 'A halo', voidcore: 'A dark core below the chest',
+    mast: 'A signal mast on the head', gear: 'A time gear on the chest',
+  };
+  let ACCENT = {}, SPRITE_OF = {}, EYES = [], HAZY = new Set();
+  function setEssence(e) {
+    E = e; cache.clear();
+    ACCENT = {}; SPRITE_OF = {}; EYES = [];
+    for (const x of E.data.essences.subs) { ACCENT[x.code] = x.color; SPRITE_OF[x.code] = x.sprite; if (x.eyes) EYES.push(x.code); }
+    HAZY = new Set(Object.keys(SPRITE_OF).filter(c => SPRITE_OF[c] === 'mist' || SPRITE_OF[c] === 'ash'));
+    api.ACCENT = ACCENT;
+  }
 
   function fnv(str) { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; }
   function rng(seed) { return function () { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
-
-  const ACCENT = {
-    Em: '#ff9a2e', Pl: '#ff5cf0', As: '#8a8a94', Ti: '#2f7dff', Fr: '#dff8ff', Mi: '#bfe3ff', St: '#8b7b68', Me: '#d8dde6',
-    Ro: '#5fbf4a', Sp: '#ffe23d', Ga: '#f2fffb', Ec: '#c7a6ff', Li: '#ffe9a0', Vo: '#6b2fa8', Si: '#46f3ff', Tm: '#d1a15a',
-  };
 
   // Prismatic variants rotate every hue of the palette.
   function hueShift(hex, deg) {
@@ -44,6 +56,8 @@
     const sc = 0.72 + tier * 0.1;
     const A = E.MAIN[p.a], B = E.MAIN[p.b];
     const subs = new Set(p.subs.map(t => t.s));
+    const shaped = shape => [...subs].find(x => SPRITE_OF[x] === shape);
+    const wingsSub = shaped('wings'), finsSub = shaped('fins');
     const g = Array.from({ length: S }, () => Array(S).fill(null));
     const set = (x, y, c) => { if (x >= 0 && x < S && y >= 0 && y < S) g[y][x] = c; };
     const setM = (x, y, c) => { set(x, y, c); set(S - 1 - x, y, c); };
@@ -82,16 +96,16 @@
     for (let y = 0; y < S; y++) for (let x = 0; x < 16; x++) if (g[y][x] === 'b' && (x === 0 || g[y][x - 1] === null) && R() < 0.25) setM(x, y, null);
 
     // Air leads get wings, Fire leads get flame tongues
-    if (p.a === 'A' || p.b === 'A' || subs.has('Ga')) {
+    if (p.a === 'A' || p.b === 'A' || wingsSub) {
       const wy = Math.round(base - 13 * sc);
       const span = p.a === 'A' ? 8 : 5;
-      for (let i = 0; i < span; i++) for (let j = 0; j < 3 - Math.floor(i / 3); j++) setM(Math.round(cx - 5 * sc) - i, wy + j - Math.floor(i / 2), subs.has('Ga') ? 'g' : 'w');
+      for (let i = 0; i < span; i++) for (let j = 0; j < 3 - Math.floor(i / 3); j++) setM(Math.round(cx - 5 * sc) - i, wy + j - Math.floor(i / 2), wingsSub ? 'g' : 'w');
     }
     if (p.a === 'F' || p.b === 'F') {
       const n = p.a === 'F' ? 3 : 2;
       for (let i = 0; i < n; i++) { const x = Math.round(cx - 1 - i * 3 * sc); const top = Math.round(base - 22 * sc) - 2 + i; for (let y = top; y < top + 3; y++) setM(x, y, 'b'); }
     }
-    if (p.b === 'W' || subs.has('Ti')) { const y = Math.round(base - 6 * sc); for (let i = 0; i < 3; i++) setM(Math.round(cx - 8 * sc) - i, y - i, subs.has('Ti') ? 'Ti' : 's'); }
+    if (p.b === 'W' || finsSub) { const y = Math.round(base - 6 * sc); for (let i = 0; i < 3; i++) setM(Math.round(cx - 8 * sc) - i, y - i, finsSub || 's'); }
     if (p.b === 'E' && p.a !== 'E') for (let x = 4; x < 12; x++) if (R() < 0.6) setM(x, base, 's');
 
     // shading: belly takes the second main's color
@@ -110,38 +124,38 @@
     const fy = Math.round(top + h * (p.a === 'A' ? 0.35 : 0.42));
     for (let x = Math.round(cx - 4 * sc); x < 16; x++) if (g[fy][x] || g[fy + 1][x]) { setM(x, fy, 'v'); setM(x, fy + 1, 'v'); }
     const eyeX = Math.round(cx - 2.5 * sc);
-    const eyeColor = subs.has('Vo') ? 'Vo' : subs.has('Si') ? 'Si' : 'e';
+    const eyeColor = EYES.find(x => subs.has(x)) || 'e';
     setM(eyeX, fy, eyeColor); if (tier >= 2) setM(eyeX - 1, fy, eyeColor);
 
     // organs from sub-essences
     const midY = Math.round(top + h * 0.62);
     const feat = {
-      Em: () => { for (let i = 0; i < 3; i++) setM(Math.round(cx - 6 * sc) + i, Math.round(top + h * 0.3) - i, 'Em'); },
-      Pl: () => { set(15, midY, 'Pl'); set(16, midY, 'Pl'); set(15, midY - 1, 'Pl'); set(16, midY - 1, 'Pl'); },
-      As: () => { for (let i = 0; i < 5; i++) set(Math.round(cx) + Math.round((R() - 0.5) * 12), top - 1 - Math.floor(R() * 3), 'As'); },
-      Fr: () => { for (let i = 0; i < 3; i++) { setM(Math.round(cx - 2 - i * 2), top - i % 2 - 1, 'Fr'); setM(Math.round(cx - 2 - i * 2), top - i % 2, 'Fr'); } },
-      Mi: () => { for (let i = 0; i < 10; i++) { const x = Math.floor(R() * S), y = Math.floor(R() * S); if (!g[y][x]) set(x, y, 'Mi'); } },
-      St: () => { for (let i = 0; i < 4; i++) { const x = Math.round(cx - 6 * sc + R() * 4), y = Math.round(top + h * (0.35 + R() * 0.4)); if (g[y][x]) { setM(x, y, 'St'); setM(x + 1, y, 'St'); } } },
-      Me: () => { const y = Math.round(top + h * 0.55); for (let x = 0; x < 16; x++) if (g[y][x]) setM(x, y, 'Me'); },
-      Ro: () => { for (let i = 0; i < 3; i++) { const x = Math.round(cx - 2 - i * 3 * sc); for (let y = bottom + 1; y < Math.min(S, bottom + 4); y++) setM(x + (y % 2), y, 'Ro'); } },
-      Sp: () => { const x = Math.round(cx - 3); setM(x, top - 1, 'Sp'); setM(x - 1, top - 2, 'Sp'); setM(x, top - 3, 'Sp'); },
-      Ec: () => { for (let y = top + 2; y < bottom - 2; y++) { setM(Math.round(cx - 11 * sc), y, (y % 3) ? 'Ec' : null); } },
-      Li: () => { for (let x = Math.round(cx - 4); x <= Math.round(cx + 4); x++) set(x, top - 3, 'Li'); set(Math.round(cx - 5), top - 2, 'Li'); set(Math.round(cx + 5), top - 2, 'Li'); },
-      Vo: () => { set(15, midY + 1, 'Vo'); set(16, midY + 1, 'Vo'); },
-      Si: () => { const x = Math.round(cx + 3); for (let y = top - 3; y < top; y++) set(x, y, 'Me'); set(x, top - 4, 'Si'); },
-      Tm: () => { const y = midY - 2; setM(13, y, 'Tm'); setM(14, y - 1, 'Tm'); setM(14, y + 1, 'Tm'); },
+      embers: c => { for (let i = 0; i < 3; i++) setM(Math.round(cx - 6 * sc) + i, Math.round(top + h * 0.3) - i, c); },
+      core: c => { set(15, midY, c); set(16, midY, c); set(15, midY - 1, c); set(16, midY - 1, c); },
+      ash: c => { for (let i = 0; i < 5; i++) set(Math.round(cx) + Math.round((R() - 0.5) * 12), top - 1 - Math.floor(R() * 3), c); },
+      crown: c => { for (let i = 0; i < 3; i++) { setM(Math.round(cx - 2 - i * 2), top - i % 2 - 1, c); setM(Math.round(cx - 2 - i * 2), top - i % 2, c); } },
+      mist: c => { for (let i = 0; i < 10; i++) { const x = Math.floor(R() * S), y = Math.floor(R() * S); if (!g[y][x]) set(x, y, c); } },
+      plates: c => { for (let i = 0; i < 4; i++) { const x = Math.round(cx - 6 * sc + R() * 4), y = Math.round(top + h * (0.35 + R() * 0.4)); if (g[y][x]) { setM(x, y, c); setM(x + 1, y, c); } } },
+      band: c => { const y = Math.round(top + h * 0.55); for (let x = 0; x < 16; x++) if (g[y][x]) setM(x, y, c); },
+      roots: c => { for (let i = 0; i < 3; i++) { const x = Math.round(cx - 2 - i * 3 * sc); for (let y = bottom + 1; y < Math.min(S, bottom + 4); y++) setM(x + (y % 2), y, c); } },
+      antenna: c => { const x = Math.round(cx - 3); setM(x, top - 1, c); setM(x - 1, top - 2, c); setM(x, top - 3, c); },
+      rings: c => { for (let y = top + 2; y < bottom - 2; y++) { setM(Math.round(cx - 11 * sc), y, (y % 3) ? c : null); } },
+      halo: c => { for (let x = Math.round(cx - 4); x <= Math.round(cx + 4); x++) set(x, top - 3, c); set(Math.round(cx - 5), top - 2, c); set(Math.round(cx + 5), top - 2, c); },
+      voidcore: c => { set(15, midY + 1, c); set(16, midY + 1, c); },
+      mast: c => { const x = Math.round(cx + 3); for (let y = top - 3; y < top; y++) set(x, y, 'Me'); set(x, top - 4, c); },
+      gear: c => { const y = midY - 2; setM(13, y, c); setM(14, y - 1, c); setM(14, y + 1, c); },
     };
-    for (const s of subs) if (feat[s]) feat[s]();
+    for (const s of subs) { const f = feat[SPRITE_OF[s]]; if (f) f(s); }
 
     // outline
     const out = g.map(r => r.slice());
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       if (g[y][x]) continue;
-      const n = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const c = (g[y + dy] || [])[x + dx]; return c && c !== 'Mi' && c !== 'As'; });
+      const n = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => { const c = (g[y + dy] || [])[x + dx]; return c && !HAZY.has(c); });
       if (n) out[y][x] = 'o';
     }
 
-    const pal = { b: A.color, l: A.light, s: B.color, w: B.light, g: ACCENT.Ga, v: '#101421', e: '#f4ffff', o: '#0b0d16' };
+    const pal = { b: A.color, l: A.light, s: B.color, w: B.light, g: wingsSub ? ACCENT[wingsSub] : '#fff', v: '#101421', e: '#f4ffff', o: '#0b0d16' };
     const c = document.createElement('canvas');
     c.width = c.height = S;
     const ctx = c.getContext('2d');
@@ -150,7 +164,7 @@
       if (!k) continue;
       const col = pal[k] || ACCENT[k] || '#fff';
       ctx.fillStyle = prism && k !== 'o' && k !== 'v' ? hueShift(col, 150) : col;
-      if (k === 'Mi' || k === 'As') ctx.globalAlpha = 0.55;
+      if (HAZY.has(k)) ctx.globalAlpha = 0.55;
       ctx.fillRect(x, y, 1, 1);
       ctx.globalAlpha = 1;
     }
@@ -184,5 +198,7 @@
     ctx.restore();
   }
 
-  root.SPRITES = { get, paint, ACCENT, SIZE: S };
+  const api = { get, paint, setEssence, ORGANS, ACCENT, SIZE: S };
+  root.SPRITES = api;
+  if (root.ESSENCE) setEssence(root.ESSENCE);
 })(typeof self !== 'undefined' ? self : this);

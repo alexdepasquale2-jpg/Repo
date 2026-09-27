@@ -12,6 +12,7 @@
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="build.css">
 <link rel="preload" href="db/index.json" as="fetch" crossorigin>
 <!-- the display font never blocks the first paint; system fonts stand in until it arrives -->
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,6 +27,7 @@
   <div class="hud-r">
     <span class="chip" id="keysChip" title="Warden keys">⌬ <b id="keysText">0/4</b></span>
     <span class="chip" id="codexChip" title="Merges discovered">◈ <b id="codexText">0</b></span>
+    <button class="icon-btn hidden" id="buildBtn" aria-label="Build this world" title="World builder: edit this spot">✎</button>
     <button class="icon-btn" id="tipBtn" aria-label="Switch tooltip detail" title="Tooltips: compact / complex (T)">ⓘ</button>
     <button class="icon-btn" id="menuBtn" aria-label="Menu">☰</button>
   </div>
@@ -41,6 +43,8 @@
   <button id="aBtn" aria-label="Interact">A</button>
 </div>
 
+<div id="mapBanner"></div>
+<div id="fade"></div>
 <div id="dialog" class="hidden"><div class="who"></div><div class="text"></div><div class="more">▼</div></div>
 <div id="toasts"></div>
 
@@ -50,11 +54,14 @@
     <canvas id="titleArt" width="320" height="120"></canvas>
     <p class="kicker">A turn-based daemon-merging RPG</p>
     <h1>Essence<br><span>Protocol</span></h1>
-    <p class="story">Every thing in this world is merged from four essences, <b class="t-F">Fire</b>, <b class="t-W">Water</b>, <b class="t-E">Earth</b> and <b class="t-A">Air</b>, and sixteen sub-essences that bind to them. The daemons, artificial minds made of essence, can shape those merges. Every possible outcome has already been decided and is waiting for someone to find it. Bind daemons, compose merges, and take the four Warden keys to the Core.</p>
+    <p class="story">Every thing in this world is merged from four essences, <b class="t-F">Fire</b>, <b class="t-W">Water</b>, <b class="t-E">Earth</b> and <b class="t-A">Air</b>, and <span id="subCount">sixteen</span> sub-essences that bind to them. The daemons, artificial minds made of essence, can shape those merges. Every possible outcome has already been decided and is waiting for someone to find it. Bind daemons, compose merges, and take the four Warden keys to the Core.</p>
     <div class="title-btns">
       <button class="big" id="newBtn">New game</button>
       <button class="big ghost hidden" id="contBtn">Continue</button>
     </div>
+    <button class="create-btn" id="createBtn"><b>✦ Create</b><span>Build your own world, play it, share it</span></button>
+    <p class="fine hidden" id="draftNote"></p>
+    <p class="fine hidden" id="editorLink"><a href="editor/">Content editor</a>: spells, daemons, essences, every word the game uses</p>
     <div class="dbload"><i id="dbBar"></i></div>
     <p class="fine" id="bakeInfo">Loading the merge database…</p>
   </div>
@@ -99,13 +106,19 @@
 
 <div id="modal" class="hidden"><div class="modal-card" id="modalCard"></div></div>
 
+<script src="js/data.js"></script>
+<script src="js/draft.js"></script>
+<script src="js/schema.js"></script>
 <script src="js/essences.js"></script>
 <script src="js/db.js"></script>
 <script src="js/designs.js"></script>
 <script src="js/engine.js"></script>
 <script src="js/content.js"></script>
 <script src="js/sprites.js"></script>
+<script src="js/world-render.js"></script>
 <script src="js/reveal.js"></script>
 <script src="js/game.js"></script>
+<script src="js/worlds.js"></script>
+<script src="js/build.js"></script>
 </body>
 </html>

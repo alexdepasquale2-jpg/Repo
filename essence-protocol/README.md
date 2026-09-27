@@ -21,7 +21,7 @@ That grammar gives **5,896** distinct merge identities: 12 cross pairs × 470 su
 
 ### Pre-baked into the merge database
 
-`tools/bake.js` runs every identity through a layered rule system and writes it, one merge at a time, as one record in the merge database (`db/`, one shard per pair of mains):
+`tools/bake.js` runs every identity through a layered rule system (`js/baker.js`, fed by the content in `data/`) and writes it, one merge at a time, as one record in the merge database (`db/`, one shard per pair of mains):
 
 1. The two mains form a **reaction** (Scald/Steam, Magma/Obsidian, Wildfire/Firestorm, Mire/Clay, Squall/Thunderhead, Dune/Sandstorm, or a pure Inferno/Deluge/Tectonic/Tempest). Opposites (Fire/Water, Earth/Air) are volatile.
 2. Each essence pushes a 10-axis trait vector (force, guard, mend, speed, precision, status, drain, spread, persistence, chaos). Subs on the lead weigh 1.0 and subs on the follow weigh 0.7.
@@ -123,28 +123,63 @@ Built for phones first: the title shows instantly while the database streams in,
 
 ## Play
 
-Open `index.html` over HTTP: `python tools/serve.py` (add `--lan` to open it from a phone on the same Wi-Fi), or any static server. It is a PWA and works offline once loaded.
+**Apps:** the release `essence-protocol-latest` on GitHub has the game as an Android app (`EssenceProtocol.apk`), a Windows program (`EssenceProtocol-windows-x64.exe`), and Linux and macOS programs; each one is the whole game, builder and editor in one file, offline. The Linux one doubles as a home server (`--lan`). How to install each: `platforms/RELEASE.md`; how they're built: `platforms/README.md`.
+
+Or open `index.html` over HTTP: `python tools/serve.py` (add `--lan` to open it from a phone on the same Wi-Fi), or any static server. It is a PWA and works offline once loaded.
 
 - **Move:** D-pad or WASD/arrows. **Interact:** A, Enter or Space. **Menu:** ☰ or Esc.
 - Flickering tiles are **static**, where wild daemons live. In battle your four memory merges are one tap away (▲ strong / ▼ weak against the foe; keys 1–4 on desktop), and **Bind** shows your capture odds with your best lattice. Tap either card to inspect a daemon. Tap the battle text or press Space to fast-forward.
 - Beat the Wardens of the Cirrus Array (Air), Cinder Foundry (Fire), Tidal Archive (Water) and Bedrock Vault (Earth). Each key opens the next gate, and all four open the Core, where the Architect waits.
 - The **Codex** tracks discovered merges, **Forms** the genomes you've seen, and the **Lexicon** the reactions, resonances and anomalies you've found.
 
+## Create: make your own game inside the game
+
+Tap **✦ Create** on the title screen. The Worlds screen lists the original and every world you made; start a new one from the **Brightwater demo** (a town, a route with an ice slide, a Warden's lab and a shrine, built to be taken apart), an **empty map**, or a **remix of the original**, or import one someone shared.
+
+The **world builder** runs on the game's own canvas with the game's own renderer, so what you paint is what you play:
+
+- **Tools:** Move, Paint (1×1 to 3×3), Rect, Room (walls with floor inside), Fill, Pick, and Things. Pinch or scroll to zoom, two fingers to pan, and undo everything.
+- **Tiles:** floor, static (wild daemons), path, sand, flowers, bridges, ice you slide across, walls, void, fences, boulders, trees, pillars, crystals, lamps, water, magma, consoles, archive shelves, the healing terminal, the Forge, the Rift, and gates that open with 1 to 9 keys.
+- **Zones:** paint regions on the Zones layer; each has a name, a color theme, an encounter rate and its wild daemons (any of the 5,896 genomes, with level ranges and weights).
+- **Things:** people (lines, a gift once, healing), trainers (teams from the genome picker, line of sight, Wardens who give keys, a final boss who ends the game), signs, chests (lattices, flux cells, motes, a forged item or a daemon), warps (doors, stairs, portals, pads, hidden map edges; "Way back" adds the return trip), triggers (little cutscenes when you step somewhere) and blocks. Any of them can appear or vanish with the story: "only while" conditions on flags, beaten trainers, opened chests, gifts, keys or the ending.
+- **The world menu:** maps (new, resize, duplicate), zones, color themes with live preview, starters, the story (title, start point, tutorial and ending lines, how main essences unlock), your own names for any merge, a problems list that finds anything unreachable, and sharing.
+- **▶ Play** tests from the middle of the screen or from the start, or plays for real on its own save; **✎** in the game jumps back to the builder on the same spot. Worlds save in the browser after every change; share one as a file or a short world code, and Claude Code can make it the game's world (`node tools/content.js world <file>`).
+
+## Editing the content
+
+Every name, number and line in the game is plain JSON in `data/`: essences, combos, battle text, traits, items, word lists, the world, and hand edits of single merges. Three ways to change it, all checked by the same schema (`js/schema.js`) and baked by the same code:
+
+- **The content editor.** Run `python tools/serve.py` and open `http://127.0.0.1:8090/editor/`. It's a dashboard for everything: all 5,896 spells, daemons and items with why each came out the way it did, essences (including new sub-essences), combos, battle names, traits, every word list with how busy it is, and the world as forms (maps, zones, themes, trainers, people and things, starters, story), with **Open in the world builder** to paint it in the game. Every edit is validated and re-baked live, so the Changes page shows exactly which merges it changes before you save. Word picks are stable: adding a word to a list only renames the merges that end up with it (plus a few neighbors whose names have to stay unique), and reordering a list renames nothing. Save writes `data/`, `db/` and `js/data.js`; reload the game to play it, or press **▶ Play** to play the unsaved draft right away (the game re-bakes nothing: it uses the editor's records). It works on a phone too.
+- **Hosted on claude.ai.** A private copy of the editor keeps your edits as a draft in the page, on any device. Tell Claude Code "apply my Essence Protocol editor changes" and it applies them, re-bakes, checks and pushes. Requests for things that need new code (a new effect, zone or mechanic) go along with them.
+- **The command line** (for Claude Code and scripts): `node tools/content.js` with `list`, `get`, `set`, `add`, `remove`, `merge <key>`, `find`, `check`, `preview` and `apply <changes.json>`. Every write validates first, re-bakes and lists the merges it changed.
+
 ## Files
 
 | File | What it is |
 |---|---|
-| `js/essences.js` | Essence data and the merge-key grammar (shared by the game and the baker) |
-| `tools/bake.js` | The rule system. Pre-bakes every merge, one at a time, into `db/` |
+| `data/*.json` | The content: essences, combos, battle, traits, items, words, world, overrides |
+| `js/schema.js` | What every content field is (labels, help, rules), validation, change sets, the canonical JSON layout |
+| `js/essences.js` | Essence tables (from `data/`) and the merge-key grammar |
+| `js/baker.js` | The rule system: bakes every merge, one at a time (pure; Node and browser) |
+| `tools/bake.js` | Writes `db/` and `js/data.js` from `data/`; `--check` names stale merges |
+| `js/data.js` | Generated. `data/` bundled for the browser |
 | `db/` | Generated. The merge database: `index.json` and 16 shards holding all 5,896 records |
 | `js/db.js` | Loads the database (in the background in the browser, from disk in Node) |
 | `js/designs.js` | Seeds, the %RARITY% modulator, lineages and traits (pure functions) |
 | `js/engine.js` | Daemon model and battle engine (no DOM, runs in Node) |
-| `js/content.js` | Map, zones, operators, starters |
+| `js/content.js` | A world for the game: maps, zones, themes, things and starters (from `data/world.json`, or any player's world) |
+| `js/world-render.js` | The overworld's pixel art: tiles, things, people, particles, map overviews (game, builder and editor) |
+| `js/worlds.js` | Player worlds in the browser, templates, import and export, the Worlds screen |
+| `js/build.js`, `build.css` | The world builder |
+| `js/draft.js` | Plays the content editor's unsaved draft |
 | `js/sprites.js` | Procedural pixel sprites, a pure function of the genome |
 | `js/reveal.js` | Reveals: essences converge and fuse, the rarity dial rolls and the tier stamps in, then the name, powers and stats appear |
 | `js/game.js` | Overworld, battle UI, composer, menus, forge, splicing, traits, discovery toasts |
-| `tools/verify.js` | CI checks: the database is fresh and complete, records are sane, content keys exist, the map is connected, 450 headless battles finish, 6000 lineages and traits are deterministic and sane, and nothing references the retired bridge |
-| `tools/serve.py` | Local static server (`--lan` for phones) |
+| `tools/verify.js` | CI checks: the database is fresh and complete, records are sane, content keys exist, the world is connected through its warps, the builder's templates are valid, 450 headless battles finish, 6000 lineages and traits are deterministic and sane, and nothing references the retired bridge |
+| `tools/serve.py` | Local server (`--lan` for phones), with the content editor's save API |
+| `tools/content.js` | Read and change the content from the command line |
+| `editor/` | The content editor |
+| `tools/build-host.py` | Builds the claude.ai copies of the game and the editor |
+| `platforms/` | The Android app and the Windows, Linux and macOS programs (see `platforms/README.md`) |
 
-No build step and no dependencies. After changing any rule in `essences.js`, `bake.js` or `designs.js`, run `node tools/bake.js` and then `node tools/verify.js`.
+No build step and no dependencies. After changing `data/` by hand, or a rule in `js/baker.js` or `js/designs.js`, run `node tools/bake.js` and then `node tools/verify.js`.

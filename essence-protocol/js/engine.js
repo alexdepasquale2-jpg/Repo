@@ -8,17 +8,40 @@
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./essences.js'), require('./db.js'));
   else root.ENGINE = factory(root.ESSENCE, root.MERGE_DB);
-})(typeof self !== 'undefined' ? self : this, function (E, DB) {
+})(typeof self !== 'undefined' ? self : this, function make(E, DB) {
   'use strict';
 
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
   const cache = new Map();
 
+  // A player-made world can give single merges its own names and numbers (world.merges, the
+  // same fields as data/overrides.json), laid over the baked records while it is played.
+  let edits = {};
+  const TEXT_EDIT = ['name', 'text', 'dName', 'dDesc', 'line'];
+  const NUM_EDIT = { power: [1, 160], acc: [55, 101], flux: [3, 30], prio: [-1, 1], hits: [1, 6], instab: [0, 65] };
+  const STAT_ORDER = ['hp', 'atk', 'def', 'spd', 'flux', 'coh'];
+  function setEdits(map) { edits = map || {}; cache.clear(); }
+  function edited(row, ov) {
+    row = row.slice();
+    const at = f => DB.fields.indexOf(f);
+    for (const f of TEXT_EDIT) if (typeof ov[f] === 'string' && ov[f] && at(f) >= 0) row[at(f)] = ov[f];
+    for (const [f, [lo, hi]] of Object.entries(NUM_EDIT)) {
+      if (typeof ov[f] !== 'number' || !isFinite(ov[f]) || at(f) < 0) continue;
+      if ((f === 'power' || f === 'hits') && !(row[at('power')] > 0)) continue;
+      row[at(f)] = clamp(Math.round(ov[f]), lo, hi);
+    }
+    if (ov.dStats && at('dStats') >= 0) row[at('dStats')] = row[at('dStats')].map((v, i) => (typeof ov.dStats[STAT_ORDER[i]] === 'number' ? clamp(Math.round(ov.dStats[STAT_ORDER[i]]), 20, 200) : v));
+    const it = at('item');
+    if (it >= 0 && typeof ov.itemName === 'string' && ov.itemName) row[it] = [row[it][0], ov.itemName.slice(0, 48), row[it][2], row[it][3], row[it][4]];
+    if (it >= 0 && typeof ov.itemLore === 'string' && ov.itemLore) row[it] = [row[it][0], row[it][1], ov.itemLore, row[it][3], row[it][4]];
+    return row;
+  }
   function rec(key) {
     let r = cache.get(key);
     if (r) return r;
-    const row = DB.row(key);
+    let row = DB.row(key);
     if (!row) return null;
+    if (edits[key]) row = edited(row, edits[key]);
     r = { key };
     DB.fields.forEach((f, i) => { r[f] = row[i]; });
     r.fx = r.fx.map(([code, chance, mag]) => ({ code, chance, mag }));
@@ -32,53 +55,62 @@
     return r;
   }
 
-  const PASSIVES = {
-    F:  ['Kindling',    'Fire-led merges hit 25% harder below one-third HP.'],
-    W:  ['Flow',        'Restores 1/20 of max HP at the end of each turn.'],
-    E:  ['Bedrock',     'Takes 20% less damage from super-effective merges.'],
-    A:  ['Tailwind',    'Clock +15%.'],
-    Em: ['Afterburn',   'Burns it inflicts deal double damage.'],
-    Pl: ['Overcharge',  'Merges hit 15% harder while Flux is above half.'],
-    As: ['Smog',        'Foes\' accuracy -10%.'],
-    Ti: ['Undertow',    'Barrage merges hit one extra time.'],
-    Fr: ['Rime Skin',   'Attackers that hit it may be chilled (20%).'],
-    Mi: ['Haze',        'Evasion +10%.'],
-    St: ['Plated',      'Firewall +15%.'],
-    Me: ['Keen',        'Critical hits are twice as likely.'],
-    Ro: ['Anchor',      'Restores 1/16 of max HP at the end of each turn.'],
-    Sp: ['Static Skin', 'Attackers that hit it may get static (15%).'],
-    Ga: ['Swift',       'Clock +15%.'],
-    Ec: ['Reverb',      'Damaging merges have a 20% chance to echo.'],
-    Li: ['Radiance',    'Immune to Blind. Status effects on it expire faster.'],
-    Vo: ['Hunger',      'Damaging hits drain 3 Flux from the target.'],
-    Si: ['Adaptive',    'Deals 5% more damage for each turn on the field (max +25%).'],
-    Tm: ['Foresight',   'Its merges are half as likely to destabilize.'],
+  const data = E.data;
+  // Every essence has a passive; a daemon's form uses its lead sub's (or its lead main's). The
+  // name and text come from data/essences.json, and `mechanic` picks what it does in battle.
+  const MECHANICS = {
+    kindling: 'Fire-led merges hit 25% harder below one-third HP.',
+    flow: 'Restores 1/20 of max HP at the end of each turn.',
+    bedrock: 'Takes 20% less damage from super-effective merges.',
+    tailwind: 'Clock +15%.',
+    afterburn: 'Burns it inflicts deal double damage.',
+    overcharge: 'Merges hit 15% harder while Flux is above half.',
+    smog: 'Foes\' accuracy -10%.',
+    undertow: 'Barrage merges hit one extra time.',
+    rimeSkin: 'Attackers that hit it may be chilled (20%).',
+    haze: 'Evasion +10%.',
+    plated: 'Firewall +15%.',
+    keen: 'Critical hits are twice as likely.',
+    anchor: 'Restores 1/16 of max HP at the end of each turn.',
+    staticSkin: 'Attackers that hit it may get static (15%).',
+    swift: 'Clock +15%.',
+    reverb: 'Damaging merges have a 20% chance to echo.',
+    radiance: 'Immune to Blind. Status effects on it expire faster.',
+    hunger: 'Damaging hits drain 3 Flux from the target.',
+    adaptive: 'Deals 5% more damage for each turn on the field (max +25%).',
+    foresight: 'Its merges are half as likely to destabilize.',
   };
+  const PASSIVES = {}, MECH = {};
+  for (const x of data.essences.mains.concat(data.essences.subs)) { PASSIVES[x.code] = [x.passive.name, x.passive.desc]; MECH[x.code] = x.passive.mechanic; }
 
-  const STATUS = {
-    burn:    { name: 'Burned',    turns: 5, immune: 'F' },
-    frozen:  { name: 'Frozen',    turns: 2, immune: 'W' },
-    static:  { name: 'Static',    turns: 4, immune: 'E' },
-    rooted:  { name: 'Rooted',    turns: 4, immune: 'A' },
-    corrupt: { name: 'Corrupted', turns: 4, immune: null },
-    dormant: { name: 'Dormant',   turns: 3, immune: null },
-  };
+  // Statuses: name, base duration and the lead main that is immune (data/battle.json).
+  const STATUS = {};
+  for (const st of data.battle.statuses) STATUS[st.id] = { name: st.name, turns: st.turns, immune: st.immune };
   const FX_TO_STATUS = { burn: 'burn', freeze: 'frozen', static: 'static', root: 'rooted', corrupt: 'corrupt', lullaby: 'dormant' };
 
-  // What happens when a merge lands in an arena already charged with residue.
-  // [cast lead][residue element]
-  const REACT = {
-    F: { W: ['Steam Burst', 'blast'], A: ['Backdraft', 'boost'], E: ['Kiln', 'guard'] },
-    W: { F: ['Quench', 'quench'], E: ['Silt', 'blind'], A: ['Downpour', 'soak'] },
-    E: { W: ['Mudslide', 'chill'], F: ['Slag', 'burn'], A: ['Grounding', 'shield'] },
-    A: { F: ['Flare-up', 'boost'], E: ['Dust Devil', 'blind'], W: ['Spindrift', 'veil'] },
+  // What happens when a merge lands in an arena already charged with residue:
+  // REACT[cast lead][residue element] = [name, kind] (data/battle.json, tried in its order).
+  const REACTION_KINDS = {
+    blast: 'An extra hit of 1/10 of the target\'s max HP',
+    boost: 'The merge hits 30% harder',
+    guard: 'The caster\'s Firewall rises one stage',
+    quench: 'Cures the caster\'s burn and restores 1/10 of its HP',
+    blind: 'The target\'s accuracy drops one stage',
+    chill: 'The target\'s Clock drops one stage',
+    soak: 'Soaks the target for 3 turns',
+    burn: 'A 50% chance to burn the target',
+    shield: 'The caster gains a shield of 1/10 of its max HP',
+    veil: 'The caster\'s evasion rises one stage',
   };
+  const REACT = {};
+  for (const r of data.battle.residue) (REACT[r.cast] || (REACT[r.cast] = {}))[r.into] = [r.name, r.kind];
 
   const ATTUNE_LEVELS = [6, 10, 14, 18, 22, 26, 30, 35, 40, 45];
   const RECOMPILE_LEVELS = [12, 22, 32];
   const LEVEL_CAP = 60;
 
   function passiveOf(d) { return rec(d.key).dPassive; }
+  function mechOf(d) { return MECH[rec(d.key).dPassive]; }
   function tierOf(key) { return E.parseKey(key).subs.length; }
   function levelWidth(level) { return level < 10 ? 1 : level < 22 ? 2 : 3; }
   function width(d) { return Math.max(levelWidth(d.level), tierOf(d.key)); }
@@ -98,9 +130,9 @@
     if (d.prism) for (const k in s) s[k] = Math.floor(s[k] * 1.1);
     // live-baked bonuses: a spliced lineage's pedigree and the daemon's own trait (percent per stat)
     for (const bonus of [d.pedigree, d.trait && d.trait.stats]) if (bonus) for (const k in bonus) if (s[k] != null) s[k] = Math.floor(s[k] * (1 + clamp(+bonus[k] || 0, 0, 20) / 100));
-    const pv = passiveOf(d);
-    if (pv === 'St') s.def = Math.floor(s.def * 1.15);
-    if (pv === 'A' || pv === 'Ga') s.spd = Math.floor(s.spd * 1.15);
+    const pm = mechOf(d);
+    if (pm === 'plated') s.def = Math.floor(s.def * 1.15);
+    if (pm === 'tailwind' || pm === 'swift') s.spd = Math.floor(s.spd * 1.15);
     return s;
   }
 
@@ -470,7 +502,7 @@
       let x = r.instab;
       if (v.status && v.status.id === 'corrupt') x += 15;
       x *= clamp(1.3 - v.stats.coh / 120, 0.5, 1.2);
-      if (passiveOf(d) === 'Tm') x *= 0.5;
+      if (mechOf(d) === 'foresight') x *= 0.5;
       return clamp(x, 0, 80) / 100;
     }
 
@@ -592,15 +624,15 @@
       if (tv.phase > 0) { this.msg(`${this.labelCap(j)} is phased out. The merge passes through!`); this.stateEv(); return; }
       if (r.acc <= 100) {
         let acc = r.acc / 100 * accMul(v.stages.acc) / accMul(tv.stages.eva);
-        if (passiveOf(tgt) === 'Mi') acc *= 0.9;
-        if (passiveOf(tgt) === 'As') acc *= 0.9;
+        if (mechOf(tgt) === 'haze') acc *= 0.9;
+        if (mechOf(tgt) === 'smog') acc *= 0.9;
         if (this.rng() > acc) { this.msg(`${this.labelCap(j)} evades the merge!`, { side: j, anim: 'miss' }); this.stateEv(); return; }
       }
 
       let dealt = 0;
       if (r.damaging) {
         let hits = r.hits;
-        if (r.cls === 'Barrage' && passiveOf(d) === 'Ti') hits++;
+        if (r.cls === 'Barrage' && mechOf(d) === 'undertow') hits++;
         let crits = 0;
         const eff = effectiveness(r.key, tgt.key);
         for (let h = 0; h < hits && tgt.hp > 0; h++) {
@@ -613,7 +645,7 @@
         if (eff >= 1.2) this.msg('It\'s super effective!');
         else if (eff <= 0.83) this.msg('It\'s not very effective...');
         if (extra.flatBlast && tgt.hp > 0) { this.dealRaw(j, extra.flatBlast); this.msg(`Scalding steam engulfs ${this.label(j)}!`); }
-        if (passiveOf(d) === 'Vo' && dealt > 0) { tv.flux = Math.max(0, tv.flux - 3); this.fluxEv(j); }
+        if (mechOf(d) === 'hunger' && dealt > 0) { tv.flux = Math.max(0, tv.flux - 3); this.fluxEv(j); }
         // Signature: Strike staggers (pushes the foe's next action back).
         if (r.cls === 'Strike' && dealt > 0 && tgt.hp > 0 && this.rt) {
           const push = crits ? 1.2 : 0.6;
@@ -629,9 +661,9 @@
         }
         if (v.charge) this.statusEv(i);
         if (dealt > 0 && tgt.hp > 0) {
-          const tp = passiveOf(tgt);
-          if (tp === 'Fr' && this.rng() < 0.2) { this.stage(i, 'spd', -1); this.msg(`${this.labelCap(j)}'s rime skin chills the attacker.`); }
-          if (tp === 'Sp' && this.rng() < 0.15) this.setStatus(i, 'static', j);
+          const tp = mechOf(tgt);
+          if (tp === 'rimeSkin' && this.rng() < 0.2) { this.stage(i, 'spd', -1); this.msg(`${this.labelCap(j)}'s rime skin chills the attacker.`); }
+          if (tp === 'staticSkin' && this.rng() < 0.15) this.setStatus(i, 'static', j);
         }
         if (tgt.hp > 0 && tv.status) {
           if (tv.status.id === 'dormant') { tv.status = null; this.msg(`${this.labelCap(j)} jolts awake!`); this.statusEv(j); }
@@ -649,7 +681,7 @@
       }
       this.applyFx(i, j, r, dealt, false);
       v.hexFrom = false;
-      if (dealt > 0 && passiveOf(d) === 'Ec' && !v.echo && this.rng() < 0.2) v.echo = { dmg: Math.ceil(dealt * 0.5), name: r.name };
+      if (dealt > 0 && mechOf(d) === 'reverb' && !v.echo && this.rng() < 0.2) v.echo = { dmg: Math.ceil(dealt * 0.5), name: r.name };
       this.stateEv();
     }
 
@@ -658,7 +690,7 @@
       const pierce = r.fx.some(f => f.code === 'pierce');
       let critStage = v.crit + (r.fx.some(f => f.code === 'crit') ? 1 : 0);
       let critCh = [1 / 16, 1 / 8, 1 / 4, 1 / 2][clamp(critStage, 0, 3)];
-      if (passiveOf(d) === 'Me') critCh *= 2;
+      if (mechOf(d) === 'keen') critCh *= 2;
       const crit = forceCrit || this.rng() < critCh;
       let atkSt = v.stages.atk, defSt = tv.stages.def;
       if (crit) { atkSt = Math.max(0, atkSt); defSt = Math.min(0, defSt); }
@@ -670,11 +702,11 @@
       if (crit) m *= r.cls === 'Strike' ? 2 : 1.5;
       if (v.status && v.status.id === 'burn') m *= 0.85;
       if (tv.soak > 0) { if (r.a === 'F') m *= 0.6; else if (r.a === 'A') m *= 1.3; }
-      const pv = passiveOf(d);
-      if (pv === 'F' && r.a === 'F' && d.hp < v.stats.hp / 3) m *= 1.25;
-      if (pv === 'Pl' && v.flux > v.stats.flux / 2) m *= 1.15;
-      if (pv === 'Si') m *= 1 + Math.min(5, v.turnsIn) * 0.05;
-      if (passiveOf(t) === 'E' && eff >= 1.2) m *= 0.8;
+      const pm = mechOf(d);
+      if (pm === 'kindling' && r.a === 'F' && d.hp < v.stats.hp / 3) m *= 1.25;
+      if (pm === 'overcharge' && v.flux > v.stats.flux / 2) m *= 1.15;
+      if (pm === 'adaptive') m *= 1 + Math.min(5, v.turnsIn) * 0.05;
+      if (mechOf(t) === 'bedrock' && eff >= 1.2) m *= 0.8;
       let dmg = Math.max(1, Math.floor(base * m));
       this.dealDamage(j, dmg, pierce, i, crit);
       return { dmg, crit };
@@ -743,10 +775,10 @@
       if (S.immune && mainsOf(t.key)[0] === S.immune) return false;
       let turns = S.turns;
       if (id === 'frozen') turns = 1 + Math.floor(this.rng() * 2);
-      if (passiveOf(t) === 'Li') turns = Math.max(1, turns - 2);
+      if (mechOf(t) === 'radiance') turns = Math.max(1, turns - 2);
       if (from != null && this.sides[from].v.hexFrom) turns += 1;
       tv.status = { id, turns };
-      if (id === 'burn' && from != null && passiveOf(this.act(from)) === 'Em') tv.burnMul = 2; else tv.burnMul = 1;
+      if (id === 'burn' && from != null && mechOf(this.act(from)) === 'afterburn') tv.burnMul = 2; else tv.burnMul = 1;
       const txt = { burn: 'is burned!', frozen: 'is frozen solid!', static: 'is locked up with static!', rooted: 'is rooted in place!', corrupt: 'is corrupted!', dormant: 'falls dormant...' }[id];
       this.msg(`${this.labelCap(j)} ${txt}`, { side: j, anim: id });
       this.statusEv(j);
@@ -770,7 +802,7 @@
             if (!tv.petrify) { tv.petrify = true; this.msg(`${this.labelCap(j)} is petrified!`, { side: j, anim: 'petrify' }); tv.stages.def = clamp(tv.stages.def + 1, -3, 3); this.statusEv(j); }
             break;
           case 'soak': if (!tv.soak) { tv.soak = 3; this.msg(`${this.labelCap(j)} is soaked!`, { side: j, anim: 'soak' }); this.statusEv(j); } break;
-          case 'blind': if (passiveOf(t) !== 'Li') this.stage(j, 'acc', -1, true); break;
+          case 'blind': if (mechOf(t) !== 'radiance') this.stage(j, 'acc', -1, true); break;
           case 'chill': this.stage(j, 'spd', -1, true); break;
           case 'weaken': this.stage(j, 'atk', -1, true); break;
           case 'expose': this.stage(j, 'def', -1, true); break;
@@ -873,9 +905,9 @@
         if (d.hp <= 0) return;
         if (v.soak > 0) { v.soak--; if (!v.soak) this.statusEv(i); }
         if (v.regen > 0) { v.regen--; this.heal(i, v.stats.hp * v.regenMag / 100, true); if (!v.regen) this.statusEv(i); }
-        const pv = passiveOf(d);
-        if (pv === 'W') this.heal(i, v.stats.hp / 20, true);
-        if (pv === 'Ro') this.heal(i, v.stats.hp / 16, true);
+        const pm = mechOf(d);
+        if (pm === 'flow') this.heal(i, v.stats.hp / 20, true);
+        if (pm === 'anchor') this.heal(i, v.stats.hp / 16, true);
         if (regenFlux) {
           const regen = 2 + Math.round(v.stats.flux * 0.08);
           v.flux = Math.min(v.stats.flux, v.flux + regen);
@@ -1053,17 +1085,10 @@
 
   const PULSE = 2;
   const CHARGE_MAX = 6;
-  // What every ability class does on top of its baked stats.
-  const SIGNATURE = {
-    Strike: 'Stagger: pushes the foe\'s next action back (more on a crit). Crits hit ×2.',
-    Barrage: 'Charge: every hit adds 1 charge. At 6, your next attack is an OVERDRIVE (×1.8 and a guaranteed crit).',
-    Siphon: 'Theft: steals Flux from the foe on top of its drain.',
-    Hex: 'Curse: slows the foe (Clock −1, next action delayed) and doubles its status chances, which last longer.',
-    Ward: 'Riposte: attackers take 35% of what the shield absorbs, and it bursts on them when it breaks.',
-    Mend: 'Reboot: purges statuses and stat drops, grants haste and cuts your cooldown.',
-    Field: 'Domain: damages the foe every pulse, and your merges of that element cost 40% less Flux.',
-  };
-  const COMBO = 'Every third cast of the same attack in a row is a COMBO (×1.6).';
+  // What every ability class does on top of its baked stats (data/battle.json).
+  const SIGNATURE = {};
+  for (const c of data.battle.classes) SIGNATURE[c.id] = c.signature;
+  const COMBO = data.battle.combo;
   const UTIL_CD = { defrag: 14, item: 6, switch: 4, bind: 0, run: 0 };
   function isAttack(key) { const r = rec(key); return r.cls === 'Strike' || r.cls === 'Barrage' || r.cls === 'Siphon'; }
   function cooldownFor(r) { return Math.round(5 + r.flux * 0.7); }
@@ -1078,7 +1103,8 @@
   }
 
   return {
-    rec, PASSIVES, STATUS, REACT, ATTUNE_LEVELS, RECOMPILE_LEVELS, LEVEL_CAP,
+    make, MECHANICS, REACTION_KINDS, mechOf,
+    rec, setEdits, PASSIVES, STATUS, REACT, ATTUNE_LEVELS, RECOMPILE_LEVELS, LEVEL_CAP,
     calcStats, levelWidth, width, xpFor, tierOf, mainsOf, eligibleSubs, composableFor, canCompose, autoMemory,
     isAttack, cooldownFor, UTIL_CD, PULSE, SIGNATURE, COMBO, CHARGE_MAX,
     createDaemon, recompileOptions, recompile, gainXp, xpYield, effectiveness, captureChance, Battle, describeFx, passiveOf,

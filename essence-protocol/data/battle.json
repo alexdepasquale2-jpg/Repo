@@ -1,0 +1,185 @@
+{
+  "classes": [
+    {
+      "id": "Strike",
+      "desc": "A single, focused hit.",
+      "signature": "Stagger: pushes the foe's next action back (more on a crit). Crits hit ×2.",
+      "icon": "⚔",
+      "nouns": [
+        "Lance", "Fang", "Brand", "Spike", "Edge", "Strike", "Hammer", "Bolt", "Talon", "Pike",
+        "Blade", "Ram"
+      ]
+    },
+    {
+      "id": "Barrage",
+      "desc": "Several smaller hits.",
+      "signature": "Charge: every hit adds 1 charge. At 6, your next attack is an OVERDRIVE (×1.8 and a guaranteed crit).",
+      "icon": "⁂",
+      "nouns": [
+        "Volley", "Barrage", "Swarm", "Cascade", "Hail", "Flurry", "Salvo", "Spray", "Scatter",
+        "Torrent", "Burst", "Shower"
+      ]
+    },
+    {
+      "id": "Siphon",
+      "desc": "Damages the target and restores the caster.",
+      "signature": "Theft: steals Flux from the foe on top of its drain.",
+      "icon": "☍",
+      "nouns": [
+        "Drain", "Leech", "Siphon", "Tap", "Draw", "Feast", "Wick", "Pull", "Harvest", "Sap",
+        "Bleed", "Tithe"
+      ]
+    },
+    {
+      "id": "Hex",
+      "desc": "Mostly status effects, with light damage.",
+      "signature": "Curse: slows the foe (Clock −1, next action delayed) and doubles its status chances, which last longer.",
+      "icon": "✴",
+      "nouns": [
+        "Curse", "Snare", "Hex", "Haze", "Shackle", "Blight", "Bane", "Lock", "Glyph", "Mark",
+        "Knot", "Sigil"
+      ]
+    },
+    {
+      "id": "Ward",
+      "desc": "Shields and fortifies the caster.",
+      "signature": "Riposte: attackers take 35% of what the shield absorbs, and it bursts on them when it breaks.",
+      "icon": "⛨",
+      "nouns": [
+        "Aegis", "Bulwark", "Shell", "Ward", "Barrier", "Carapace", "Rampart", "Mantle", "Bastion",
+        "Screen", "Plate", "Dome"
+      ]
+    },
+    {
+      "id": "Mend",
+      "desc": "Repairs the caster.",
+      "signature": "Reboot: purges statuses and stat drops, grants haste and cuts your cooldown.",
+      "icon": "✚",
+      "nouns": [
+        "Renewal", "Mend", "Balm", "Patch", "Restore", "Salve", "Tonic", "Rebuild", "Reboot",
+        "Suture", "Bloom", "Remedy"
+      ]
+    },
+    {
+      "id": "Field",
+      "desc": "Saturates the arena with its essence for five turns.",
+      "signature": "Domain: damages the foe every pulse, and your merges of that element cost 40% less Flux.",
+      "icon": "◎",
+      "nouns": [
+        "Field", "Domain", "Front", "Expanse", "Canopy", "Circuit", "Realm", "Grid", "Veil", "Zone",
+        "Weather", "Mesh"
+      ]
+    }
+  ],
+  "effects": [
+    { "code": "burn", "name": "Burn" },
+    { "code": "freeze", "name": "Freeze" },
+    { "code": "static", "name": "Static" },
+    { "code": "root", "name": "Root" },
+    { "code": "corrupt", "name": "Corrupt" },
+    { "code": "petrify", "name": "Petrify", "color": "#c9913d" },
+    { "code": "soak", "name": "Soak", "color": "#3aa6ff" },
+    { "code": "blind", "name": "Blind" },
+    { "code": "chill", "name": "Chill" },
+    { "code": "weaken", "name": "Weaken" },
+    { "code": "expose", "name": "Expose" },
+    { "code": "wash", "name": "Wash" },
+    { "code": "pierce", "name": "Pierce" },
+    { "code": "crit", "name": "Keen" },
+    { "code": "echo", "name": "Echo" },
+    { "code": "delay", "name": "Delayed" },
+    { "code": "drain", "name": "Drain" },
+    { "code": "heal", "name": "Heal" },
+    { "code": "cleanse", "name": "Cleanse" },
+    { "code": "shield", "name": "Shield" },
+    { "code": "guard", "name": "Guard+" },
+    { "code": "overclock", "name": "Logic+" },
+    { "code": "haste", "name": "Clock+" },
+    { "code": "focus", "name": "Focus" },
+    { "code": "veil", "name": "Veil" },
+    { "code": "regen", "name": "Regen" },
+    { "code": "recoil", "name": "Recoil" },
+    { "code": "priority", "name": "Priority" },
+    { "code": "mirror", "name": "Mirror" },
+    { "code": "swap", "name": "Swap" },
+    { "code": "overflow", "name": "Overflow" },
+    { "code": "lullaby", "name": "Lullaby" },
+    { "code": "fork", "name": "Fork" },
+    { "code": "rewind", "name": "Rewind" },
+    { "code": "invert", "name": "Invert" },
+    { "code": "nullify", "name": "Nullify" },
+    { "code": "phase", "name": "Phase" },
+    { "code": "overwrite", "name": "Overwrite" }
+  ],
+  "statuses": [
+    {
+      "id": "burn",
+      "name": "Burned",
+      "turns": 5,
+      "immune": "F",
+      "icon": "♨",
+      "color": "#ff7a2e",
+      "text": "Loses 1/16 HP each turn and deals 15% less damage. Fire leads are immune."
+    },
+    {
+      "id": "frozen",
+      "name": "Frozen",
+      "turns": 2,
+      "immune": "W",
+      "icon": "❄",
+      "color": "#bff3ff",
+      "text": "Can't act for 1–2 turns. Thawed by Fire-led hits. Water leads are immune."
+    },
+    {
+      "id": "static",
+      "name": "Static",
+      "turns": 4,
+      "immune": "E",
+      "icon": "ϟ",
+      "color": "#ffe23d",
+      "text": "25% chance to lock up each turn and Clock ×0.75. Earth leads are immune."
+    },
+    {
+      "id": "rooted",
+      "name": "Rooted",
+      "turns": 4,
+      "immune": "A",
+      "icon": "⚘",
+      "color": "#5fbf4a",
+      "text": "Can't switch or run; loses 1/16 HP to the foe each turn. Air leads are immune."
+    },
+    {
+      "id": "corrupt",
+      "name": "Corrupted",
+      "turns": 4,
+      "immune": null,
+      "icon": "☣",
+      "color": "#9b4dff",
+      "text": "Loses 3 Flux per turn and merges are 15% more unstable."
+    },
+    {
+      "id": "dormant",
+      "name": "Dormant",
+      "turns": 3,
+      "immune": null,
+      "icon": "z",
+      "color": "#9aa6c8",
+      "text": "Can't act until hit, up to 3 turns."
+    }
+  ],
+  "residue": [
+    { "cast": "F", "into": "W", "name": "Steam Burst", "kind": "blast" },
+    { "cast": "F", "into": "A", "name": "Backdraft", "kind": "boost" },
+    { "cast": "F", "into": "E", "name": "Kiln", "kind": "guard" },
+    { "cast": "W", "into": "F", "name": "Quench", "kind": "quench" },
+    { "cast": "W", "into": "E", "name": "Silt", "kind": "blind" },
+    { "cast": "W", "into": "A", "name": "Downpour", "kind": "soak" },
+    { "cast": "E", "into": "W", "name": "Mudslide", "kind": "chill" },
+    { "cast": "E", "into": "F", "name": "Slag", "kind": "burn" },
+    { "cast": "E", "into": "A", "name": "Grounding", "kind": "shield" },
+    { "cast": "A", "into": "F", "name": "Flare-up", "kind": "boost" },
+    { "cast": "A", "into": "E", "name": "Dust Devil", "kind": "blind" },
+    { "cast": "A", "into": "W", "name": "Spindrift", "kind": "veil" }
+  ],
+  "combo": "Every third cast of the same attack in a row is a COMBO (×1.6)."
+}
