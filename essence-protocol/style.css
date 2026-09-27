@@ -424,3 +424,12 @@ button[data-tip] { cursor: pointer; }
 .hb .cost.disc { color: var(--good); }
 #tooltip .sig { color: var(--ink); font-size: 11px; border-left: 3px solid; padding-left: 6px; }
 #tooltip .sig.atk { border-color: var(--atk); } #tooltip .sig.act { border-color: var(--act); }
+
+/* Catching + flow */
+.castbar.binding { border-color: var(--utl); } .castbar.binding i { background: linear-gradient(90deg, #0b3a48, var(--utl)); box-shadow: 0 0 12px var(--utl); }
+.castbar.holding { border-color: var(--line); } .castbar.holding i { background: #2a3452; }
+.hudrow .ub#bindBtn.on { background: #46f3ff33; border-color: var(--utl); box-shadow: 0 0 14px #46f3ffaa; }
+body.inbattle #toasts { top: auto; bottom: calc(50% + 20px); width: min(340px, calc(100% - 24px)); left: auto; right: 12px; transform: none; gap: 4px; }
+body.inbattle .toast { font-size: 11px; padding: 5px 9px; opacity: .92; }
+body.inbattle .toast:nth-last-child(n+4) { display: none; }
+body.inbattle .toast.tip { font-size: 12px; }

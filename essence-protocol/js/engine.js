@@ -931,10 +931,22 @@
       if (this.fieldPulse <= 0) { this.fieldPulse += PULSE; this.turn++; this.fieldEnd(); }
       // player: fire the queued attack whenever the GCD is ready
       const p = this.rt[0];
+      // A queued utility (Bind) takes the next global cooldown ahead of the auto-attack.
+      if (p.gcd <= 0 && p.pending) {
+        const a = p.pending; p.pending = null;
+        this.perform(0, a);
+        p.gcd = a.type === 'bind' ? 1.5 : 1.2;
+        this.checkFaints();
+        return this.events;
+      }
       if (p.gcd <= 0 && p.queued) {
-        const r = rec(p.queued);
-        if (this.costFor(0, r) <= this.sides[0].v.flux) { p.starved = false; this.doMerge(0, p.queued); p.gcd = this.gcdFor(0, r); if (this.checkFaints()) return this.events; }
-        else p.starved = true;
+        let r = rec(p.queued), v0 = this.sides[0].v;
+        // Out of Flux for the queued attack: fall back to the cheapest affordable attack rather than stalling.
+        if (this.costFor(0, r) > v0.flux) {
+          const alt = this.act(0).memory.filter(k => k && isAttack(k) && this.costFor(0, rec(k)) <= v0.flux).sort((x, y) => rec(x).flux - rec(y).flux)[0];
+          if (alt) { r = rec(alt); p.fallback = alt; } else { p.starved = true; r = null; }
+        } else p.fallback = null;
+        if (r) { p.starved = false; this.doMerge(0, r.key); p.gcd = this.gcdFor(0, r); if (this.checkFaints()) return this.events; }
       }
       // enemy
       const e = this.rt[1];

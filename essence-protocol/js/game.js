@@ -661,6 +661,7 @@
       else if (e.key === 'Escape' && open) { const bb = $('bpanel').querySelector('[data-back]'); if (bb) bb.click(); }
       else if (e.key === ' ') { e.preventDefault(); skipping = true; if (!open && B && B.rt) setPaused(!paused); }
       else if ((e.key === 'r' || e.key === 'R') && !open && B && B.rt) utility({ type: 'defrag' }, 'Rest is cooling down.');
+      else if ((e.key === 'b' || e.key === 'B') && !open && B && B.rt) queueBind();
       else if ((e.key === 'a' || e.key === 'A') && !open && B && B.rt) { S.settings.auto = !S.settings.auto; toast(`Auto battle <b>${S.settings.auto ? 'on' : 'off'}</b>`); }
     } else if (e.key === 'Escape' && !$('sheet').classList.contains('hidden')) closeSheet();
   });
@@ -748,7 +749,7 @@
     bctx = o;
     for (const d of o.enemy) seen.add(d.key);
     ui = [snapshot(0), snapshot(1)];
-    $('battle').classList.remove('hidden');
+    $('battle').classList.remove('hidden'); document.body.classList.add('inbattle');
     $('blog').innerHTML = '';
     $('bpanel').classList.add('hidden'); $('bctrl').classList.add('hidden');
     for (const i of [0, 1]) { const el = spriteEl(i); el.classList.remove('faint', 'enter'); void el.offsetWidth; el.classList.add('enter'); paintSide(i); }
@@ -762,7 +763,8 @@
     await logMsg(`Go, ${dName(B.act(0))}!`);
     B.startRealtime();
     B.rt[0].queued = defaultAttack();
-    tip('battle', 'Combat is live. Your red auto-attack fires every time the cast bar fills; tap another red tile to switch it. Violet actives fire instantly, then cool down. Tap Auto to let the AI fight for you. Space pauses.');
+    heldOnce = false; bindLat = null; freezeUntil = 0;
+    tip('battle', 'Combat is live. Your red auto-attack fires every time the cast bar fills; tap another red tile to switch, or the same one to hold fire. Violet actives fire instantly. Bind (B) goes out on your next action. Space pauses.');
     buildControls(); setPaused(false); startLoop();
   }
 
@@ -986,7 +988,11 @@
           else if (STATUS_COL[e.anim] && e.side != null) { const [x, y] = centerOf(spriteEl(e.side)); ring(x, y, 70, 20, STATUS_COL[e.anim], 400); burstAt(x, y, [STATUS_COL[e.anim]], 16, 0.8); }
           else if (e.anim === 'levelup') { beep(988, 0.2, 'triangle', 0.05); const [x, y] = centerOf(spriteEl(0)); sparkles(x, y, '#ffd23d', 24); }
           else if (e.anim === 'bound') { beep(784, 0.15, 'sine'); setTimeout(() => beep(1046, 0.25, 'sine'), 150); const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, ['#46f3ff', '#ffffff', '#ffd23d'], 50); }
-          else if (e.anim === 'bind') { const [x0, y0] = centerOf(spriteEl(0)), [x1, y1] = centerOf(spriteEl(1)); shot(x0, y0, x1, y1, '#46f3ff', 7, 380, ['#46f3ff', '#ffffff'], 0, 70); ring(x1, y1, 90, 30, '#46f3ff', 400, 380, { hex: true }); }
+          else if (e.anim === 'bind') {
+            const lat = bindLat || bestLattice();
+            if (lat) { lat.count--; if (lat.count <= 0 && lat.id !== 'lattice:basic') delete S.bag[lat.id]; }
+            bindLat = null; freezeUntil = performance.now() + 1500;
+            const [x0, y0] = centerOf(spriteEl(0)), [x1, y1] = centerOf(spriteEl(1)); shot(x0, y0, x1, y1, '#46f3ff', 7, 380, ['#46f3ff', '#ffffff'], 0, 70); ring(x1, y1, 90, 30, '#46f3ff', 400, 380, { hex: true }); }
           else if (e.anim === 'miss') dmgNum(e.side, 'MISS', 'miss');
           break;
         }
@@ -1010,7 +1016,7 @@
           if (e.side === 0 && B.rt) { B.rt[0].queued = defaultAttack(); buildControls(); }
           break;
         }
-        case 'faint': spriteEl(e.side).classList.add('faint'); beep(110, 0.4, 'sawtooth', 0.05); break;
+        case 'faint': spriteEl(e.side).classList.add('faint'); beep(110, 0.4, 'sawtooth', 0.05); freezeUntil = Math.max(freezeUntil, performance.now() + 700); bigCallout({ side: e.side, text: e.side === 1 ? 'KNOCKOUT!' : 'DOWN!', kind: e.side === 1 ? 'combo' : 'stagger' }); break;
         case 'discover': markDiscovered(e.key); break;
         case 'shake': { const el = spriteEl(1); setTimeout(() => { el.classList.add('wobble'); beep(300 + e.n * 100, 0.08); setTimeout(() => el.classList.remove('wobble'), 420); }, (e.n - 1) * 480); break; }
         case 'unbind': { const [x, y] = centerOf(spriteEl(1)); setTimeout(() => burstAt(x, y, ['#46f3ff'], 24), 1000); break; }
@@ -1052,14 +1058,25 @@
   function loop(t) {
     if (!loopOn || !B) { loopOn = false; return; }
     const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
-    if (!paused && !B.over && !B.needSwitch) {
+    if (!paused && !B.over && !B.needSwitch && t >= freezeUntil) {
       if (S.settings.auto) { autoT -= dt; if (autoT <= 0) { autoT = 0.25; autoPilot(); } }
+      holdCheck();
       consume(B.tick(dt * pace()));
     }
     uiT -= dt; if (uiT <= 0) { uiT = 0.08; refreshControls(); }
     if (B.over) { loopOn = false; $('bctrl').classList.add('locked'); setTimeout(endBattle, B.result === 'bind' ? 1700 : 900); return; }
     if (B.needSwitch) { loopOn = false; panelSwitch(true); return; }
     requestAnimationFrame(loop);
+  }
+  // In wild fights, stop auto-attacking once when the foe gets low, so it can be caught.
+  function holdCheck() {
+    if (!bctx.wild || S.settings.auto || heldOnce || !B.rt[0].queued || !bestLattice()) return;
+    const t = B.act(1), mx = B.sides[1].v.stats.hp;
+    if (t.hp > 0 && t.hp / mx <= 0.3) {
+      heldOnce = true; B.rt[0].queued = null;
+      bigCallout({ side: 1, text: 'HOLDING FIRE · BIND IT!', kind: 'hex' });
+      tip('hold', 'Your auto-attack paused because the foe is weak and catchable. Tap Bind, or tap a red tile to keep attacking.');
+    }
   }
   function setPaused(p) { paused = p; $('battle').classList.toggle('paused', p); refreshControls(); }
   addEventListener('blur', () => { if (mode === 'battle' && B && !paused) setPaused(true); });
@@ -1069,8 +1086,12 @@
   function autoPilot() {
     if (!B || !B.rt || B.over) return;
     const mirror = { sides: [B.sides[1], B.sides[0]], act: i => B.act(1 - i), wild: false, rng: Math.random, rt: [B.rt[1], B.rt[0]] };
-    const a = B.chooseEnemy.call(mirror);
     const rt = B.rt[0];
+    if (bctx.wild && !rt.pending) {
+      const t = B.act(1), lat = bestLattice();
+      if (lat && t.hp / B.sides[1].v.stats.hp <= 0.35 && chanceWith(lat) >= 0.45) { rt.pending = { type: 'bind', item: lat }; bindLat = lat; return; }
+    }
+    const a = B.chooseEnemy.call(mirror);
     if (a.type === 'merge') {
       if (ENG.isAttack(a.key)) { if (rt.queued !== a.key && rt.gcd <= 0.3) rt.queued = a.key; }
       else { const ev = B.useActive(a.key); if (ev) consume(ev); }
@@ -1126,21 +1147,33 @@
     c.querySelector('[data-u=pause]').onclick = () => setPaused(!paused);
     c.querySelector('[data-u=auto]').onclick = () => { S.settings.auto = !S.settings.auto; toast(`Auto battle <b>${S.settings.auto ? 'on' : 'off'}</b>`); refreshControls(); };
     const run = c.querySelector('[data-u=run]'); if (run) run.onclick = () => utility({ type: 'run' }, 'Wait for your global cooldown.');
-    if (bctx.wild) $('bindBtn').onclick = () => {
-      const lat = bestLattice(); if (!lat) return;
-      const ev = B.useUtility({ type: 'bind', item: lat });
-      if (!ev) return toast('Wait for your global cooldown.');
-      lat.count--; if (lat.count <= 0 && lat.id !== 'lattice:basic') delete S.bag[lat.id];
-      consume(ev);
-    };
+    if (bctx.wild) $('bindBtn').onclick = () => queueBind();
     refreshControls();
   }
+
+  // Bind goes out on your next global cooldown, ahead of the auto-attack. Tap again to cancel.
+  function queueBind() {
+    if (!B || B.over || !B.rt || !bctx.wild) return;
+    const rt = B.rt[0];
+    if (rt.pending) { rt.pending = null; toast('Bind cancelled.'); refreshControls(); return; }
+    const lat = bestLattice(); if (!lat) return toast('No lattices left. Forge Hex merges into Lattices, or top up at a terminal.');
+    if (paused) setPaused(false);
+    rt.pending = { type: 'bind', item: lat };
+    bindLat = lat;
+    beep(660, 0.05, 'triangle', 0.03);
+    refreshControls();
+  }
+  let bindLat = null, freezeUntil = 0, heldOnce = false;
 
   function useSlot(i) {
     if (!B || B.over || !B.rt) return;
     const k = B.act(0).memory[i]; if (!k) return;
     if (S.settings.auto) { S.settings.auto = false; toast('Auto battle off. You have control.'); }
-    if (ENG.isAttack(k)) { B.rt[0].queued = k; refreshControls(); beep(520, 0.03, 'square', 0.02); return; }
+    if (ENG.isAttack(k)) {
+      if (B.rt[0].queued === k) { B.rt[0].queued = null; toast('Holding fire. Tap a red tile to attack again.'); }
+      else B.rt[0].queued = k;
+      refreshControls(); beep(520, 0.03, 'square', 0.02); return;
+    }
     if (paused) setPaused(false);
     const ev = B.useActive(k);
     if (!ev) { toast(B.rt[0].cds[k] > 0 ? 'That active is cooling down.' : 'Not enough Flux.'); return; }
@@ -1192,8 +1225,14 @@
       fill.style.width = (clamp(1 - rt.gcd / full, 0, 1) * 100) + '%';
       $('castbar').classList.toggle('ready', rt.gcd <= 0);
       $('castbar').classList.toggle('starved', !!rt.starved);
-      $('gcdText').textContent = paused ? 'Paused' : !q ? 'Tap a red tile to set your auto-attack' : rt.starved ? `${mergeLabel(q)} · needs ${B.costFor(0, qr)} Flux` : `${S.settings.auto ? 'Auto · ' : ''}${mergeLabel(q)}`;
+      const next = rt.pending ? `◇ Bind next · ${Math.round(chanceWith(rt.pending.item) * 100)}%`
+        : !q ? 'Holding fire · tap a red tile to attack'
+        : rt.starved ? `${mergeLabel(q)} · needs ${B.costFor(0, qr)} Flux`
+        : rt.fallback ? `${mergeLabel(rt.fallback)} (low Flux)` : mergeLabel(q);
+      $('gcdText').textContent = paused ? 'Paused' : (S.settings.auto ? 'Auto · ' : '') + next;
       $('gcdTime').textContent = paused ? 'Space to resume' : rt.gcd > 0 ? rt.gcd.toFixed(1) + 's' : rt.starved ? `${Math.floor(flux)}/${B.costFor(0, qr)}` : 'now';
+      $('castbar').classList.toggle('binding', !!rt.pending);
+      $('castbar').classList.toggle('holding', !q && !rt.pending);
       if (rt.starved) tip('flux', 'Your auto-attack needs more Flux. Rest (↻) refills a big chunk, or pick a cheaper attack.');
     }
     document.querySelectorAll('#bctrl .hb[data-key]').forEach(b => {
@@ -1226,11 +1265,12 @@
     const bind = $('bindBtn');
     if (bind) {
       const lat = bestLattice(), ch = lat ? chanceWith(lat) : 0;
-      bind.disabled = !lat || rt.gcd > 0;
+      bind.disabled = !lat && !rt.pending;
+      bind.classList.toggle('on', !!rt.pending);
       bind.classList.toggle('hot', ch >= 0.35);
       const html = `<span class="cdo"></span><i>◇</i><small>${lat ? Math.round(ch * 100) + '%' : 'none'}</small>`;
       if (bind.innerHTML !== html) bind.innerHTML = html;
-      bind.title = lat ? `${lat.name} ×${lat.count}` : 'No lattices left';
+      bind.title = rt.pending ? 'Bind queued for your next action. Tap to cancel.' : lat ? `${lat.name} ×${lat.count}. Fires on your next action.` : 'No lattices left';
       if (ui[1].hp / ui[1].max < 0.5) tip('bind', 'The foe is weak. Tap Bind to capture it. Lower HP and status effects raise the odds.');
     }
     renderBuffs(0); renderBuffs(1);
@@ -1331,7 +1371,7 @@
       questEvent('bind', { key: d.key });
     }
     for (const k of B.discovered) if (!discovered.has(k)) markDiscovered(k, true);
-    $('battle').classList.add('hidden');
+    $('battle').classList.add('hidden'); document.body.classList.remove('inbattle');
     mode = 'busy';
     if (res === 'lose') {
       for (const d of S.party) d.hp = ENG.calcStats(d).hp;
