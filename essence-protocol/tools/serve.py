@@ -7,9 +7,9 @@ FRIEDRICH_BRIDGE_KEY environment variable, or from an untracked
 bridge.local.json next to index.html. It is never sent to the browser.
 
     set FRIEDRICH_BRIDGE_KEY=...          (Windows)   export ... (macOS/Linux)
-    python tools/serve.py                 -> http://127.0.0.1:8080
+    python tools/serve.py                 -> http://127.0.0.1:8090
 
-Options: --port 8080 (the game), --bridge http://127.0.0.1:8765 (FriedrichBridge).
+Options: --port 8090 (the game; not 8080, FriedrichAI uses it), --bridge http://127.0.0.1:8765 (FriedrichBridge).
 The bridge port normally comes from C:\\Users\\<you>\\FriedrichBridge\\config.json.
 """
 import argparse
@@ -94,7 +94,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 def main():
     local = load_local()
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    ap.add_argument('--port', type=int, default=int(local.get('port', 8080)))
+    ap.add_argument('--port', type=int, default=int(local.get('port', 8090)))
     ap.add_argument('--bridge', default=local.get('bridge_url', 'http://127.0.0.1:8765'))
     args = ap.parse_args()
     Handler.bridge = args.bridge
