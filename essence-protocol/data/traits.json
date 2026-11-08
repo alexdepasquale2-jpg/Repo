@@ -1,0 +1,236 @@
+{
+  "traits": [
+    {
+      "code": "forage",
+      "category": "utility",
+      "nouns": ["Gleaner", "Scavenger", "Magpie"],
+      "magnitude": [10, 15, 22, 30, 40],
+      "epithet": "Plenty",
+      "does": "turns up extra motes after every fight",
+      "effect": "Each mote from a battle has a {m}% chance to double",
+      "cap": 80
+    },
+    {
+      "code": "tutor",
+      "category": "utility",
+      "nouns": ["Mentor", "Sage", "Tutor"],
+      "magnitude": [5, 8, 12, 16, 22],
+      "epithet": "Lessons",
+      "does": "teaches the whole party as it fights",
+      "effect": "+{m}% XP for the whole party",
+      "cap": 50
+    },
+    {
+      "code": "binder",
+      "category": "utility",
+      "nouns": ["Tether", "Snare", "Binder"],
+      "magnitude": [5, 8, 12, 16, 22],
+      "epithet": "Tethers",
+      "does": "steadies the lattice when you bind",
+      "effect": "+{m}% bind chance",
+      "cap": 40
+    },
+    {
+      "code": "smith",
+      "category": "utility",
+      "nouns": ["Anvil", "Forgehand", "Temper"],
+      "magnitude": [8, 12, 18, 25, 35],
+      "epithet": "the Anvil",
+      "does": "has a knack for the forge",
+      "effect": "{m}% chance a forge costs no motes",
+      "cap": 60
+    },
+    {
+      "code": "nurture",
+      "category": "utility",
+      "nouns": ["Cradle", "Hearth", "Brood"],
+      "magnitude": [10, 15, 22, 30, 40],
+      "epithet": "the Hearth",
+      "does": "keeps kernels warm while they compile",
+      "effect": "Kernels compile {m}% faster",
+      "cap": 70
+    },
+    {
+      "code": "mender",
+      "category": "utility",
+      "nouns": ["Medic", "Salve", "Mender"],
+      "magnitude": [2, 3, 4, 6, 8],
+      "epithet": "Mending",
+      "does": "patches the party up on the road",
+      "effect": "Heals the party {m}% HP every 25 steps",
+      "cap": 12
+    },
+    {
+      "code": "fortune",
+      "category": "utility",
+      "nouns": ["Omen", "Charm", "Fortune"],
+      "magnitude": [20, 35, 50, 75, 100],
+      "epithet": "Omens",
+      "does": "draws prismatic daemons out of the static",
+      "effect": "Prismatic daemons are {m}% more likely",
+      "cap": 200
+    },
+    {
+      "code": "archive",
+      "category": "utility",
+      "nouns": ["Archivist", "Ledger", "Scholar"],
+      "magnitude": [10, 15, 22, 30, 40],
+      "epithet": "Records",
+      "does": "files away a mote from every new merge",
+      "effect": "{m}% chance a new merge also gives a mote of its lead essence",
+      "cap": 80
+    },
+    {
+      "code": "lure",
+      "category": "utility",
+      "nouns": ["Beacon", "Siren", "Lure"],
+      "magnitude": [10, 15, 20, 25, 30],
+      "epithet": "the Call",
+      "does": "calls wild daemons out of the static",
+      "effect": "{m}% more wild encounters",
+      "cap": 60
+    },
+    {
+      "code": "shroud",
+      "category": "utility",
+      "nouns": ["Shroud", "Hush", "Shade"],
+      "magnitude": [10, 15, 20, 25, 30],
+      "epithet": "Silence",
+      "does": "keeps the party hidden in the static",
+      "effect": "{m}% fewer wild encounters",
+      "cap": 60
+    },
+    {
+      "code": "logic",
+      "category": "passive",
+      "nouns": ["Fury", "Might", "Edge"],
+      "magnitude": [4, 6, 8, 11, 15],
+      "epithet": "Force",
+      "does": "hits harder than its form suggests",
+      "effect": "+{m}% Logic in battle",
+      "stat": "atk"
+    },
+    {
+      "code": "firewall",
+      "category": "passive",
+      "nouns": ["Bulwark", "Aegis", "Rampart"],
+      "magnitude": [4, 6, 8, 11, 15],
+      "epithet": "the Wall",
+      "does": "shrugs off hits other forms would feel",
+      "effect": "+{m}% Firewall in battle",
+      "stat": "def"
+    },
+    {
+      "code": "clock",
+      "category": "passive",
+      "nouns": ["Sprint", "Quickstep", "Dash"],
+      "magnitude": [4, 6, 8, 11, 15],
+      "epithet": "Haste",
+      "does": "runs a few cycles faster than its kin",
+      "effect": "+{m}% Clock in battle",
+      "stat": "spd"
+    },
+    {
+      "code": "vitality",
+      "category": "passive",
+      "nouns": ["Vigor", "Heart", "Lifeline"],
+      "magnitude": [4, 6, 8, 11, 15],
+      "epithet": "Vigor",
+      "does": "carries more HP than its kin",
+      "effect": "+{m}% HP in battle",
+      "stat": "hp"
+    },
+    {
+      "code": "capacity",
+      "category": "passive",
+      "nouns": ["Reservoir", "Battery", "Wellspring"],
+      "magnitude": [4, 6, 8, 11, 15],
+      "epithet": "Reserves",
+      "does": "holds more Flux than its kin",
+      "effect": "+{m}% Flux in battle",
+      "stat": "flux"
+    },
+    {
+      "code": "coherence",
+      "category": "passive",
+      "nouns": ["Focus", "Clarity", "Resolve"],
+      "magnitude": [4, 6, 8, 11, 15],
+      "epithet": "Focus",
+      "does": "keeps unstable merges together",
+      "effect": "+{m}% Coherence in battle",
+      "stat": "coh"
+    },
+    {
+      "code": "pulse",
+      "category": "active",
+      "nouns": ["Pulse", "Rally", "Heartbeat"],
+      "magnitude": [20, 30, 40, 55, 75],
+      "epithet": "the Pulse",
+      "does": "can pulse restoring light over the party",
+      "effect": "Heal the party {m}% HP (every {cd} steps)",
+      "cooldown": 150
+    },
+    {
+      "code": "warp",
+      "category": "active",
+      "nouns": ["Homing", "Recall", "Waypoint"],
+      "magnitude": [400, 320, 250, 180, 120],
+      "epithet": "Return",
+      "does": "can pull the party back to the last terminal",
+      "effect": "Return to the last terminal (every {m} steps)"
+    },
+    {
+      "code": "repel",
+      "category": "active",
+      "nouns": ["Deterrent", "Ward", "Hiss"],
+      "magnitude": [30, 45, 60, 80, 110],
+      "epithet": "Warding",
+      "does": "can drive wild daemons away for a while",
+      "effect": "No wild encounters for {m} steps (every {cd} steps)",
+      "cooldown": 200
+    },
+    {
+      "code": "hasten",
+      "category": "active",
+      "nouns": ["Quickening", "Spur", "Catalyst"],
+      "magnitude": [10, 15, 22, 30, 45],
+      "epithet": "Quickening",
+      "does": "can hurry kernels along",
+      "effect": "Compiling kernels advance {m} steps (every {cd} steps)",
+      "cooldown": 180
+    },
+    {
+      "code": "transmute",
+      "category": "active",
+      "nouns": ["Alchemy", "Crucible", "Refinery"],
+      "magnitude": [5, 4, 4, 3, 2],
+      "epithet": "Change",
+      "does": "can refine motes into its own essence",
+      "effect": "Turn {m} motes of your most plentiful essence into 1 of its lead essence (every {cd} steps)",
+      "cooldown": 60
+    }
+  ],
+  "axisLean": {
+    "pow": { "logic": 1, "hasten": 0.3 },
+    "grd": { "firewall": 1, "shroud": 0.5, "vitality": 0.3 },
+    "mnd": { "mender": 1, "pulse": 0.7, "vitality": 0.5 },
+    "spd": { "clock": 1, "warp": 0.5, "lure": 0.3 },
+    "prc": { "coherence": 0.8, "binder": 0.6, "archive": 0.5 },
+    "hex": { "binder": 0.8, "repel": 0.6, "shroud": 0.4 },
+    "drn": { "forage": 0.8, "transmute": 0.6, "capacity": 0.3 },
+    "spr": { "lure": 0.6, "forage": 0.5, "capacity": 0.5 },
+    "per": { "nurture": 0.8, "tutor": 0.6, "vitality": 0.4 },
+    "cha": { "fortune": 0.8, "transmute": 0.5, "warp": 0.4 }
+  },
+  "lineage": {
+    "nouns": ["Line", "Strain", "House", "Dynasty", "Legacy"],
+    "statWords": {
+      "hp": "endurance",
+      "atk": "raw Logic",
+      "def": "firewalls",
+      "spd": "speed",
+      "flux": "deep Flux",
+      "coh": "coherence"
+    }
+  }
+}

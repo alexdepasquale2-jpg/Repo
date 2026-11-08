@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Essence Protocol Editor</title>
+<link rel="icon" href="../icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="editor.css">
+</head>
+<body>
+<div id="app">
+  <aside id="nav" aria-label="Sections">
+    <div class="brand"><span class="glyph" aria-hidden="true"></span><span><b>Essence Protocol</b><small>Content editor</small></span></div>
+    <nav id="navList"></nav>
+    <div class="navfoot" id="navFoot"></div>
+  </aside>
+  <div id="scrim" hidden></div>
+  <div id="main">
+    <header id="top">
+      <button class="iconbtn" id="menuBtn" aria-label="Show sections">☰</button>
+      <div class="search"><input id="q" type="search" placeholder="Search spells, daemons, items, content…" autocomplete="off" spellcheck="false" aria-label="Search everything"><div id="qResults" class="pop" hidden></div></div>
+      <div class="status" id="status"></div>
+      <button class="btn" id="undoBtn" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↶</button>
+      <button class="btn" id="redoBtn" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled>↷</button>
+      <button class="btn" id="playBtn" title="Play this draft in the game" hidden>▶ Play</button>
+      <button class="btn pri" id="changesBtn">Changes <b id="changesCount">0</b></button>
+    </header>
+    <main id="view" tabindex="-1"><div class="boot"><div class="bootbar"><i id="bootBar"></i></div><p id="bootText">Loading the content…</p></div></main>
+  </div>
+</div>
+<div id="toasts" aria-live="polite"></div>
+<div id="modal" hidden><div class="card" id="modalCard" role="dialog" aria-modal="true"></div></div>
+<script>window.EDITOR_ROOT = '../';</script>
+<script src="../js/data.js"></script>
+<script src="../js/schema.js"></script>
+<script src="../js/essences.js"></script>
+<script src="../js/designs.js"></script>
+<script src="../js/baker.js"></script>
+<script src="../js/engine.js"></script>
+<script src="../js/content.js"></script>
+<script src="../js/sprites.js"></script>
+<script src="../js/world-render.js"></script>
+<script src="app.js"></script>
+<script src="views.js"></script>
+<script src="views-content.js"></script>
+</body>
+</html>

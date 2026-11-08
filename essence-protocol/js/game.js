@@ -1,0 +1,2567 @@
+/* Essence Protocol: game shell (overworld, battle UI, composer, menus, forge,
+   splicing, requests, rift). Rules live in engine.js, every merge's outcome
+   and designs in the pre-baked merge database (db.js), and per-daemon and
+   per-splice designs in designs.js; this file presents them. */
+(function () {
+  'use strict';
+  const E = window.ESSENCE, ENG = window.ENGINE, SP = window.SPRITES, DB = window.MERGE_DB, DZ = window.DESIGNS, SC = window.CONTENT_SCHEMA, WR = window.WORLD_RENDER;
+  // The world being played: the game's own (data/world.json) or one a player made (see worlds.js).
+  let C = window.CONTENT;
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const rnd = n => Math.floor(Math.random() * n);
+  // The content editor's draft (js/draft.js) plays on a save of its own.
+  const SAVE_KEY = self.EP_DRAFT ? 'ep-save:draft' : 'essence-protocol-save-v1';
+  const RARITY = ['Base', 'Compound', 'Resonant', 'Trinity', 'Anomaly'];
+  const TIER = ['Seed', 'Build', 'Release', 'Prime'];
+  const ALL_KEYS = E.enumerateAll(); // the database holds exactly these, in this order
+  const BY_TIER = [0, 1, 2, 3].map(t => ALL_KEYS.filter(k => E.parseKey(k).subs.length === t));
+  const PAIR_TOTAL = {};
+  for (const k of ALL_KEYS) PAIR_TOTAL[k.slice(0, 2)] = (PAIR_TOTAL[k.slice(0, 2)] || 0) + 1;
+  const pairTotal = pk => PAIR_TOTAL[pk] || 0;
+
+  // ------------------------------------------------------------------ state
+  let S = null;
+  let discovered = new Set(), seen = new Set(), boundForms = new Set();
+  let B = null, bctx = null, ui = null, riftRun = null;
+  let mode = 'title'; // title | starter | world | busy | sheet | battle
+  let sheetTab = 'party', detailUid = null, codexView = 'merges', codexFilter = 'all', codexSearch = '';
+  let pendingXp = [];
+  let skipping = false;
+  let muted = false;
+  let M = null;       // the map you're on (C.MAPS[id])
+  let things = [];    // its things as they are now: trainers walk up to you, conditions hide things
+  // Where this playthrough saves: the game's own world keeps the save it always had.
+  let saveSlot = SAVE_KEY;
+
+  function defaults(s) {
+    s.settings = Object.assign({ speed: 'normal', tips: 'compact', auto: false, haptics: true }, s.settings || {});
+    delete s.settings.bridge; // FriedrichBridge (live AI designs) is retired
+    s.tips = s.tips || [];
+    s.quests = s.quests || [];
+    s.stats = Object.assign({ reacts: 0, wild: 0, forged: 0, binds: 0, spliced: 0 }, s.stats || {});
+    s.rift = Object.assign({ best: 0 }, s.rift || {});
+    s.prisms = s.prisms || [];
+    s.milestone = s.milestone || 0;
+    s.rematches = s.rematches || {};
+    s.sinceFight = s.sinceFight || 0;
+    s.kernels = s.kernels || [];     // spliced kernels still compiling
+    s.specials = s.specials || [];   // designs already celebrated with a discovery toast
+    s.repelUntil = s.repelUntil || 0;
+    s.flags = s.flags || [];         // set by things in the world (chests opened, gifts, story flags)
+    const st = C.START;
+    s.pos = s.pos || { x: st.x, y: st.y, dir: st.facing };
+    if (!s.pos.map || !C.MAPS[s.pos.map]) s.pos.map = st.map;
+    s.lastHeal = s.lastHeal || { x: st.x, y: st.y };
+    if (!s.lastHeal.map || !C.MAPS[s.lastHeal.map]) s.lastHeal.map = s.pos.map;
+    for (const list of [s.party || [], s.box || []]) for (const d of list) if (!d.seed) d.seed = newSeed();
+    return s;
+  }
+  // Every daemon the player owns has a seed: its traits are designed per individual.
+  const newSeed = () => (Math.floor(Math.random() * 4294967296) >>> 0).toString(16).padStart(8, '0');
+
+  function newState(starter) {
+    const d = ENG.createDaemon(starter.key, 5, { attune: starter.attune, extraAttune: 0 });
+    d.seed = newSeed();
+    const p = E.parseKey(starter.key);
+    d.memory = [p.a + p.b, p.b + p.a, p.a + p.a, p.b + p.b];
+    return defaults({
+      v: 1, party: [d], box: [], bag: { 'lattice:basic': basicLattice(5) },
+      motes: {}, discovered: [], seen: [starter.key], bound: [starter.key], badges: 0, keys: [], beaten: [],
+      pos: { map: C.START.map, x: C.START.x, y: C.START.y, dir: C.START.facing }, lastHeal: { map: C.START.map, x: C.START.x, y: C.START.y }, steps: 0, won: false, started: Date.now(),
+    });
+  }
+  function basicLattice(n) { return { id: 'lattice:basic', kind: 'lattice', name: 'Basic Lattice', power: 1, count: n }; }
+
+  function save() {
+    if (!S) return;
+    S.discovered = [...discovered]; S.seen = [...seen]; S.bound = [...boundForms];
+    if (M) S.pos = { map: M.id, x: player.x, y: player.y, dir: player.dir };
+    try { localStorage.setItem(saveSlot, JSON.stringify(S)); } catch (e) { /* storage unavailable */ }
+  }
+  function loadSave(slot) {
+    try { const raw = localStorage.getItem(slot || saveSlot); if (!raw) return null; const s = JSON.parse(raw); return s && s.v === 1 ? s : null; } catch (e) { return null; }
+  }
+  function adopt(s) {
+    S = defaults(s);
+    discovered = new Set(s.discovered); seen = new Set(s.seen); boundForms = new Set(s.bound);
+    for (const list of [S.party, S.box]) for (const d of list) d.memory = d.memory.map(k => (k && DB.has(k) ? k : null));
+    migrate();
+    enterMap(S.pos.map, S.pos.x, S.pos.y, S.pos.dir || 'down');
+    ensureQuests();
+  }
+
+  // ------------------------------------------------------------------ helpers
+  const MAINC = m => E.MAIN[m].color;
+  const subColor = s => SP.ACCENT[s];
+  function essChip(code, extra) {
+    if (E.MAIN[code]) return `<span class="ess" data-tip="e:${code}" style="color:${MAINC(code)}"><i></i>${E.MAIN[code].name}${extra ? ` <small>${extra}</small>` : ''}</span>`;
+    return `<span class="ess sub" data-tip="e:${code}" style="color:${subColor(code)}"><i></i>${E.SUB[code].name}${extra ? ` <small>${extra}</small>` : ''}</span>`;
+  }
+  function genomeHTML(key) {
+    const p = E.parseKey(key);
+    let h = `<span class="genome">${essChip(p.a, p.a === p.b ? 'pure' : 'lead')}${p.a !== p.b ? `<span class="arrow">+</span>${essChip(p.b, 'follow')}` : ''}`;
+    for (const t of p.subs) h += essChip(t.s, '→ ' + E.MAIN[E.hostMain(p, t.h)].name);
+    return h + '</span>';
+  }
+  // Compact genome: a dot per main, a diamond per sub.
+  function genomeDots(key) {
+    const p = E.parseKey(key);
+    let h = `<span class="gdots"><i class="gm" data-tip="e:${p.a}" style="background:${MAINC(p.a)}"></i>${p.a !== p.b ? `<i class="gm" data-tip="e:${p.b}" style="background:${MAINC(p.b)}"></i>` : ''}`;
+    for (const t of p.subs) h += `<i class="gs" data-tip="e:${t.s}" style="background:${subColor(t.s)}"></i>`;
+    return h + '</span>';
+  }
+  const dName = d => d.nick || ENG.rec(d.key).dName;
+  // Toasts: at most three on screen (the oldest goes, it is never just hidden), a repeated message
+  // replaces its earlier copy instead of stacking, a tap dismisses one, and each is removed when
+  // its fade ends, with an expiry sweep as the backstop, so none can outlive its time.
+  const TOAST_MAX = 3;
+  const dropToast = t => { if (t && t.parentNode) t.remove(); };
+  function showToast(t, ms) {
+    const box = $('toasts');
+    t.dataset.until = Date.now() + ms;
+    t.style.animationDuration = ms + 'ms';
+    t.addEventListener('animationend', e => { if (e.animationName === 'toast') dropToast(t); });
+    t.addEventListener('click', () => dropToast(t));
+    box.appendChild(t);
+    while (box.children.length > TOAST_MAX) dropToast([...box.children].find(x => !x.classList.contains('discovery')) || box.firstElementChild);
+  }
+  function toast(html, cls, ms) {
+    for (const old of [...$('toasts').children]) if (old.dataset.msg === html) dropToast(old);
+    const t = document.createElement('div'); t.className = 'toast ' + (cls || ''); t.innerHTML = html; t.dataset.msg = html;
+    showToast(t, ms || 3200);
+  }
+  // entering a battle clears passing messages; rare finds and completed requests stay up
+  const clearToasts = () => { for (const t of [...$('toasts').children]) if (!t.classList.contains('discovery') && !t.classList.contains('quest')) dropToast(t); };
+  setInterval(() => { const now = Date.now(); for (const t of [...$('toasts').children]) if (now > +t.dataset.until + 300) dropToast(t); }, 500);
+  function tip(id, text) {
+    if (!S || S.tips.includes(id)) return;
+    S.tips.push(id);
+    toast(`<b>Tip</b> ${esc(text)}`, 'tip', 6500);
+  }
+  const mergeLabel = key => (discovered.has(key) ? ENG.rec(key).name : 'Unknown merge');
+  const statTotal = key => ENG.rec(key).dStats.reduce((a, b) => a + b, 0);
+  function lore(key) {
+    const p = E.parseKey(key), r = ENG.rec(key), n = p.subs.length;
+    const A = E.MAIN[p.a].name, Bn = E.MAIN[p.b].name;
+    const an = w => (/^[AEIOU]/.test(w) ? 'An ' : 'A ') + w;
+    let s = `${TIER[n]}-tier daemon. ${p.a === p.b ? `A pure ${A} kernel.` : `${an(A)} kernel braided with ${Bn}.`}`;
+    if (n) s += ` It has grown ${p.subs.map(t => `${E.SUB[t.s].name} on its ${E.MAIN[E.hostMain(p, t.h)].name} ${p.a === p.b ? 'core' : t.h === 1 ? 'lead' : 'follow'}`).join(', ')}.`;
+    const role = { Strike: 'breaking through', Barrage: 'overwhelming numbers', Siphon: 'outlasting its prey', Hex: 'crippling its foes', Ward: 'holding the line', Mend: 'self-repair', Field: 'reshaping the arena' }[r.cls];
+    if (r.dDesc) s = r.dDesc + ' ' + s;
+    return s + ` Its signature merge, ${discovered.has(key) ? r.name : 'still undiscovered'}, is built for ${role}.`;
+  }
+  function resonancesFound() {
+    const out = new Set();
+    for (const k of discovered) for (const t of ENG.rec(k).tags) out.add(t);
+    return out;
+  }
+  const countPair = pk => { let n = 0; for (const k of discovered) if (k[0] === pk[0] && k[1] === pk[1]) n++; return n; };
+
+  // ------------------------------------------------------------------ designs
+  // Techniques, forms and forged items are pre-baked per merge in the database. Traits (per
+  // daemon) and lineages (per splice) are designed by designs.js from the records they're made of.
+  const ownedDaemons = () => (S ? S.party.concat(S.box) : []);
+  const traitInfo = d => ({ gen: d.gen || 0, prism: !!d.prism, parentTier: d.parentTier || 0, ancestry: d.ancestry || [] });
+  const traitKeyOf = d => DZ.traitKey(d.key, d.seed);
+  // Gives a daemon the trait its genome and seed design. Returns the previous trait if it changed.
+  function designTrait(d) {
+    if (!d.seed) d.seed = newSeed();
+    if (d.trait && d.trait.key === traitKeyOf(d)) return null;
+    const prev = d.trait || null;
+    d.trait = DZ.trait(d.key, d.seed, traitInfo(d), ENG.rec);
+    const mx = ENG.calcStats(d).hp; if (d.hp > mx) d.hp = mx;
+    return prev || false;
+  }
+  // Recompiling evolves the trait: the new genome is designed with the old trait as its ancestor.
+  function evolveTrait(d) {
+    if (d.trait) d.ancestry = [{ name: d.trait.name, codes: d.trait.fx.map(f => f.code) }].concat(d.ancestry || []).slice(0, 3);
+    const prev = designTrait(d);
+    if (prev !== null) celebrateTrait(d, prev || null, true);
+  }
+  // Saves from the FriedrichBridge era: traits and lineages that were still waiting for the bridge
+  // are designed now, forged items take their pre-baked design, and the bridge's browser data goes.
+  function migrate() {
+    for (const d of ownedDaemons()) {
+      delete d.revealTrait;
+      designTrait(d);
+      if (d.line && d.line.pair && !d.line.name && d.line.pair.split('~').every(k => DB.has(k))) {
+        const l = DZ.lineage(d.line.pair, ENG.rec);
+        Object.assign(d.line, { name: l.name, desc: l.desc, tier: l.tier, odds: l.odds });
+        d.pedigree = d.pedigree || l.pedigree;
+      }
+    }
+    for (const it of Object.values(S.bag)) {
+      const k = it.id.slice(it.id.indexOf(':') + 1);
+      if (!DB.has(k)) continue;
+      const fresh = forgeItem(k);
+      if (fresh.kind === it.kind) Object.assign(it, fresh, { count: it.count });
+    }
+    for (const k of ['ep-bridge-cache-v1', 'ep-bridge-outbox-v1', 'ep-bridge-conf']) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+  }
+
+  // Party-wide trait utilities (daemons in storage don't count), capped per trait.
+  const TRAIT_CAP = {};
+  for (const t of E.data.traits.traits) if (t.cap != null) TRAIT_CAP[t.code] = t.cap;
+  function partyTrait(code) {
+    if (!S) return 0;
+    let v = 0;
+    for (const d of S.party) if (d.trait) for (const f of d.trait.fx) if (f.code === code) v += f.mag;
+    return Math.min(TRAIT_CAP[code] || 100, v);
+  }
+  const traitStrength = t => t.fx.reduce((s, f) => s + (f.code === 'warp' ? 120 / f.mag : f.code === 'transmute' ? 2 / f.mag : f.mag / DZ.TRAITS[f.code][2][4]), 0);
+  const traitChip = t => `<span class="rar r${t.tier}" data-tip="t:${esc(t.key)}">${TIER_WORD[t.tier]}${t.odds > 1 ? ' · 1 in ' + t.odds : ''}</span>`;
+
+  // ---- discovery toasts for designs that are statistically unique or special
+  const TIER_WORD = ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'];
+  const discQ = [];
+  let discBusy = false;
+  function discoveryToast(o) { discQ.push(o); if (!discBusy) nextDiscovery(); }
+  function nextDiscovery() {
+    const o = discQ.shift();
+    if (!o) { discBusy = false; return; }
+    discBusy = true;
+    const t = document.createElement('div');
+    t.className = `toast discovery r${o.tier}`;
+    t.innerHTML = `<div class="dt-k"><span>${esc(o.kicker)}</span><b>${o.odds > 1 ? '1 in ' + o.odds.toLocaleString() : ''}</b></div><div class="dt-n">${esc(o.name)}</div>${o.lines.filter(Boolean).map(l => `<div class="dt-s">${l}</div>`).join('')}`;
+    showToast(t, 6600);
+    [523, 659, 784, 1047, 1319].slice(0, 2 + o.tier).forEach((f, i) => setTimeout(() => beep(f, 0.12, 'triangle', 0.05), i * 90));
+    setTimeout(nextDiscovery, 1500);
+  }
+  // share of `vals` strictly below v
+  const percentile = (v, vals) => (vals.length ? vals.filter(x => x < v).length / vals.length : 0);
+  const topPct = p => Math.max(1, Math.round((1 - p) * 100));
+  const techScore = r => ((r.damaging ? r.power * r.hits * Math.min(r.acc, 100) / 100 : 0) + r.fx.reduce((s, f) => s + (['heal', 'shield', 'drain'].includes(f.code) ? f.mag : f.chance * 0.3), 0)) / Math.max(3, r.flux);
+  function celebrate(id, o) { if (!S || S.specials.includes(id)) return false; S.specials.push(id); if (o.reveal && canReveal()) RV.play(o.reveal); else discoveryToast(o); return true; }
+  const markCelebrated = id => { if (S && !S.specials.includes(id)) S.specials.push(id); return true; };
+  // How rare a merge's structure is across the whole database: the share of merges at least this rare.
+  function rarityRoll(r) {
+    const n = DB.rarity.slice(r.rarity).reduce((a, b) => a + b, 0), pct = Math.max(0.01, Math.round(n / DB.count * 10000) / 100);
+    return { pct, odds: Math.max(1, Math.round(100 / pct)) };
+  }
+  // A technique is special when it is a Trinity or an Anomaly, or when it tops the techniques you know.
+  function celebrateTech(key) {
+    const r = ENG.rec(key);
+    if (!S || !discovered.has(key)) return false;
+    if (revealed.has('tech:' + key)) return markCelebrated('tech:' + key);
+    const pool = [...discovered].filter(k => k !== key).map(k => ENG.rec(k));
+    const p = percentile(techScore(r), pool.map(techScore)), outlier = pool.length >= 12 && p >= 0.95;
+    if (r.rarity < 3 && !outlier) return false;
+    const roll = rarityRoll(r), kicker = r.rarity >= 3 ? `${RARITY[r.rarity]} technique` : 'Statistically unique technique';
+    const note = outlier ? `Top ${topPct(p)}% of the ${pool.length + 1} techniques you know, by value per Flux` : `${roll.pct}% of the lattice is this rare`;
+    return celebrate('tech:' + key, { kicker, name: r.name, tier: Math.max(r.rarity, 2), odds: roll.odds,
+      lines: [`${r.cls}${r.damaging ? ` · power ${r.power}${r.hits > 1 ? '×' + r.hits : ''}` : ''} · Flux ${r.flux} · ${r.fx.map(f => esc(ENG.describeFx(f))).join(', ')}`, note],
+      reveal: { kicker, parts: genomeParts(key), design: Object.assign(techDesign(key), { note }) } });
+  }
+  function celebrateTrait(d, prev, live) {
+    const t = d.trait, others = ownedDaemons().filter(x => x !== d && x.trait);
+    const newCodes = t.fx.filter(f => !others.some(x => x.trait.fx.some(g => g.code === f.code)));
+    const p = percentile(traitStrength(t), others.map(x => traitStrength(x.trait))), outlier = others.length >= 5 && p >= 0.9;
+    const lines = [t.fx.map(f => esc(DZ.describeTrait(f))).join(' · '), prev ? `Evolved from ${esc(prev.name)}` : '',
+      outlier ? `Strongest trait of your ${others.length + 1} daemons (top ${topPct(p)}%)` : newCodes.length ? `New trait type: ${newCodes.map(f => f.code).join(', ')}` : `Rolled ${t.pct}% on the rarity modulator`];
+    const special = t.tier >= 2 || outlier || newCodes.length;
+    if (live && canReveal()) {
+      if (special) markCelebrated('trait:' + t.key);
+      return RV.play({ kicker: `${prev ? 'Evolved trait' : 'Trait'} · ${dName(d)}`, parts: genomeParts(d.key), sprite: d.key, prism: d.prism, design: Object.assign(traitDesign(t), { note: lines.slice(1).filter(Boolean).join(' · ') }) });
+    }
+    if (special) celebrate('trait:' + t.key, { kicker: `${TIER_WORD[t.tier]} trait · ${dName(d)}`, name: t.name, tier: Math.max(t.tier, outlier ? 3 : 1), odds: t.odds, lines });
+    else toast(`✦ ${esc(dName(d))}'s trait: <b>${esc(t.name)}</b> · ${esc(DZ.describeTrait(t.fx[0]))}`, 'rare');
+  }
+  function celebrateItem(key) {
+    const it = ENG.rec(key).item;
+    if (revealed.has('item:' + key)) return it.tier >= 3 ? markCelebrated('item:' + key) : true;
+    if (it.tier < 3) return false;
+    return celebrate('item:' + key, { kicker: `${TIER_WORD[it.tier]} ${KIND_NAME[it.kind]}`, name: it.name, tier: it.tier, odds: it.odds, lines: [esc(it.lore), `Quality from rolling ${it.pct}% on the rarity modulator`] });
+  }
+
+  // ---- merge reveals (js/reveal.js): converge, fuse, rarity roll, powers. Never during battle.
+  const RV = window.REVEAL;
+  const revealed = new Set(); // designs a reveal is showing, so they don't also toast
+  window.REVEAL_SOUND = (what, n) => { if (what === 'tier') [523, 659, 784, 1047, 1319].slice(0, 2 + n).forEach((f, i) => setTimeout(() => beep(f, 0.12, 'triangle', 0.05), i * 90)); else beep(660 + n * 70, 0.05, 'sine', 0.03); };
+  const canReveal = () => !!RV && !!S && mode !== 'battle' && mode !== 'title' && mode !== 'starter';
+  const essPart = (code, role) => ({ color: E.MAIN[code] ? E.MAIN[code].color : SP.ACCENT[code], label: (E.MAIN[code] || E.SUB[code]).name, role });
+  function genomeParts(key) {
+    const p = E.parseKey(key);
+    return [essPart(p.a, p.a === p.b ? 'pure' : 'lead')].concat(p.a !== p.b ? [essPart(p.b, 'follow')] : [], p.subs.map(t => essPart(t.s, 'on ' + E.MAIN[E.hostMain(p, t.h)].name)));
+  }
+  const fxChip = f => ({ t: ENG.describeFx(f), c: E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf' });
+  function techDesign(key) {
+    const r = ENG.rec(key);
+    const roll = rarityRoll(r);
+    return { name: r.name, desc: r.text, tier: r.rarity, tierName: RARITY[r.rarity], pct: roll.pct, odds: roll.odds,
+      chips: [{ t: r.cls, c: ENG.isAttack(key) ? 'atk' : 'act' }].concat(r.fx.map(fxChip)),
+      bars: (r.damaging ? [{ label: 'Power', v: r.power * r.hits, max: 160, text: r.power + (r.hits > 1 ? '×' + r.hits : '') }] : []).concat([{ label: 'Flux cost', v: r.flux, max: 30 }, { label: 'Instability', v: r.instab, max: 60, text: r.instab + '%' }]) };
+  }
+  const traitDesign = t => ({ name: t.name, desc: t.desc, tier: t.tier, pct: t.pct, odds: t.odds,
+    chips: t.fx.map(f => ({ t: DZ.describeTrait(f), c: f.cat === 'passive' ? 'pas' : f.cat === 'active' ? 'act' : 'utl' })),
+    bars: t.fx.filter(f => !['warp', 'transmute'].includes(f.code)).map(f => ({ label: f.code, v: f.mag, max: DZ.TRAITS[f.code][2][4], text: f.mag })) });
+
+  function markDiscovered(key, silent) {
+    if (discovered.has(key)) return;
+    discovered.add(key);
+    const r = ENG.rec(key);
+    if (!silent) toast(`◈ New merge: <b>${esc(r.name)}</b> <span class="rar r${r.rarity}">${RARITY[r.rarity]}</span>`, r.rarity >= 3 ? 'myth' : r.rarity === 2 ? 'rare' : '');
+    if (S) {
+      const arch = partyTrait('archive');
+      if (arch && Math.random() * 100 < arch) { S.motes[r.a] = (S.motes[r.a] || 0) + 1; toast(`Archive trait: +1 ${E.MAIN[r.a].name} mote`); }
+      celebrateTech(key);
+      questEvent('discover'); questEvent('pair', { key }); questEvent('resonant', { rarity: r.rarity });
+      const m = Math.floor(discovered.size / 50);
+      if (m > S.milestone) {
+        S.milestone = m;
+        const rw = { lattices: 2, motes: {} };
+        for (let i = 0; i < 3; i++) { const s = E.SUB_ORDER[rnd(E.SUB_ORDER.length)]; rw.motes[s] = (rw.motes[s] || 0) + 1; }
+        grant(rw);
+        toast(`★ Codex milestone: ${m * 50} merges! Reward: ${rewardText(rw)}`, 'quest', 5500);
+      }
+    }
+    updateHud();
+  }
+
+  // Adds one sub to a key (for rematches and rogue spawns). Random or first legal.
+  function upgradeKey(key, random) {
+    const p = E.parseKey(key);
+    if (p.subs.length >= 3) return key;
+    const opts = E.slotsFor(p.a, p.b).filter(t => !p.subs.some(u => u.s === t.s && u.h === t.h)).map(t => E.makeKey(p.a, p.b, p.subs.concat([t]))).filter(k => DB.has(k));
+    if (!opts.length) return key;
+    return random ? opts[rnd(opts.length)] : opts[0];
+  }
+  const partyAvg = () => Math.round(S.party.reduce((s, d) => s + d.level, 0) / S.party.length);
+
+  // ------------------------------------------------------------------ requests
+  const QUEST_TYPES = ['discover', 'pair', 'bind', 'react', 'defeat', 'resonant', 'forge'];
+  function unlockedMains() { return C.RULES.mains === 'keys' ? ['A', 'F', 'W', 'E'].slice(0, Math.min(4, S.badges + 1)) : ['A', 'F', 'W', 'E']; }
+  function makeReward() {
+    const roll = rnd(4);
+    if (roll === 0) return { lattices: 3 };
+    if (roll === 1) { const a = E.SUB_ORDER[rnd(E.SUB_ORDER.length)], b = E.SUB_ORDER[rnd(E.SUB_ORDER.length)]; const m = {}; m[a] = 2; m[b] = (m[b] || 0) + 2; return { motes: m }; }
+    if (roll === 2) { const m = {}; m[E.MAINS[rnd(E.MAINS.length)]] = 6; return { motes: m }; }
+    return { cells: 1, lattices: 1 };
+  }
+  function makeQuest(type) {
+    const q = { id: 'q' + Date.now().toString(36) + rnd(1e6).toString(36), type, progress: 0, target: 1 };
+    if (type === 'discover') { q.target = 4 + rnd(5); q.text = `Discover ${q.target} new merges`; }
+    else if (type === 'pair') {
+      const ms = [...new Set(S.party.flatMap(d => ENG.mainsOf(d.key)))];
+      const a = ms[rnd(ms.length)], b = ms[rnd(ms.length)];
+      q.param = a + b; q.target = 2; q.text = `Discover 2 new ${E.MAIN[a].name} › ${E.MAIN[b].name} merges`;
+    } else if (type === 'bind') { const els = unlockedMains(); q.param = els[rnd(els.length)]; q.text = `Bind a ${E.MAIN[q.param].name}-led daemon`; }
+    else if (type === 'react') { q.target = 3; q.text = 'Trigger 3 residue reactions in battle'; }
+    else if (type === 'defeat') { q.target = 5 + rnd(4); q.text = `Defeat ${q.target} wild daemons`; }
+    else if (type === 'resonant') { q.text = 'Discover a Resonant, Trinity or Anomaly merge'; }
+    else if (type === 'forge') { q.target = 2; q.text = 'Forge 2 items at the Nexus Forge'; }
+    q.reward = makeReward();
+    return q;
+  }
+  function rewardText(r) {
+    const bits = [];
+    if (r.lattices) bits.push(`${r.lattices} Lattice${r.lattices > 1 ? 's' : ''}`);
+    if (r.cells) bits.push(`${r.cells} Flux Cell`);
+    if (r.motes) for (const [k, n] of Object.entries(r.motes)) bits.push(`${n} ${E.MAIN[k] ? E.MAIN[k].name : E.SUB[k].name} motes`);
+    return bits.join(', ');
+  }
+  function grant(r) {
+    if (r.lattices) { const l = S.bag['lattice:basic'] || (S.bag['lattice:basic'] = basicLattice(0)); l.count += r.lattices; }
+    if (r.cells) { const c = S.bag['cell:basic'] || (S.bag['cell:basic'] = { id: 'cell:basic', kind: 'cell', name: 'Flux Cell', count: 0 }); c.count += r.cells; }
+    if (r.motes) for (const [k, n] of Object.entries(r.motes)) S.motes[k] = (S.motes[k] || 0) + n;
+  }
+  function ensureQuests() {
+    while (S.quests.length < 3) {
+      const used = new Set(S.quests.map(q => q.type));
+      const pool = QUEST_TYPES.filter(t => !used.has(t));
+      S.quests.push(makeQuest(pool[rnd(pool.length)]));
+    }
+  }
+  function questEvent(type, data) {
+    if (!S) return;
+    let changed = false;
+    for (const q of S.quests) {
+      if (q.type !== type) continue;
+      let inc = 1;
+      if (type === 'pair') inc = data.key[0] === q.param[0] && data.key[1] === q.param[1] ? 1 : 0;
+      else if (type === 'bind') inc = data.key[0] === q.param ? 1 : 0;
+      else if (type === 'resonant') inc = data.rarity >= 2 ? 1 : 0;
+      if (!inc) continue;
+      q.progress = Math.min(q.target, q.progress + inc);
+      if (q.progress >= q.target) {
+        q.done = true; changed = true;
+        grant(q.reward);
+        beep(784, 0.1, 'triangle'); setTimeout(() => beep(1175, 0.18, 'triangle'), 110);
+        toast(`✔ Request complete: <b>${esc(q.text)}</b><br>Reward: ${esc(rewardText(q.reward))}`, 'quest', 5500);
+      }
+    }
+    if (changed) { S.quests = S.quests.filter(q => !q.done); ensureQuests(); }
+  }
+
+  // ------------------------------------------------------------------ audio
+  let actx = null;
+  function beep(freq, dur, type, vol) {
+    if (muted) return;
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = type || 'square'; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol || 0.04, actx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
+      o.connect(g); g.connect(actx.destination); o.start(); o.stop(actx.currentTime + dur);
+    } catch (e) { /* no audio */ }
+  }
+  // Short vibrations on phones that support them (Android); a setting turns them off.
+  // (Browsers block vibration inside a frame from another site, such as a hosted preview.)
+  const canBuzz = (() => { try { return !!navigator.vibrate && window.self === window.top; } catch (e) { return false; } })();
+  function buzz(ms) { if (!canBuzz || (S && S.settings.haptics === false)) return; try { navigator.vibrate(ms); } catch (e) { /* ignore */ } }
+  // Phones only let audio start from a gesture, and a touch counts once the finger lifts: unlock on
+  // the first release (or key) that gets the audio context running.
+  function unlockAudio() {
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { /* no audio */ }
+    if (actx && actx.state === 'running') { removeEventListener('pointerup', unlockAudio); removeEventListener('keydown', unlockAudio); }
+  }
+  addEventListener('pointerup', unlockAudio); addEventListener('keydown', unlockAudio);
+  // Holding a touch never opens the browser's long-press menu (on Android a canvas counts as an
+  // image for it) or starts a text selection; text fields keep both.
+  const inField = e => !!(e.target && e.target.closest && e.target.closest('input, textarea'));
+  document.addEventListener('contextmenu', e => { if (!inField(e)) e.preventDefault(); });
+  document.addEventListener('selectstart', e => { if (!inField(e)) e.preventDefault(); });
+  document.addEventListener('dragstart', e => { if (!inField(e)) e.preventDefault(); });
+  // Phones background and kill apps without warning: save and pause whenever the page is hidden.
+  function onHide() { if (mode === 'battle' && B && B.rt && !B.over) setPaused(true); if (S && mode !== 'title' && mode !== 'starter') save(); }
+  document.addEventListener('visibilitychange', () => { if (document.hidden) onHide(); });
+  addEventListener('pagehide', onHide);
+  const NOTE = { F: 392, W: 330, E: 196, A: 523 };
+  function castSfx(key) { const p = E.parseKey(key); beep(NOTE[p.a], 0.12, 'square'); setTimeout(() => beep(NOTE[p.b] * 1.5, 0.12, 'triangle'), 70); p.subs.forEach((t, i) => setTimeout(() => beep(600 + i * 180, 0.08, 'sine'), 140 + i * 60)); }
+
+  // ------------------------------------------------------------------ world
+  const cv = $('world'), ctx = cv.getContext('2d');
+  const TS = 16;
+  let zoom = 3, dpr = 1, vignette = null;
+  const player = { x: 0, y: 0, px: 0, py: 0, dir: 'down', moving: false, from: null, t: 0 };
+  const follower = { x: 0, y: 0, px: 0, py: 0 };
+  let held = null, lastTime = 0, animT = 0, spotted = null;
+  const DIRS = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  const OPP = { up: 'down', down: 'up', left: 'right', right: 'left' };
+  const rustle = new Map();
+
+  // The overworld is pixel art, so it renders at one canvas pixel per CSS pixel and the browser
+  // scales it up (image-rendering: pixelated). On a 3x phone that is 9x fewer pixels to fill.
+  function resize() {
+    dpr = 1;
+    cv.width = Math.floor(innerWidth); cv.height = Math.floor(innerHeight);
+    zoom = Math.max(2, Math.round(Math.min(innerWidth / (TS * 12), innerHeight / (TS * 11))));
+    vignette = null;
+    if (bctx && !$('battle').classList.contains('hidden')) drawBattleBg();
+  }
+  addEventListener('resize', resize);
+
+  const shade = WR.shade, hash2 = WR.hash2;
+  const R = WR.create(ctx);
+  R.setThemes(Object.values(C.THEMES));
+  const themeOf = zoneId => R.theme(C.ZONES[zoneId] ? C.ZONES[zoneId].theme : null);
+
+  const tileAt = (x, y) => (M.tiles[y] || '')[x] || '#';
+  const zoneAt = (x, y) => (M.zone[y] || [])[x] || M.zoneId;
+  // the thing standing (or lying) on a tile, if it is there right now
+  const thingAt = (x, y) => { for (const n of things) if (n.visible && n.x === x && n.y === y) return n; return null; };
+  const blockerAt = (x, y) => { const n = thingAt(x, y); return n && SC.BLOCKING.has(n.type) ? n : null; };
+  const gateOpen = ch => C.GATES[ch] != null && S && S.badges >= C.GATES[ch];
+  function passable(x, y) {
+    if (x < 0 || y < 0 || x >= M.w || y >= M.h) return false;
+    const n = thingAt(x, y);
+    if (n) { if (n.type === 'warp') return true; if (SC.BLOCKING.has(n.type)) return false; }
+    const ch = tileAt(x, y);
+    return !(C.SOLID.has(ch) && !gateOpen(ch));
+  }
+  // what the renderer asks about the map (one object, reused every frame)
+  const view = { tile: tileAt, theme: (x, y) => themeOf(zoneAt(x, y)), t: 0, rustle, gateOpen };
+  const opened = n => n.type === 'chest' && S && S.flags.includes('open:' + n.id);
+
+  const lights = [];
+  function renderWorld(dt) {
+    const W = cv.width, H = cv.height;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = '#04060c'; ctx.fillRect(0, 0, W, H);
+    const s = TS * zoom * dpr, u = s / 16;
+    const camX = Math.round((player.px + 0.5) * s - W / 2), camY = Math.round((player.py + 0.5) * s - H / 2);
+    const x0 = Math.floor(camX / s) - 1, y0 = Math.floor(camY / s) - 1;
+    const x1 = x0 + Math.ceil(W / s) + 2, y1 = y0 + Math.ceil(H / s) + 2;
+    view.t = animT;
+    lights.length = 0;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      if (x < 0 || y < 0 || x >= M.w || y >= M.h) continue;
+      R.drawTile(view, x, y, Math.round(x * s - camX), Math.round(y * s - camY), s, lights);
+    }
+    const actors = [];
+    for (const n of things) {
+      if (!n.visible || n.x < x0 || n.x > x1 || n.y < y0 || n.y > y1) continue;
+      if (n.type !== 'person' && n.type !== 'trainer') { R.drawThing(view, n, Math.round(n.x * s - camX), Math.round(n.y * s - camY), s, lights, opened(n)); continue; }
+      actors.push({ y: n.y, draw: () => {
+        const sx = Math.round(n.x * s - camX), sy = Math.round(n.y * s - camY);
+        R.drawPerson(sx, sy, s, R.personPal(n.kind, n.color, themeOf(n.zone)), n.dir, 0, n.kind, Math.sin(animT * 2 + n.x) > 0.6 ? -u * 0.5 : 0);
+        const beaten = S.beaten.includes(n.id);
+        const marker = spotted === n || (n.warden && (!beaten || S.won));
+        if (marker) {
+          const by = sy - 8 * u + Math.sin(animT * 4) * u;
+          ctx.fillStyle = spotted === n ? '#ffd23d' : beaten ? '#b48cff' : '#46f3ff';
+          ctx.fillRect(sx + 5 * u, by, 6 * u, 5 * u); ctx.fillRect(sx + 7 * u, by + 5 * u, 2 * u, u);
+          ctx.fillStyle = '#0b0e18';
+          if (spotted === n) { ctx.fillRect(sx + 7.5 * u, by + u, u, 2 * u); ctx.fillRect(sx + 7.5 * u, by + 3.5 * u, u, 0.8 * u); }
+          else ctx.fillRect(sx + 7 * u, by + 1.5 * u, 2 * u, 2 * u);
+        }
+      } });
+    }
+    const lead = S.party.find(d => d.hp > 0) || S.party[0];
+    actors.push({ y: follower.py, draw: () => {
+      const sx = Math.round(follower.px * s - camX), sy = Math.round(follower.py * s - camY);
+      ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(sx + s / 2, sy + s - u, 5 * u, 1.6 * u, 0, 0, 7); ctx.fill();
+      ctx.drawImage(SP.get(lead.key, lead.prism), sx - s * 0.1, sy - s * 0.3 + Math.sin(animT * 5) * u * 0.7, s * 1.2, s * 1.2);
+    } });
+    actors.push({ y: player.py + 0.01, draw: () => {
+      const sx = Math.round(player.px * s - camX), sy = Math.round(player.py * s - camY);
+      const fr = player.moving && player.t < 0.6 && !player.slide ? 1 + (S.steps % 2) : 0;
+      R.drawPerson(sx, sy, s, R.personPal('player'), player.dir, fr, 'player', 0);
+    } });
+    actors.sort((a, b) => a.y - b.y).forEach(a => a.draw());
+    // additive lights: each glow is a cached sprite, not a new gradient every frame
+    R.flushLights(lights);
+    R.drawAmbient(dt, camX, camY, W, H, s, themeOf(zoneAt(player.x, player.y)), animT);
+    // the vignette is a CSS layer (#vignette), composited by the GPU
+  }
+
+  function frame(t) {
+    const dt = Math.min(0.05, (t - lastTime) / 1000 || 0); lastTime = t; animT += dt;
+    if (S && M && (mode === 'world' || mode === 'busy')) {
+      if (player.moving) {
+        player.t += dt / (player.slide ? 0.08 : 0.12);
+        const [fx, fy] = player.from;
+        if (player.t >= 1) { player.moving = false; player.px = player.x; player.py = player.y; follower.px = follower.x; follower.py = follower.y; onStep(); }
+        else {
+          player.px = fx + (player.x - fx) * player.t; player.py = fy + (player.y - fy) * player.t;
+          const k = Math.min(1, dt * 14); follower.px += (follower.x - follower.px) * k; follower.py += (follower.y - follower.py) * k;
+        }
+      }
+      if (!player.moving && mode === 'world' && held) tryMove(held);
+      renderWorld(dt);
+    }
+    if (window.BUILD && mode === 'build') window.BUILD.frame(dt, animT);
+    requestAnimationFrame(frame);
+  }
+
+  function tryMove(dir, slide) {
+    player.dir = dir;
+    const [dx, dy] = DIRS[dir];
+    const nx = player.x + dx, ny = player.y + dy;
+    if (!passable(nx, ny)) return false;
+    player.from = [player.x, player.y];
+    follower.x = player.x; follower.y = player.y;
+    player.x = nx; player.y = ny; player.t = 0; player.moving = true; player.slide = !!slide;
+    return true;
+  }
+
+  function onStep() {
+    S.steps++; S.sinceFight++;
+    const z = zoneAt(player.x, player.y), here = thingAt(player.x, player.y);
+    updateHud();
+    if (here && here.type === 'warp') { warp(here); return; }
+    if (tileAt(player.x, player.y) === ',') rustle.set(player.x + ',' + player.y, animT);
+    if (S.kernels.length) tickKernels();
+    const mend = partyTrait('mender');
+    if (mend && S.steps % 25 === 0) for (const d of S.party) if (d.hp > 0) { const mx = ENG.calcStats(d).hp; d.hp = Math.min(mx, d.hp + Math.ceil(mx * mend / 100)); }
+    if (here && here.type === 'trigger') { runTrigger(here); return; }
+    if (checkSight()) return;
+    // ice: keep sliding the way you were going until something stops you
+    const T = C.TILES[tileAt(player.x, player.y)];
+    if (T && T.slide && tryMove(player.dir, true)) return;
+    // trait utilities: lure and shroud shift the encounter rate, repel stops it for a while
+    const zone = C.ZONES[z];
+    const rate = S.steps < S.repelUntil || !zone ? 0 : zone.rate / 100 * (1 + partyTrait('lure') / 100) * (1 - partyTrait('shroud') / 100);
+    if (tileAt(player.x, player.y) === ',' && zone && zone.wild.length && S.sinceFight >= 4 && Math.random() < rate) { S.sinceFight = 0; startWild(z); return; }
+    if (S.steps % 20 === 0) save();
+  }
+
+  function checkSight() {
+    for (const n of things) {
+      if (n.type !== 'trainer' || !n.visible || !n.sight || S.beaten.includes(n.id)) continue;
+      const [dx, dy] = DIRS[n.dir];
+      for (let d = 1; d <= n.sight; d++) {
+        const x = n.x + dx * d, y = n.y + dy * d;
+        if (x === player.x && y === player.y) { challenge(n, d); return true; }
+        if (C.SOLID.has(tileAt(x, y)) || blockerAt(x, y)) break;
+      }
+    }
+    return false;
+  }
+
+  async function challenge(n, dist) {
+    mode = 'busy'; held = null; setPad(false);
+    spotted = n; beep(880, 0.15, 'square', 0.05);
+    await sleep(650);
+    spotted = null;
+    const [dx, dy] = DIRS[n.dir];
+    for (let i = 1; i < dist; i++) { n.x += dx; n.y += dy; await sleep(120); }
+    player.dir = OPP[n.dir];
+    await say(n.name, [n.intro]);
+    startTrainer(n);
+  }
+
+  // ---- maps, things and flags
+  // Puts the player on a map. Things start where the world puts them (trainers walk back).
+  function enterMap(id, x, y, dir) {
+    const next = C.MAPS[id] || C.MAPS[C.START.map];
+    const changed = !M || M.id !== next.id;
+    M = next;
+    things = M.things.map(t => Object.assign({}, t));
+    refreshThings();
+    player.x = player.px = follower.x = follower.px = clamp(x | 0, 0, M.w - 1);
+    player.y = player.py = follower.y = follower.py = clamp(y | 0, 0, M.h - 1);
+    player.dir = dir || player.dir; player.moving = false; player.slide = false;
+    if (changed) { R.clearAmbient(); rustle.clear(); }
+    if (S) updateHud();
+    return changed;
+  }
+  // A thing is there while its condition holds (and an orb is gone once it's picked up).
+  function refreshThings() {
+    for (const n of things) n.visible = condOk(n.cond) && !(n.type === 'chest' && n.look === 'orb' && opened(n));
+  }
+  function has(t) {
+    switch (t.kind) {
+      case 'beat': return S.beaten.includes(t.arg);
+      case 'open': return S.flags.includes('open:' + t.arg);
+      case 'got': return S.flags.includes('got:' + t.arg);
+      case 'keys': return S.badges >= +t.arg;
+      case 'won': return !!S.won;
+      default: return S.flags.includes(t.arg);
+    }
+  }
+  const condOk = c => !c || !S || c.every(t => has(t) !== t.not);
+  function setFlag(f) { if (f && !S.flags.includes(f)) S.flags.push(f); refreshThings(); }
+
+  const fade = on => { $('fade').classList.toggle('on', on); return sleep(on ? 190 : 60); };
+  async function warp(w) {
+    mode = 'busy'; setPad(false); held = null;
+    beep(330, 0.06, 'sine', 0.03);
+    await fade(true);
+    const changed = enterMap(w.to.map, w.to.x, w.to.y, w.to.facing || player.dir);
+    await fade(false);
+    mode = 'world'; setPad(true); save();
+    if (changed) mapBanner();
+  }
+  function mapBanner() {
+    const el = $('mapBanner'), z = C.ZONES[zoneAt(player.x, player.y)];
+    el.innerHTML = `<b>${esc(M.name)}</b>${z && z.name !== M.name ? `<small>${esc(z.name)}</small>` : ''}`;
+    el.classList.remove('go'); void el.offsetWidth; el.classList.add('go');
+  }
+
+  async function runTrigger(n) {
+    mode = 'busy'; setPad(false); held = null;
+    if (n.lines.length) await say(n.who, n.lines);
+    if (n.heal) { healParty(); toast('Your daemons are fully restored.'); }
+    if (n.gives) await giveReward(n.gives, n.who);
+    setFlag(n.sets);
+    save();
+    mode = 'world'; setPad(true);
+  }
+
+  // Rewards from people, chests, triggers and trainers.
+  function rewardBits(r) {
+    const bits = [];
+    if (r.lattices) bits.push(`${r.lattices} Basic Lattice${r.lattices > 1 ? 's' : ''}`);
+    if (r.cells) bits.push(`${r.cells} Flux Cell${r.cells > 1 ? 's' : ''}`);
+    for (const [k, n] of Object.entries(r.motes || {})) if (E.MAIN[k] || E.SUB[k]) bits.push(`${n} ${(E.MAIN[k] || E.SUB[k]).name} mote${n > 1 ? 's' : ''}`);
+    if (r.item && DB.has(r.item)) bits.push(forgeItem(r.item).name);
+    if (r.daemon && DB.has(r.daemon.key)) bits.push(`${ENG.rec(r.daemon.key).dName} (Lv ${r.daemon.level})`);
+    return bits;
+  }
+  async function giveReward(r, who) {
+    if (!r) return;
+    const bits = rewardBits(r);
+    grant({ lattices: r.lattices, cells: r.cells, motes: Object.fromEntries(Object.entries(r.motes || {}).filter(([k]) => E.MAIN[k] || E.SUB[k])) });
+    if (r.item && DB.has(r.item)) {
+      const it = forgeItem(r.item);
+      if (S.bag[it.id]) S.bag[it.id].count++; else S.bag[it.id] = Object.assign({ count: 1 }, it);
+    }
+    beep(659, 0.1, 'triangle'); setTimeout(() => beep(988, 0.16, 'triangle'), 100);
+    if (bits.length) await say(who || 'System', [`You received ${bits.join(', ')}!`]);
+    if (r.daemon && DB.has(r.daemon.key)) {
+      const d = ENG.createDaemon(r.daemon.key, clamp(r.daemon.level | 0, 1, ENG.LEVEL_CAP));
+      d.seed = newSeed();
+      boundForms.add(d.key); seen.add(d.key);
+      if (S.party.length < 6) S.party.push(d); else { S.box.push(d); toast(`${esc(dName(d))} was sent to Storage.`); }
+      designTrait(d);
+      await celebrateTrait(d, null, true);
+    }
+    updateHud();
+  }
+  function healParty() { for (const d of S.party) d.hp = ENG.calcStats(d).hp; }
+
+  async function talk(n) {
+    const gave = n.gives && S.flags.includes('got:' + n.id);
+    const later = n.after && (gave || (!n.gives && n.sets && S.flags.includes(n.sets)));
+    await say(n.name, later ? n.after : n.lines);
+    if (n.heal) { healParty(); beep(523, 0.1, 'sine'); setTimeout(() => beep(784, 0.15, 'sine'), 100); toast('Your daemons are fully restored.'); }
+    if (n.gives && !gave) { S.flags.push('got:' + n.id); await giveReward(n.gives, n.name); }
+    setFlag(n.sets);
+    save();
+  }
+  async function openChest(n) {
+    if (opened(n)) { await say('', ['It\'s empty.']); return; }
+    S.flags.push('open:' + n.id);
+    refreshThings();
+    await giveReward(n.gives, '');
+    setFlag(n.sets);
+    save();
+  }
+
+  async function interact() {
+    if (mode !== 'world' || player.moving) return;
+    const [dx, dy] = DIRS[player.dir];
+    const x = player.x + dx, y = player.y + dy;
+    const n = thingAt(x, y), ch = tileAt(x, y);
+    const back = () => { mode = 'world'; setPad(true); };
+    if (n && n.type !== 'warp' && n.type !== 'trigger') {
+      mode = 'busy'; setPad(false);
+      if (n.type === 'person') { n.dir = OPP[player.dir]; await talk(n); return back(); }
+      if (n.type === 'sign') { await say(n.who || 'Sign', n.lines); setFlag(n.sets); return back(); }
+      if (n.type === 'chest') { await openChest(n); return back(); }
+      if (n.type === 'block') { if (n.lines.length) await say(n.who, n.lines); return back(); }
+      n.dir = OPP[player.dir];
+      if (S.beaten.includes(n.id)) {
+        if (n.warden && S.won) {
+          const times = S.rematches[n.id] || 0;
+          const c = await choose(n.name, `${times ? `Rematches won: ${times}. ` : ''}My daemons have recompiled since we last met, and they're ${n.final ? 10 : 14} levels stronger. Want a rematch?`, ['Rematch', 'Later']);
+          if (c === 0) return startTrainer(n, { rematch: true });
+          return back();
+        }
+        await say(n.name, [n.outro]); return back();
+      }
+      await say(n.name, [n.intro]);
+      return startTrainer(n);
+    }
+    if (ch === 'H') return healTerminal();
+    if (ch === 'F') return openSheet('forge');
+    if (ch === 'R') return riftTerminal();
+    if (C.GATES[ch] != null && !gateOpen(ch)) {
+      mode = 'busy';
+      await say('Gate', [`A firewall gate. It needs ${C.GATES[ch]} key${C.GATES[ch] > 1 ? 's' : ''} to open. You have ${S.badges}.`]);
+      back();
+    }
+  }
+
+  function healTerminal() {
+    healParty();
+    const lat = S.bag['lattice:basic'];
+    const topped = !lat || lat.count < 3;
+    if (!lat) S.bag['lattice:basic'] = basicLattice(3); else lat.count = Math.max(3, lat.count);
+    S.lastHeal = { map: M.id, x: player.x, y: player.y };
+    beep(523, 0.1, 'sine'); setTimeout(() => beep(784, 0.15, 'sine'), 100);
+    mode = 'busy'; setPad(false);
+    say('Terminal', ['Your daemons are fully restored.' + (topped ? ' The dispenser tops your Basic Lattices up to 3.' : '')]).then(() => { mode = 'world'; setPad(true); save(); });
+  }
+  // after a defeat, or a warp trait: back to the last terminal you used
+  function toLastHeal() { const h = S.lastHeal; enterMap(h.map, h.x, h.y, 'down'); }
+
+  // ------------------------------------------------------------------ input
+  const KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right' };
+  addEventListener('keydown', e => {
+    if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+    if (mode === 'build') return; // the world builder has its own keys
+    if ((e.key === 't' || e.key === 'T') && S) { cycleTips(); return; }
+    if (!$('dialog').classList.contains('hidden') && ['Enter', ' ', 'z', 'Z'].includes(e.key)) { advanceDialog(); e.preventDefault(); return; }
+    if (mode === 'world') {
+      if (KEYMAP[e.key]) { held = KEYMAP[e.key]; e.preventDefault(); }
+      else if (['Enter', ' ', 'z', 'Z', 'e', 'E'].includes(e.key)) { interact(); e.preventDefault(); }
+      else if (['Escape', 'm', 'M', 'x', 'X'].includes(e.key)) openSheet('party');
+    } else if (mode === 'battle') {
+      const open = !$('bpanel').classList.contains('hidden');
+      if ('1234'.includes(e.key) && !open) useSlot(+e.key - 1);
+      else if (e.key === 'Escape' && open) { const bb = $('bpanel').querySelector('[data-back]'); if (bb) bb.click(); }
+      else if (e.key === ' ') { e.preventDefault(); skipping = true; if (!open && B && B.rt) setPaused(!paused); }
+      else if ((e.key === 'r' || e.key === 'R') && !open && B && B.rt) utility({ type: 'defrag' }, 'Rest is cooling down.');
+      else if ((e.key === 'b' || e.key === 'B') && !open && B && B.rt) queueBind();
+      else if ((e.key === 'a' || e.key === 'A') && !open && B && B.rt) { S.settings.auto = !S.settings.auto; toast(`Auto battle <b>${S.settings.auto ? 'on' : 'off'}</b>`); }
+    } else if (e.key === 'Escape' && !$('sheet').classList.contains('hidden')) closeSheet();
+  });
+  addEventListener('keyup', e => { if (KEYMAP[e.key] === held) held = null; });
+  // One touch surface for the whole D-pad: the direction follows the thumb, so sliding from
+  // ▲ to ▶ turns without lifting (separate buttons keep the first one pressed on touch screens).
+  {
+    const pad = document.querySelector('.dpad');
+    let pid = null;
+    const aim = e => {
+      const r = pad.getBoundingClientRect(), dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+      const dir = Math.hypot(dx, dy) < r.width * 0.12 ? null : Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : (dy < 0 ? 'up' : 'down');
+      held = dir;
+      pad.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.dir === dir));
+    };
+    const end = e => { if (e.pointerId !== pid) return; pid = null; held = null; pad.querySelectorAll('button').forEach(b => b.classList.remove('on')); };
+    // The controls you hold (the D-pad, A and the map itself) swallow the raw touch, so no long-press
+    // gesture, magnifier or haptic can start on them. They run on pointer events, which still fire.
+    for (const el of [pad, $('aBtn'), cv]) el.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
+    pad.addEventListener('pointerdown', e => { e.preventDefault(); pid = e.pointerId; pad.setPointerCapture(pid); aim(e); });
+    pad.addEventListener('pointermove', e => { if (e.pointerId === pid) aim(e); });
+    pad.addEventListener('pointerup', end); pad.addEventListener('pointercancel', end);
+  }
+  $('aBtn').addEventListener('pointerdown', e => { e.preventDefault(); if (!$('dialog').classList.contains('hidden')) advanceDialog(); else interact(); });
+  $('menuBtn').addEventListener('click', () => { if (mode === 'world') openSheet('party'); });
+  function setPad(on) { $('pad').classList.toggle('hidden', !on); if (!on) { held = null; document.querySelectorAll('.dpad button').forEach(b => b.classList.remove('on')); } }
+
+  function updateHud() {
+    if (!S) return;
+    const z = M ? zoneAt(player.x, player.y) : null;
+    $('zoneName').textContent = C.ZONES[z] ? C.ZONES[z].name : M ? M.name : '';
+    $('keysChip').classList.toggle('hidden', !C.KEYS);
+    $('keysText').textContent = `${Math.min(S.badges, C.KEYS)}/${C.KEYS}`;
+    $('codexText').textContent = discovered.size;
+    $('buildBtn').classList.toggle('hidden', !window.BUILD);
+  }
+
+  // ------------------------------------------------------------------ dialog (typewriter)
+  let dq = null, typing = null;
+  function say(who, lines) {
+    return new Promise(res => {
+      dq = { lines: lines.slice(), res };
+      $('dialog').classList.remove('hidden');
+      $('dialog').querySelector('.who').textContent = who;
+      showLine();
+    });
+  }
+  function showLine() {
+    const el = $('dialog').querySelector('.text'), full = dq.lines[0];
+    let i = 0;
+    clearInterval(typing); el.textContent = '';
+    typing = setInterval(() => { i += 2; el.textContent = full.slice(0, i); if (i >= full.length) { clearInterval(typing); typing = null; } }, 16);
+    beep(660, 0.03, 'square', 0.02);
+  }
+  function advanceDialog() {
+    if (!dq) return;
+    if (typing) { clearInterval(typing); typing = null; $('dialog').querySelector('.text').textContent = dq.lines[0]; return; }
+    dq.lines.shift();
+    if (dq.lines.length) return showLine();
+    $('dialog').classList.add('hidden');
+    const r = dq.res; dq = null; r();
+  }
+  $('dialog').addEventListener('click', advanceDialog);
+
+  // ------------------------------------------------------------------ battle setup
+  function pickWeighted(list) {
+    const tot = list.reduce((s, x) => s + x[3], 0);
+    let r = Math.random() * tot;
+    for (const x of list) { r -= x[3]; if (r <= 0) return x; }
+    return list[0];
+  }
+  function startWild(zoneId) {
+    const z = C.ZONES[zoneId];
+    const pick = pickWeighted(z.wild);
+    let key = pick[0], lv = pick[1] + rnd(pick[2] - pick[1] + 1), rogue = false;
+    if (Math.random() < 0.07) { const up = upgradeKey(key, true); if (up !== key) { key = up; lv += 2; rogue = true; } }
+    const foe = ENG.createDaemon(key, lv);
+    if (Math.random() < (1 / 64) * (1 + partyTrait('fortune') / 100)) { foe.prism = true; foe.hp = ENG.calcStats(foe).hp; }
+    startBattle({ enemy: [foe], wild: true, rogue, zone: zoneId });
+  }
+  function seeded(seed) { let s = seed >>> 0; return () => { s = (s + 0x6D2B79F5) | 0; let t = Math.imul(s ^ (s >>> 15), 1 | s); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+  function startTrainer(n, opts) {
+    opts = opts || {};
+    const rng = seeded(n.id.split('').reduce((h, c) => h * 31 + c.charCodeAt(0), 7) + (opts.rematch ? 99 : 0));
+    const base = opts.rematch ? n.team.map(([k, lv]) => [upgradeKey(k), lv + (n.final ? 10 : 14)]) : n.team;
+    const team = base.map(([key, lv], i) => ENG.createDaemon(key, lv, { rng, uid: n.id + i, extraAttune: opts.rematch ? 2 : undefined }));
+    startBattle({ enemy: team, wild: false, trainer: n, rematch: !!opts.rematch, zone: n.zone });
+  }
+
+  function transition() {
+    const f = $('flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
+    beep(220, 0.08, 'square', 0.04); setTimeout(() => beep(440, 0.08, 'square', 0.04), 90); setTimeout(() => beep(880, 0.12, 'square', 0.04), 180);
+    return sleep(430);
+  }
+
+  async function startBattle(o) {
+    mode = 'battle'; setPad(false); held = null;
+    clearToasts();
+    await transition();
+    $('hud').classList.add('hidden');
+    B = new ENG.Battle({ player: S.party, enemy: o.enemy, wild: o.wild, trainer: o.trainer ? { name: o.trainer.name } : null, discovered: new Set(discovered), bonus: { xp: partyTrait('tutor'), bind: partyTrait('binder') } });
+    bctx = o;
+    for (const d of o.enemy) { seen.add(d.key); }
+    ui = [snapshot(0), snapshot(1)];
+    $('battle').classList.remove('hidden'); document.body.classList.add('inbattle');
+    $('blog').innerHTML = '';
+    $('bpanel').classList.add('hidden'); $('bctrl').classList.add('hidden');
+    for (const i of [0, 1]) { const el = spriteEl(i); el.classList.remove('faint', 'enter'); void el.offsetWidth; el.classList.add('enter'); paintSide(i); }
+    renderCards(); renderResidue();
+    drawBattleBg();
+    startFx();
+    const foe = o.enemy[0], fr = ENG.rec(foe.key);
+    if (o.wild) await logMsg(foe.prism ? `✦ A prismatic ${fr.dName} shimmers into view!` : o.rogue ? `A rogue ${fr.dName} build materializes!` : `A wild ${fr.dName} materializes!`);
+    else if (o.rift) await logMsg(`Rift floor ${o.floor}${o.floor % 5 === 0 ? ': a guardian awaits' : ''}. ${fr.dName} emerges!`);
+    else { await logMsg(`${o.trainer.name} ${o.rematch ? 'accepts the rematch' : 'challenges you'}!`); await logMsg(`${o.trainer.name} deploys ${fr.dName}!`); }
+    await logMsg(`Go, ${dName(B.act(0))}!`);
+    B.startRealtime();
+    B.rt[0].queued = defaultAttack();
+    heldOnce = false; bindLat = null; freezeUntil = 0;
+    tip('battle', 'Combat is live. Your red auto-attack fires every time the cast bar fills; tap another red tile to switch, or the same one to hold fire. Violet actives fire instantly. Bind (B) goes out on your next action. Space pauses.');
+    buildControls(); setPaused(false); startLoop();
+  }
+
+  function snapshot(i) {
+    const s = B.sides[i], d = s.team[s.active], v = s.v;
+    return { key: d.key, prism: !!d.prism, name: dName(d), level: d.level, hp: d.hp, max: v.stats.hp, flux: v.flux, fmax: v.stats.flux, shield: v.shield, status: v.status && v.status.id, stages: Object.assign({}, v.stages), soak: v.soak > 0, regen: v.regen > 0, uid: d.uid };
+  }
+  const spriteEl = i => (i === 0 ? $('allySprite') : $('foeSprite'));
+  function paintSide(i) { SP.paint(spriteEl(i), ui[i].key, { flip: i === 0, prism: ui[i].prism }); }
+
+  function renderCards() {
+    for (const i of [0, 1]) {
+      const u = ui[i], el = i === 0 ? $('allyCard') : $('foeCard');
+      const pct = clamp(u.hp / u.max, 0, 1), sh = clamp(u.shield / u.max, 0, 1);
+      const col = pct > 0.5 ? 'var(--good)' : pct > 0.2 ? 'var(--warn)' : 'var(--bad)';
+      el.dataset.tip = 'd:' + i;
+      el.innerHTML = `<span class="nm"><b>${esc(u.name)}${u.prism ? ' <em class="prism">✦</em>' : ''}</b><span>Lv ${u.level}</span></span>
+        <span class="sub2">${genomeDots(u.key)}<span>${TIER[E.parseKey(u.key).subs.length]}</span></span>
+        <span class="bar"><i style="width:${pct * 100}%;background:${col}"></i><b style="left:${pct * 100}%;width:${Math.min(sh, 1 - pct) * 100}%"></b></span>
+        ${i === 0 ? `<span class="nums"><span>${u.hp}/${u.max} HP</span><span>${Math.floor(u.flux)}/${u.fmax} Flux</span></span>` : ''}
+        <span class="bar flux"><i style="width:${clamp(u.flux / u.fmax, 0, 1) * 100}%"></i></span>
+        ${i === 1 ? '<span class="bar cast" title="Foe is winding up its next action"><i id="cast1"></i></span>' : ''}
+        <span class="buffs" id="buffs${i}"></span>`;
+      if (B && B.rt) renderBuffs(i);
+    }
+  }
+  $('allyCard').onclick = () => { if (B && !B.over && !$('bctrl').classList.contains('hidden')) panelInfo(0); };
+  $('foeCard').onclick = () => { if (B && !B.over && !$('bctrl').classList.contains('hidden')) panelInfo(1); };
+
+  function renderResidue(res, field) {
+    res = res || B.residue; field = field === undefined ? B.field : field;
+    let h = '';
+    for (const m of E.MAINS) {
+      if (!res[m]) continue;
+      h += `<span class="rs" title="${E.MAIN[m].name} residue" style="color:${MAINC(m)}">`;
+      for (let i = 0; i < 6; i++) h += `<i style="${i < res[m] ? `background:${MAINC(m)}` : ''}"></i>`;
+      h += '</span>';
+    }
+    if (field) h += `<span class="fieldtag" style="color:${MAINC(field.el)}">${E.MAIN[field.el].name} field · ${field.turns}</span>`;
+    $('residue').innerHTML = h;
+  }
+
+  // ---- battle backdrop, drawn once per battle (and on resize)
+  function drawBattleBg() {
+    const c = $('bbg'), a = $('arena').getBoundingClientRect();
+    const d = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = Math.max(1, Math.round(a.width * d)); c.height = Math.max(1, Math.round(a.height * d));
+    const g = c.getContext('2d'), W = c.width, H = c.height;
+    const th = themeOf(bctx.zone);
+    const hz = H * 0.44;
+    let gr = g.createLinearGradient(0, 0, 0, hz);
+    gr.addColorStop(0, th.sky[0]); gr.addColorStop(1, th.sky[1]);
+    g.fillStyle = gr; g.fillRect(0, 0, W, hz);
+    for (let i = 0; i < 60; i++) { const h = hash2(i, 7); g.fillStyle = `rgba(${th.rgb},${0.15 + (h % 50) / 120})`; g.fillRect(h % W, (h >> 8) % Math.max(1, Math.round(hz * 0.9)), d, d); }
+    const sky0 = shade(th.sky[0], 0.06);
+    for (let i = 0; i < 18; i++) {
+      const h = hash2(i, 3), w = (10 + h % 26) * d, x = (h >> 4) % W, ht = (12 + (h >> 9) % 60) * d;
+      g.fillStyle = sky0; g.fillRect(x, hz - ht, w, ht);
+      g.fillStyle = `rgba(${th.rgb},.35)`;
+      for (let k = 0; k < ht / (6 * d) - 1; k++) if (hash2(i, k) % 3 === 0) g.fillRect(x + 3 * d, hz - ht + (4 + k * 6) * d, 2 * d, 2 * d);
+    }
+    gr = g.createLinearGradient(0, hz, 0, H);
+    gr.addColorStop(0, th.face); gr.addColorStop(1, th.wall);
+    g.fillStyle = gr; g.fillRect(0, hz, W, H - hz);
+    gr = g.createLinearGradient(0, hz - 30 * d, 0, hz + 30 * d);
+    gr.addColorStop(0, `rgba(${th.rgb},0)`); gr.addColorStop(0.5, `rgba(${th.rgb},.45)`); gr.addColorStop(1, `rgba(${th.rgb},0)`);
+    g.fillStyle = gr; g.fillRect(0, hz - 30 * d, W, 60 * d);
+    g.strokeStyle = `rgba(${th.rgb},.16)`; g.lineWidth = d;
+    for (let i = -14; i <= 14; i++) { g.beginPath(); g.moveTo(W / 2 + i * W * 0.012, hz); g.lineTo(W / 2 + i * W * 0.16, H); g.stroke(); }
+    for (let i = 1; i <= 12; i++) { const y = hz + (H - hz) * Math.pow(i / 12, 2); g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    for (const el of [$('foeSprite'), $('allySprite')]) {
+      const r = el.getBoundingClientRect();
+      const cx = (r.left - a.left + r.width / 2) * d, cy = (r.top - a.top + r.height * 0.9) * d, rx = r.width * 0.46 * d, ry = r.width * 0.12 * d;
+      g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.ellipse(cx, cy + ry * 0.35, rx, ry, 0, 0, 7); g.fill();
+      g.fillStyle = `rgba(${th.rgb},.14)`; g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, 7); g.fill();
+      g.strokeStyle = `rgba(${th.rgb},.6)`; g.lineWidth = 1.5 * d; g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, 7); g.stroke();
+      g.strokeStyle = `rgba(${th.rgb},.25)`; g.beginPath(); g.ellipse(cx, cy, rx * 0.65, ry * 0.65, 0, 0, 7); g.stroke();
+    }
+  }
+
+  // ---- fx layer: particles, projectiles, rings
+  const fxc = $('fx'), fctx = fxc.getContext('2d');
+  let parts = [], shots = [], rings = [], fxRun = false;
+  function startFx() { if (fxRun) return; fxRun = true; requestAnimationFrame(fxLoop); }
+  function fxLoop(now) {
+    const r = fxc.getBoundingClientRect();
+    if (fxc.width !== Math.round(r.width) || fxc.height !== Math.round(r.height)) { fxc.width = Math.round(r.width); fxc.height = Math.round(r.height); }
+    fctx.clearRect(0, 0, fxc.width, fxc.height);
+    fctx.globalCompositeOperation = 'lighter';
+    parts = parts.filter(p => (p.life -= 1) > 0);
+    for (const p of parts) {
+      p.x += p.vx; p.y += p.vy; p.vx *= 0.96; p.vy *= 0.96; p.vy += p.g || 0;
+      if (p.tx != null) { p.x += (p.tx - p.x) * 0.07; p.y += (p.ty - p.y) * 0.07; }
+      fctx.globalAlpha = Math.min(1, p.life / 20);
+      fctx.fillStyle = p.c; fctx.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s);
+    }
+    shots = shots.filter(sh => {
+      const t = (now - sh.t0) / sh.dur;
+      if (t < 0) return true;
+      if (t >= 1) return false;
+      const e = t * t * (3 - 2 * t);
+      const x = sh.x0 + (sh.x1 - sh.x0) * e, y = sh.y0 + (sh.y1 - sh.y0) * e - Math.sin(t * Math.PI) * sh.arc;
+      fctx.globalAlpha = 1;
+      const g = fctx.createRadialGradient(x, y, 0, x, y, sh.size * 2.4);
+      g.addColorStop(0, '#ffffff'); g.addColorStop(0.35, sh.col); g.addColorStop(1, 'rgba(0,0,0,0)');
+      fctx.fillStyle = g; fctx.fillRect(x - sh.size * 2.4, y - sh.size * 2.4, sh.size * 4.8, sh.size * 4.8);
+      if (Math.random() < 0.8) parts.push({ x, y, vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5, c: sh.trail[rnd(sh.trail.length)], s: 2 + Math.random() * 3, life: 18 });
+      return true;
+    });
+    rings = rings.filter(rg => {
+      const t = (now - rg.t0) / rg.dur;
+      if (t < 0) return true;
+      if (t >= 1) return false;
+      const rad = rg.r0 + (rg.r1 - rg.r0) * t;
+      fctx.globalAlpha = 1 - t;
+      fctx.strokeStyle = rg.col; fctx.lineWidth = rg.w || 3;
+      fctx.beginPath();
+      if (rg.hex) { for (let k = 0; k <= 6; k++) { const a = k * Math.PI / 3 + rg.rot; const px = rg.x + Math.cos(a) * rad, py = rg.y + Math.sin(a) * rad * 0.9; if (k) fctx.lineTo(px, py); else fctx.moveTo(px, py); } }
+      else fctx.ellipse(rg.x, rg.y, rad, rad * (rg.flat || 1), 0, 0, 7);
+      fctx.stroke();
+      return true;
+    });
+    fctx.globalAlpha = 1; fctx.globalCompositeOperation = 'source-over';
+    if (mode === 'battle' || parts.length || shots.length || rings.length) requestAnimationFrame(fxLoop); else fxRun = false;
+  }
+  function centerOf(el) { const a = $('arena').getBoundingClientRect(), b = el.getBoundingClientRect(); return [b.left - a.left + b.width / 2, b.top - a.top + b.height / 2]; }
+  function burstAt(x, y, colors, n, spd) {
+    for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, sp = (1 + Math.random() * 4) * (spd || 1); parts.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, c: colors[i % colors.length], s: 3 + Math.random() * 4, life: 30 + Math.random() * 30 }); }
+  }
+  function sparkles(x, y, col, n) { for (let i = 0; i < n; i++) parts.push({ x: x + (Math.random() - 0.5) * 80, y: y + 20 + Math.random() * 30, vx: 0, vy: -1 - Math.random() * 2.5, c: col, s: 2 + Math.random() * 3, life: 40 + Math.random() * 20 }); }
+  function stream(x0, y0, x1, y1, col, n) { for (let i = 0; i < n; i++) parts.push({ x: x0 + (Math.random() - 0.5) * 40, y: y0 + (Math.random() - 0.5) * 40, vx: 0, vy: 0, tx: x1, ty: y1, c: col, s: 3, life: 40 + i }); }
+  function shot(x0, y0, x1, y1, col, size, dur, trail, delay, arc) { shots.push({ x0, y0, x1, y1, col, size, dur, trail, t0: performance.now() + (delay || 0), arc: arc || 0 }); }
+  function ring(x, y, r0, r1, col, dur, delay, extra) { rings.push(Object.assign({ x, y, r0, r1, col, dur, t0: performance.now() + (delay || 0), rot: Math.random() }, extra || {})); }
+  function keyColors(key) { const p = E.parseKey(key); return [MAINC(p.a), MAINC(p.b), ...p.subs.map(t => subColor(t.s))]; }
+  function flashSprite(side, cls, ms) { const el = spriteEl(side); el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); setTimeout(() => el.classList.remove(cls), ms || 400); }
+  function shakeArena() { const a = $('arena'); a.classList.remove('shake'); void a.offsetWidth; a.classList.add('shake'); }
+  function fieldFlash(col) { const f = $('fieldFlash'); f.style.background = `radial-gradient(ellipse at center, ${col}55, ${col}11 70%)`; f.classList.remove('go'); void f.offsetWidth; f.classList.add('go'); }
+  function dmgNum(side, text, cls) {
+    const [x, y] = centerOf(spriteEl(side));
+    const d = document.createElement('div'); d.className = 'dmg ' + (cls || ''); d.textContent = text;
+    d.style.left = (x + (Math.random() - 0.5) * 50) + 'px'; d.style.top = (y - 20 + (Math.random() - 0.5) * 20) + 'px';
+    $('arena').appendChild(d); setTimeout(() => d.remove(), 1100);
+  }
+  const speedMul = () => (skipping ? 0.35 : S.settings.speed === 'fast' ? 0.65 : 1);
+  const wait = ms => sleep(ms * speedMul());
+
+  // Each merge class has its own animation, colored by the merge's essences.
+  async function animateCast(side, key) {
+    const r = ENG.rec(key), cols = keyColors(key).concat(['#ffffff']);
+    const me = spriteEl(side), foe = spriteEl(1 - side);
+    me.style.setProperty('--glow', MAINC(r.a)); me.classList.add('cast');
+    castSfx(key);
+    const [x0, y0] = centerOf(me), [x1, y1] = centerOf(foe);
+    const k = speedMul();
+    switch (r.cls) {
+      case 'Strike':
+        shot(x0, y0, x1, y1, cols[0], 9, 340 * k, cols, 0, 30);
+        await sleep(340 * k); burstAt(x1, y1, cols, 36, 1.3); ring(x1, y1, 10, 70, cols[0], 350 * k);
+        break;
+      case 'Barrage':
+        for (let i = 0; i < r.hits; i++) shot(x0, y0, x1 + (Math.random() - 0.5) * 50, y1 + (Math.random() - 0.5) * 40, cols[i % (cols.length - 1)], 5, 260 * k, cols, i * 90 * k, 20 + Math.random() * 40);
+        await sleep((260 + r.hits * 90) * k); burstAt(x1, y1, cols, 24);
+        break;
+      case 'Siphon':
+        shot(x0, y0, x1, y1, cols[0], 7, 300 * k, cols);
+        await sleep(300 * k); burstAt(x1, y1, cols, 16); stream(x1, y1, x0, y0, '#5dff9a', 26);
+        await sleep(260 * k);
+        break;
+      case 'Hex':
+        ring(x1, y1, 95, 12, cols[0], 460 * k, 0, { w: 3 }); ring(x1, y1, 75, 8, cols[1], 460 * k, 140 * k, { hex: true, w: 2 });
+        if (cols.length > 3) ring(x1, y1, 60, 6, cols[2], 420 * k, 260 * k, { w: 2 });
+        await sleep(560 * k); burstAt(x1, y1, cols, 14, 0.6);
+        break;
+      case 'Ward':
+        ring(x0, y0, 30, 100, cols[0], 520 * k, 0, { hex: true, w: 4 }); ring(x0, y0, 20, 80, '#cfe8ff', 480 * k, 120 * k, { hex: true, w: 2 });
+        await sleep(480 * k);
+        break;
+      case 'Mend':
+        sparkles(x0, y0, '#5dff9a', 26); sparkles(x0, y0, cols[0], 12); ring(x0, y0 + 40, 10, 90, '#5dff9a', 500 * k, 0, { flat: 0.3 });
+        await sleep(460 * k);
+        break;
+      case 'Field':
+        fieldFlash(MAINC(r.a));
+        for (let i = 0; i < 5; i++) shot(x0, y0, Math.random() * fxc.width, Math.random() * fxc.height, cols[i % cols.length], 5, 380 * k, cols, i * 60 * k, 60);
+        await sleep(560 * k); burstAt(x1, y1, cols, 20);
+        break;
+      default: await sleep(300 * k);
+    }
+    me.classList.remove('cast');
+  }
+
+  const STATUS_COL = {}; // statuses, then effects with their own flash (soak, petrify)
+  for (const x of E.data.battle.statuses.concat(E.data.battle.effects)) if (x.color) STATUS_COL[x.id || x.code] = x.color;
+
+  // ---- ticker
+  function print(text) {
+    const box = $('blog');
+    [...box.children].forEach(c => c.classList.add('old'));
+    const d = document.createElement('div'); d.textContent = text; box.appendChild(d);
+    while (box.children.length > 3) box.firstChild.remove();
+  }
+  async function logMsg(text) { print(text); await sleep(skipping ? 110 : 520); }
+  $('blog').addEventListener('click', () => { skipping = true; });
+
+  // ---- live event rendering (never blocks the clock)
+  function consume(events) {
+    let dirty = false;
+    for (const e of events) {
+      switch (e.type) {
+        case 'msg': {
+          print(e.text);
+          if (e.anim === 'cast' && e.key) { animateCast(e.side, e.key); break; }
+          if (e.anim === 'glitch') { const [x, y] = centerOf(spriteEl(e.side == null ? 0 : e.side)); burstAt(x, y, ['#ff5cf0', '#46f3ff', '#ffffff'], 40, 1.4); shakeArena(); beep(90, 0.25, 'sawtooth', 0.05); }
+          else if (e.anim === 'react') {
+            const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, [MAINC(e.el), MAINC(e.el2), '#fff'], 60, 1.5); ring(x, y, 10, 120, MAINC(e.el2), 500);
+            S.stats.reacts++; questEvent('react');
+            tip('react', 'Residue reaction! Casting one essence into another\'s residue (the bars at the bottom left of the arena) triggers bonus effects.');
+          } else if (e.anim === 'field') fieldFlash(MAINC(e.el));
+          else if (e.anim === 'heal') { const [x, y] = centerOf(spriteEl(e.side)); sparkles(x, y, '#5dff9a', 20); }
+          else if (e.anim === 'shield') { const [x, y] = centerOf(spriteEl(e.side)); ring(x, y, 30, 95, '#cfe8ff', 450, 0, { hex: true }); }
+          else if (e.anim === 'buff' || e.anim === 'debuff') { const [x, y] = centerOf(spriteEl(e.side)); for (let i = 0; i < 10; i++) parts.push({ x: x + (Math.random() - 0.5) * 70, y: y + (e.anim === 'buff' ? 30 : -30), vx: 0, vy: e.anim === 'buff' ? -2.5 : 2.5, c: e.anim === 'buff' ? '#5dff9a' : '#ff5470', s: 3, life: 26 }); }
+          else if (STATUS_COL[e.anim] && e.side != null) { const [x, y] = centerOf(spriteEl(e.side)); ring(x, y, 70, 20, STATUS_COL[e.anim], 400); burstAt(x, y, [STATUS_COL[e.anim]], 16, 0.8); }
+          else if (e.anim === 'levelup') { beep(988, 0.2, 'triangle', 0.05); const [x, y] = centerOf(spriteEl(0)); sparkles(x, y, '#ffd23d', 24); }
+          else if (e.anim === 'bound') { buzz([30, 60, 60]); beep(784, 0.15, 'sine'); setTimeout(() => beep(1046, 0.25, 'sine'), 150); const [x, y] = centerOf(spriteEl(1)); burstAt(x, y, ['#46f3ff', '#ffffff', '#ffd23d'], 50); }
+          else if (e.anim === 'bind') {
+            const lat = bindLat || bestLattice();
+            if (lat) { lat.count--; if (lat.count <= 0 && lat.id !== 'lattice:basic') delete S.bag[lat.id]; }
+            bindLat = null; freezeUntil = performance.now() + 1500;
+            const [x0, y0] = centerOf(spriteEl(0)), [x1, y1] = centerOf(spriteEl(1)); shot(x0, y0, x1, y1, '#46f3ff', 7, 380, ['#46f3ff', '#ffffff'], 0, 70); ring(x1, y1, 90, 30, '#46f3ff', 400, 380, { hex: true }); }
+          else if (e.anim === 'miss') dmgNum(e.side, 'MISS', 'miss');
+          break;
+        }
+        case 'hit':
+          flashSprite(e.side, 'hit', 360);
+          if (e.side === 0 || e.crit) buzz(e.crit ? 35 : 15);
+          dmgNum(e.side, (e.crit ? '✹' : '') + e.amount, e.crit ? 'crit' : '');
+          if (e.crit || e.amount >= ui[e.side].max * 0.3) shakeArena();
+          beep(e.crit ? 90 : 140, 0.08, 'square', 0.05);
+          break;
+        case 'healed': dmgNum(e.side, '+' + e.amount, 'heal'); break;
+        case 'absorb': dmgNum(e.side, '◈' + e.amount, 'absorb'); break;
+        case 'hp': ui[e.side].hp = e.hp; ui[e.side].max = e.max; ui[e.side].shield = e.shield; dirty = true; break;
+        case 'flux': ui[e.side].flux = e.flux; ui[e.side].fmax = e.max; dirty = true; break;
+        case 'status': Object.assign(ui[e.side], { status: e.status, stages: e.stages, soak: e.soak, shield: e.shield, regen: e.regen }); dirty = true; break;
+        case 'field': renderResidue(e.residue, e.field); break;
+        case 'switch': {
+          ui[e.side] = snapshot(e.side);
+          const el = spriteEl(e.side); el.classList.remove('faint', 'enter'); void el.offsetWidth; el.classList.add('enter');
+          paintSide(e.side); dirty = true; seen.add(e.key);
+          const [x, y] = centerOf(el); ring(x, y, 10, 90, MAINC(e.key[0]), 400);
+          if (e.side === 0 && B.rt) { B.rt[0].queued = defaultAttack(); buildControls(); }
+          break;
+        }
+        case 'faint': spriteEl(e.side).classList.add('faint'); beep(110, 0.4, 'sawtooth', 0.05); freezeUntil = Math.max(freezeUntil, performance.now() + 700); bigCallout({ side: e.side, text: e.side === 1 ? 'KNOCKOUT!' : 'DOWN!', kind: e.side === 1 ? 'combo' : 'stagger' }); break;
+        case 'discover': markDiscovered(e.key); break;
+        case 'shake': { const el = spriteEl(1); setTimeout(() => { el.classList.add('wobble'); beep(300 + e.n * 100, 0.08); setTimeout(() => el.classList.remove('wobble'), 420); }, (e.n - 1) * 480); break; }
+        case 'unbind': { const [x, y] = centerOf(spriteEl(1)); setTimeout(() => burstAt(x, y, ['#46f3ff'], 24), 1000); break; }
+        case 'xp': pendingXp.push(e); break;
+        case 'callout': bigCallout(e); break;
+        default: break;
+      }
+    }
+    if (dirty) renderCards();
+  }
+
+  // Big impact text for signature mechanics.
+  const CALLOUT_COL = { combo: '#ffd23d', overdrive: '#ff5cf0', stagger: '#ff5a4e', siphon: '#5dff9a', hex: '#b48cff', ward: '#cfe8ff', mend: '#5dff9a', field: '#ffb13d' };
+  function bigCallout(e) {
+    const [x, y] = centerOf(spriteEl(e.side));
+    const d = document.createElement('div');
+    d.className = 'callout ' + e.kind; d.textContent = e.text;
+    d.style.top = (y - 70) + 'px'; d.style.setProperty('--cc', CALLOUT_COL[e.kind] || '#fff');
+    $('arena').appendChild(d);
+    const aw = $('arena').clientWidth, half = d.offsetWidth / 2 + 8;
+    d.style.left = clamp(x, half, Math.max(half, aw - half)) + 'px'; setTimeout(() => d.remove(), 1300);
+    const col = CALLOUT_COL[e.kind] || '#fff';
+    if (e.kind === 'overdrive') { burstAt(x, y, [col, '#fff', '#46f3ff'], 70, 2); ring(x, y, 10, 150, col, 600); shakeArena(); beep(1200, 0.2, 'sawtooth', 0.05); }
+    else if (e.kind === 'combo') { ring(x, y, 20, 110, col, 450); beep(880, 0.08, 'square', 0.04); setTimeout(() => beep(1320, 0.1, 'square', 0.04), 70); }
+    else if (e.kind === 'stagger') { flashSprite(e.side, 'hit', 360); ring(x, y, 60, 15, col, 300); }
+    else if (e.kind === 'ward') ring(x, y, 30, 100, col, 450, 0, { hex: true, w: 4 });
+    else if (e.kind === 'hex') ring(x, y, 100, 10, col, 500, 0, { hex: true, w: 3 });
+    else if (e.kind === 'siphon') stream(x, y, ...centerOf(spriteEl(1 - e.side)), col, 18);
+    else if (e.kind === 'mend') sparkles(x, y, col, 26);
+    else if (e.kind === 'field') burstAt(x, y, [col], 12, 0.6);
+  }
+
+  // ---- the real-time loop
+  let loopOn = false, paused = false, lastT = 0, uiT = 0, autoT = 0;
+  // Slower at low levels so new players can read the fight; full pace from ~Lv30.
+  const levelPace = () => { const L = B ? B.act(0).level : 5; return 0.6 + 0.4 * clamp((L - 5) / 25, 0, 1); };
+  const pace = () => (S.settings.speed === 'fast' ? 1.15 : 0.85) * levelPace();
+  function startLoop() { if (loopOn) return; loopOn = true; lastT = performance.now(); requestAnimationFrame(loop); }
+  function loop(t) {
+    if (!loopOn || !B) { loopOn = false; return; }
+    const dt = Math.min(0.1, (t - lastT) / 1000); lastT = t;
+    if (!paused && !B.over && !B.needSwitch && t >= freezeUntil) {
+      if (S.settings.auto) { autoT -= dt; if (autoT <= 0) { autoT = 0.25; autoPilot(); } }
+      holdCheck();
+      consume(B.tick(dt * pace()));
+    }
+    uiT -= dt; if (uiT <= 0) { uiT = 0.08; refreshControls(); }
+    if (B.over) { loopOn = false; $('bctrl').classList.add('locked'); setTimeout(endBattle, B.result === 'bind' ? 1700 : 900); return; }
+    if (B.needSwitch) { loopOn = false; panelSwitch(true); return; }
+    requestAnimationFrame(loop);
+  }
+  // In wild fights, stop auto-attacking once when the foe gets low, so it can be caught.
+  function holdCheck() {
+    if (!bctx.wild || S.settings.auto || heldOnce || !B.rt[0].queued || !bestLattice()) return;
+    const t = B.act(1), mx = B.sides[1].v.stats.hp;
+    if (t.hp > 0 && t.hp / mx <= 0.3) {
+      heldOnce = true; B.rt[0].queued = null;
+      bigCallout({ side: 1, text: 'HOLDING FIRE · BIND IT!', kind: 'hex' });
+      tip('hold', 'Your auto-attack paused because the foe is weak and catchable. Tap Bind, or tap a red tile to keep attacking.');
+    }
+  }
+  function setPaused(p) { paused = p; $('battle').classList.toggle('paused', p); refreshControls(); }
+  addEventListener('blur', () => { if (mode === 'battle' && B && !paused) setPaused(true); });
+
+  // Auto battle: the same AI the foes use drives your daemon (picks the
+  // auto-attack, fires actives when they're worth it, rests when dry).
+  function autoPilot() {
+    if (!B || !B.rt || B.over) return;
+    const mirror = { sides: [B.sides[1], B.sides[0]], act: i => B.act(1 - i), wild: false, rng: Math.random, rt: [B.rt[1], B.rt[0]] };
+    const rt = B.rt[0];
+    if (bctx.wild && !rt.pending) {
+      const t = B.act(1), lat = bestLattice();
+      if (lat && t.hp / B.sides[1].v.stats.hp <= 0.35 && chanceWith(lat) >= 0.45) { rt.pending = { type: 'bind', item: lat }; bindLat = lat; return; }
+    }
+    const a = B.chooseEnemy.call(mirror);
+    if (a.type === 'merge') {
+      if (ENG.isAttack(a.key)) { if (rt.queued !== a.key && rt.gcd <= 0.3) rt.queued = a.key; }
+      else { const ev = B.useActive(a.key); if (ev) consume(ev); }
+    } else if (!rt.cds.defrag && B.sides[0].v.flux < B.sides[0].v.stats.flux * 0.35) { const ev = B.useUtility({ type: 'defrag' }); if (ev) consume(ev); }
+  }
+
+  // ---- controls: an action-bar HUD (hotbar + cast bar + buff icons)
+  function chanceWith(lat) { const t = B.act(1), v = B.sides[1].v; return ENG.captureChance(t, t.hp, v.stats.hp, lat, !!v.status, B.bonus.bind); }
+  function bestLattice() {
+    let best = null, bc = -1;
+    for (const it of Object.values(S.bag)) {
+      if (it.kind !== 'lattice' || it.count <= 0) continue;
+      const c = chanceWith(it);
+      if (c > bc) { bc = c; best = it; }
+    }
+    return best;
+  }
+  const defaultAttack = () => { const d = B.act(0); return d.memory.find(k => k && ENG.isAttack(k)) || null; };
+  function kindBadge(k) { return ENG.isAttack(k) ? '<span class="kb atk">Attack · auto-repeats</span>' : `<span class="kb act">Active · ${ENG.cooldownFor(ENG.rec(k))}s CD</span>`; }
+  const CLASS_ICON = {};
+  for (const c of E.data.battle.classes) CLASS_ICON[c.id] = c.icon;
+
+  function hotTile(k, i) {
+    const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k), atk = ENG.isAttack(k);
+    const eff = ENG.effectiveness(k, ui[1].key);
+    const effTxt = r.damaging && eff >= 1.2 ? '<span class="eff up">▲</span>' : r.damaging && eff <= 0.83 ? '<span class="eff dn">▼</span>' : '';
+    return `<button class="hb ${atk ? 'atk' : 'act'} ${known ? '' : 'unk'}" data-slot="${i}" data-key="${k}" data-tip="m:${k}" style="--c:${MAINC(p.a)};--c2:${MAINC(p.b)}">
+      <span class="face"><span class="ico">${known ? CLASS_ICON[r.cls] : '?'}</span><span class="cdo"></span><span class="key">${i + 1}</span><span class="cost">${r.flux}</span>${effTxt}<span class="auto">AUTO</span></span>
+      <span class="lbl">${known ? esc(r.name) : 'Unknown'}</span></button>`;
+  }
+
+  function buildControls() {
+    const d = B.act(0), r = ENG.rec(d.key), pv = ENG.PASSIVES[r.dPassive];
+    const tiles = d.memory.map((k, i) => (k ? hotTile(k, i) : `<button class="hb empty" data-empty="${i}"><span class="face"><span class="ico">＋</span><span class="key">${i + 1}</span></span><span class="lbl">Compose</span></button>`)).join('');
+    const uts = (bctx.wild ? [['bind', '◇', 'Bind']] : []).concat([['compose', '⚗', 'Mix'], ['swap', '⇄', 'Swap'], ['bag', '✚', 'Items'], ['rest', '↻', 'Rest'], ['auto', '⟳', 'Auto'], ['pause', '❚❚', 'Pause']]).concat(bctx.wild ? [['run', '↩', 'Run']] : []);
+    $('bctrl').classList.remove('locked', 'hidden'); $('bpanel').classList.add('hidden');
+    $('bctrl').innerHTML = `
+      <div class="castbar" id="castbar"><i id="gcdFill"></i><span class="cb-l" id="gcdText"></span><span class="cb-r" id="gcdTime"></span></div>
+      <div class="hotbar">
+        <span class="pas-ico" data-tip="p:${r.dPassive}" title="${esc(pv[0])}"><b>✦</b><small>${esc(pv[0])}</small></span>
+        ${tiles}
+      </div>
+      <div class="hudrow">
+        <div class="utils">${uts.map(([id, ic, lb]) => `<button class="ub" data-u="${id}" ${id === 'bind' ? 'id="bindBtn"' : ''} title="${lb}"><span class="cdo"></span><i>${ic}</i><small>${lb}</small></button>`).join('')}</div>
+      </div>
+      <div class="legend"><span class="lg atk">■ Auto-attack</span><span class="lg act">■ Active</span><span class="lg pas">■ Passive</span><span class="lg utl">■ Utility</span></div>`;
+    const c = $('bctrl');
+    c.querySelectorAll('.hb[data-key]').forEach(b => { b.onclick = () => useSlot(+b.dataset.slot); });
+    c.querySelectorAll('[data-empty]').forEach(b => { b.onclick = () => panelCompose(); });
+    c.querySelector('[data-u=compose]').onclick = () => panelCompose();
+    c.querySelector('[data-u=swap]').onclick = () => panelSwitch(false);
+    c.querySelector('[data-u=bag]').onclick = () => panelBag();
+    c.querySelector('[data-u=rest]').onclick = () => utility({ type: 'defrag' }, 'Rest is cooling down.');
+    c.querySelector('[data-u=pause]').onclick = () => setPaused(!paused);
+    c.querySelector('[data-u=auto]').onclick = () => { S.settings.auto = !S.settings.auto; toast(`Auto battle <b>${S.settings.auto ? 'on' : 'off'}</b>`); refreshControls(); };
+    const run = c.querySelector('[data-u=run]'); if (run) run.onclick = () => utility({ type: 'run' }, 'Wait for your global cooldown.');
+    if (bctx.wild) $('bindBtn').onclick = () => queueBind();
+    refreshControls();
+  }
+
+  // Bind goes out on your next global cooldown, ahead of the auto-attack. Tap again to cancel.
+  function queueBind() {
+    if (!B || B.over || !B.rt || !bctx.wild) return;
+    const rt = B.rt[0];
+    if (rt.pending) { rt.pending = null; toast('Bind cancelled.'); refreshControls(); return; }
+    const lat = bestLattice(); if (!lat) return toast('No lattices left. Forge Hex merges into Lattices, or top up at a terminal.');
+    if (paused) setPaused(false);
+    rt.pending = { type: 'bind', item: lat };
+    bindLat = lat;
+    beep(660, 0.05, 'triangle', 0.03);
+    refreshControls();
+  }
+  let bindLat = null, freezeUntil = 0, heldOnce = false;
+
+  function useSlot(i) {
+    if (!B || B.over || !B.rt) return;
+    const k = B.act(0).memory[i]; if (!k) return;
+    if (S.settings.auto) { S.settings.auto = false; toast('Auto battle off. You have control.'); }
+    if (ENG.isAttack(k)) {
+      if (B.rt[0].queued === k) { B.rt[0].queued = null; toast('Holding fire. Tap a red tile to attack again.'); }
+      else B.rt[0].queued = k;
+      refreshControls(); beep(520, 0.03, 'square', 0.02); return;
+    }
+    if (paused) setPaused(false);
+    const ev = B.useActive(k);
+    if (!ev) { toast(B.rt[0].cds[k] > 0 ? 'That active is cooling down.' : 'Not enough Flux.'); return; }
+    const tile = document.querySelector(`#bctrl .hb[data-slot="${i}"]`); if (tile) { tile.classList.remove('fired'); void tile.offsetWidth; tile.classList.add('fired'); }
+    consume(ev);
+  }
+  function utility(action, busyMsg) {
+    if (!B || B.over) return false;
+    const ev = B.useUtility(action);
+    if (!ev) { toast(busyMsg); return false; }
+    consume(ev); refreshControls();
+    return true;
+  }
+
+  const isAtk = k => !!k && ENG.isAttack(k);
+  // Buff / debuff icons with live timers, drawn under each card.
+  const STATUS_ICO = {};
+  for (const st of E.data.battle.statuses) STATUS_ICO[st.id] = st.icon;
+  function renderBuffs(i) {
+    const el = $('buffs' + i); if (!el) return;
+    const v = B.sides[i].v, P = ENG.PULSE, pulseLeft = B.rt ? B.rt[i].pulse : P;
+    const t = n => Math.max(0, Math.ceil((n - 1) * P + pulseLeft)) + 's';
+    const out = [];
+    if (v.status) out.push(`<span class="bf dn" data-tip="s:${v.status.id}"><b>${STATUS_ICO[v.status.id]}</b><i>${t(v.status.turns)}</i></span>`);
+    if (v.soak > 0) out.push(`<span class="bf dn" title="Soaked: Fire hits ×0.6, Air hits ×1.3"><b>≈</b><i>${t(v.soak)}</i></span>`);
+    if (v.petrify) out.push('<span class="bf dn" title="Petrified: loses its next action"><b>◼</b></span>');
+    if (v.regen > 0) out.push(`<span class="bf up" title="Regenerating"><b>✚</b><i>${t(v.regen)}</i></span>`);
+    if (v.shield > 0) out.push(`<span class="bf up" title="Shield"><b>⛨</b><i>${v.shield}</i></span>`);
+    if (v.phase > 0) out.push('<span class="bf up" title="Phased: dodges everything"><b>◌</b></span>');
+    if (v.mirror) out.push('<span class="bf up" title="Mirror: reflects half the next hit"><b>◐</b></span>');
+    if (v.echo) out.push('<span class="bf up" title="An echo is about to ring out"><b>)))</b></span>');
+    if (v.charge) out.push(`<span class="bf chg ${v.charge >= ENG.CHARGE_MAX ? 'full' : ''}" title="Barrage charge: at ${ENG.CHARGE_MAX}, the next attack is an OVERDRIVE"><b>⚡</b><i>${v.charge}/${ENG.CHARGE_MAX}</i></span>`);
+    if (v.combo.n >= 2 && isAtk(v.combo.key)) out.push(`<span class="bf cmb" title="Combo: every 3rd cast in a row hits ×1.6"><b>×${v.combo.n}</b><i>${3 - (v.combo.n % 3) === 3 ? 'next!' : 3 - (v.combo.n % 3)}</i></span>`);
+    if (v.ward && v.shield > 0) out.push('<span class="bf up" title="Riposte armed: attackers take 35% of absorbed damage, and the shield bursts on them when it breaks"><b>⟲</b><i>riposte</i></span>');
+    if (B.field && B.field.side === i) out.push(`<span class="bf up" title="Your ${E.MAIN[B.field.el].name} field: damages the foe each pulse, and ${E.MAIN[B.field.el].name} merges cost 40% less"><b>◎</b><i>${B.field.turns * P}s</i></span>`);
+    if (v.delayed.length) out.push(`<span class="bf up" title="Delayed hit incoming"><b>⌛</b><i>${v.delayed.length}</i></span>`);
+    const nm = { atk: 'LOG', def: 'FWL', spd: 'CLK', acc: 'ACC', eva: 'EVA' };
+    for (const k in v.stages) if (v.stages[k]) out.push(`<span class="bf ${v.stages[k] > 0 ? 'up' : 'dn'} st" title="${nm[k]} ${v.stages[k] > 0 ? '+' : ''}${v.stages[k]}"><b>${nm[k]}</b><i>${v.stages[k] > 0 ? '▲' : '▼'}${Math.abs(v.stages[k])}</i></span>`);
+    const html = out.join('');
+    if (el.innerHTML !== html) el.innerHTML = html;
+  }
+
+  function refreshControls() {
+    if (!B || !B.rt || !ui) return;
+    const rt = B.rt[0], flux = B.sides[0].v.flux;
+    const q = rt.queued, qr = q && ENG.rec(q);
+    const full = B.gcdFor(0, qr);
+    const fill = $('gcdFill');
+    if (fill) {
+      fill.style.width = (clamp(1 - rt.gcd / full, 0, 1) * 100) + '%';
+      $('castbar').classList.toggle('ready', rt.gcd <= 0);
+      $('castbar').classList.toggle('starved', !!rt.starved);
+      const next = rt.pending ? `◇ Bind next · ${Math.round(chanceWith(rt.pending.item) * 100)}%`
+        : !q ? 'Holding fire · tap a red tile to attack'
+        : rt.starved ? `${mergeLabel(q)} · needs ${B.costFor(0, qr)} Flux`
+        : rt.fallback ? `${mergeLabel(rt.fallback)} (low Flux)` : mergeLabel(q);
+      $('gcdText').textContent = paused ? 'Paused' : (S.settings.auto ? 'Auto · ' : '') + next;
+      $('gcdTime').textContent = paused ? 'Space to resume' : rt.gcd > 0 ? rt.gcd.toFixed(1) + 's' : rt.starved ? `${Math.floor(flux)}/${B.costFor(0, qr)}` : 'now';
+      $('castbar').classList.toggle('binding', !!rt.pending);
+      $('castbar').classList.toggle('holding', !q && !rt.pending);
+      if (rt.starved) tip('flux', 'Your auto-attack needs more Flux. Rest (↻) refills a big chunk, or pick a cheaper attack.');
+    }
+    document.querySelectorAll('#bctrl .hb[data-key]').forEach(b => {
+      const k = b.dataset.key, r = ENG.rec(k), cdEl = b.querySelector('.cdo');
+      const cost = B.costFor(0, r), short = cost > flux;
+      const cEl = b.querySelector('.cost'); if (cEl) { cEl.textContent = cost; cEl.classList.toggle('disc', cost < r.flux); }
+      b.classList.toggle('short', short);
+      if (ENG.isAttack(k)) {
+        b.classList.toggle('q', k === q);
+        cdEl.style.setProperty('--p', k === q && rt.gcd > 0 ? (rt.gcd / full * 360) + 'deg' : '0deg');
+        cdEl.textContent = '';
+      } else {
+        const cd = rt.cds[k] || 0, tot = ENG.cooldownFor(r);
+        b.classList.toggle('cooling', cd > 0); b.classList.toggle('ready', !cd && !short);
+        cdEl.style.setProperty('--p', cd > 0 ? (cd / tot * 360) + 'deg' : '0deg');
+        cdEl.textContent = cd > 0 ? Math.ceil(cd) : '';
+      }
+    });
+    const cdu = (id, key, lock) => {
+      const b = document.querySelector(`#bctrl [data-u=${id}]`); if (!b) return;
+      const el = b.querySelector('.cdo'), cd = key ? rt.cds[key] || 0 : 0, tot = key ? ENG.UTIL_CD[key] || 1 : 1;
+      el.style.setProperty('--p', cd > 0 ? (cd / tot * 360) + 'deg' : '0deg');
+      el.textContent = cd > 0 ? Math.ceil(cd) : '';
+      b.classList.toggle('cooling', cd > 0 || !!lock);
+    };
+    cdu('rest', 'defrag'); cdu('bag', 'item'); cdu('swap', 'switch', rt.gcd > 0);
+    const tg = (id, on) => { const b = document.querySelector(`#bctrl [data-u=${id}]`); if (b) b.classList.toggle('on', on); };
+    tg('pause', paused); tg('auto', !!S.settings.auto);
+    const rb = document.querySelector('#bctrl [data-u=rest]'); if (rb) rb.classList.toggle('hot', flux < (qr ? qr.flux : 0) && !rt.cds.defrag);
+    const bind = $('bindBtn');
+    if (bind) {
+      const lat = bestLattice(), ch = lat ? chanceWith(lat) : 0;
+      bind.disabled = !lat && !rt.pending;
+      bind.classList.toggle('on', !!rt.pending);
+      bind.classList.toggle('hot', ch >= 0.35);
+      const html = `<span class="cdo"></span><i>◇</i><small>${lat ? Math.round(ch * 100) + '%' : 'none'}</small>`;
+      if (bind.innerHTML !== html) bind.innerHTML = html;
+      bind.title = rt.pending ? 'Bind queued for your next action. Tap to cancel.' : lat ? `${lat.name} ×${lat.count}. Fires on your next action.` : 'No lattices left';
+      if (ui[1].hp / ui[1].max < 0.5) tip('bind', 'The foe is weak. Tap Bind to capture it. Lower HP and status effects raise the odds.');
+    }
+    renderBuffs(0); renderBuffs(1);
+    const fc = $('cast1'); if (fc) { const e = B.rt[1]; fc.style.width = (clamp(1 - e.gcd / B.gcdFor(1, null), 0, 1) * 100) + '%'; }
+  }
+
+  function panel(title, html, back) {
+    setPaused(true);
+    const p = $('bpanel'); $('bctrl').classList.add('hidden'); p.classList.remove('hidden');
+    p.innerHTML = `<div class="ph"><span>${title} <em class="fine">· paused</em></span>${back !== false ? '<button class="btn small" data-back>Back</button>' : ''}</div>${html}`;
+    const bb = p.querySelector('[data-back]'); if (bb) bb.onclick = closePanel;
+    p.scrollTop = 0;
+    return p;
+  }
+  function closePanel() { $('bpanel').classList.add('hidden'); $('bctrl').classList.remove('hidden'); buildControls(); setPaused(false); }
+
+  function panelCompose() {
+    const d = B.act(0), w = ENG.width(d);
+    tip('compose', 'Choose two main essences and bind sub-essences to either one. Strike, Barrage and Siphon merges become red attacks; Hex, Ward, Mend and Field become violet actives with a cooldown.');
+    const p = panel(`Compose · up to ${w} sub${w > 1 ? 's' : ''}`, '<div id="cmp"></div>');
+    const remember = k => { if (!d.memory.includes(k)) { const i = d.memory.indexOf(null); if (i >= 0) { d.memory[i] = k; toast(`Saved to memory slot ${i + 1}.`); } } };
+    composer(p.querySelector('#cmp'), {
+      mains: ENG.mainsOf(d.key), subs: d.attuned, width: w, extra: k => `<div class="row">${kindBadge(k)}<span class="fine">${discovered.has(k) ? esc(ENG.SIGNATURE[ENG.rec(k).cls]) : ''}</span></div>`,
+      actions: [
+        { label: 'Use now', pri: true, ok: k => ENG.rec(k).flux <= B.sides[0].v.flux, fn: k => {
+          remember(k); closePanel();
+          if (ENG.isAttack(k)) { B.rt[0].queued = k; refreshControls(); }
+          else { const ev = B.useActive(k); if (ev) consume(ev); else toast('That active is cooling down.'); }
+        } },
+        { label: 'Save to memory', ok: k => !d.memory.includes(k), fn: k => { const i = d.memory.indexOf(null), slot = i >= 0 ? i : 3; d.memory[slot] = k; toast(`Saved to memory slot ${slot + 1}.`); closePanel(); } },
+      ],
+    });
+  }
+
+  function panelSwitch(forced) {
+    const html = `<div class="plist">${S.party.map((d, i) => partyCard(d, i === B.sides[0].active)).join('')}</div>${forced ? '' : '<p class="fine">Swapping uses your global cooldown and has a 4s cooldown.</p>'}`;
+    const p = panel(forced ? 'Choose your next daemon' : 'Swap daemon', html, !forced);
+    p.querySelectorAll('[data-i]').forEach(b => { b.onclick = () => {
+      const i = +b.dataset.i, d = S.party[i];
+      if (d.hp <= 0 || i === B.sides[0].active) return;
+      if (forced) { const ev = B.forceSwitch(i); closePanel(); consume(ev); startLoop(); return; }
+      closePanel();
+      utility({ type: 'switch', idx: i }, 'Wait for your global cooldown before swapping.');
+    }; });
+    hydrateCanvases(p);
+  }
+
+  function panelBag() {
+    const items = Object.values(S.bag).filter(it => it.count > 0 && ['patch', 'ward', 'catalyst', 'cell'].includes(it.kind));
+    const html = items.length ? `<div class="mlist">${items.map(it => `<button class="mbtn" data-id="${esc(it.id)}" data-tip="i:${esc(it.id)}"><span class="t">${esc(it.name)} ×${it.count}</span><span class="m">${itemDesc(it)}</span></button>`).join('')}</div><p class="fine">Items fire instantly and share a 6s cooldown.</p>`
+      : '<p class="sub">No battle items. Forge Patches, Modules, Catalysts and Flux Cells from motes at the Nexus Forge.</p>';
+    const p = panel('Items', html);
+    p.querySelectorAll('[data-id]').forEach(b => { b.onclick = () => {
+      const it = S.bag[b.dataset.id];
+      closePanel();
+      if (utility({ type: 'item', item: it }, 'Items are cooling down.')) { it.count--; if (it.count <= 0 && it.id !== 'lattice:basic') delete S.bag[it.id]; }
+    }; });
+  }
+
+  function panelInfo(side) {
+    const d = B.act(side), r = ENG.rec(d.key), pv = ENG.PASSIVES[r.dPassive], v = B.sides[side].v;
+    const st = side === 0 ? v.stats : null;
+    const nm = { atk: 'Logic', def: 'Firewall', spd: 'Clock', acc: 'Accuracy', eva: 'Evasion' };
+    const stages = Object.entries(v.stages).filter(([, x]) => x).map(([k, x]) => `${nm[k]} ${x > 0 ? '+' : ''}${x}`).join(', ') || 'none';
+    const status = v.status ? `${ENG.STATUS[v.status.id].name} (${v.status.turns * ENG.PULSE}s left)` : 'none';
+    const html = `<div class="info"><canvas data-sprite="${d.key}" ${d.prism ? 'data-prism="1"' : ''} width="96" height="96"></canvas><div>
+      <div class="pn">${esc(dName(d))} <span class="fine">Lv ${d.level} · ${TIER[r.tier]}</span></div>${genomeHTML(d.key)}
+      <p class="fine"><span class="kb pas">Passive</span> <b>${pv[0]}</b>: ${esc(pv[1])}</p>
+      <p class="fine">Status: ${esc(status)} · Stat changes: ${esc(stages)}${v.shield ? ` · Shield ${v.shield}` : ''} · Global cooldown ${B.gcdFor(side, null).toFixed(1)}s</p>
+      ${st ? `<p class="fine">Logic ${st.atk} · Firewall ${st.def} · Clock ${st.spd} · Coherence ${st.coh}</p>` : `<p class="fine">Pure merges against it: ${E.MAINS.map(m => `<span style="color:${MAINC(m)}">${E.MAIN[m].name} ×${ENG.effectiveness(m + m, d.key)}</span>`).join(' · ')}</p>`}
+      </div></div>`;
+    const p = panel(side === 0 ? 'Your daemon' : 'Foe', html);
+    hydrateCanvases(p);
+  }
+
+  let boundNow = null; // a daemon bound this battle: its trait is revealed once the arena closes
+  async function endBattle() {
+    const res = B.result, o = bctx;
+    await sleep(250);
+    if (res === 'win') {
+      // forage trait: each mote has a chance to double
+      const fg = partyTrait('forage');
+      let extra = 0;
+      if (fg) for (const k of Object.keys(B.rewards.motes)) { let add = 0; for (let i = 0; i < B.rewards.motes[k]; i++) if (Math.random() * 100 < fg) add++; B.rewards.motes[k] += add; extra += add; }
+      for (const [k, n] of Object.entries(B.rewards.motes)) S.motes[k] = (S.motes[k] || 0) + n;
+      const got = Object.entries(B.rewards.motes).map(([k, n]) => `${n} ${E.MAIN[k] ? E.MAIN[k].name : E.SUB[k].name}`).join(', ');
+      if (got) await logMsg(`Collected motes: ${got}${extra ? ` (${extra} foraged)` : ''}.`);
+      if (o.wild) { S.stats.wild++; questEvent('defeat'); }
+      if (o.trainer && !o.rift) {
+        if (o.rematch) S.rematches[o.trainer.id] = (S.rematches[o.trainer.id] || 0) + 1;
+        else if (!S.beaten.includes(o.trainer.id)) S.beaten.push(o.trainer.id);
+        grant({ lattices: o.rematch ? 3 : 2 });
+        await logMsg(`Received ${o.rematch ? 3 : 2} Basic Lattices.`);
+      }
+    }
+    if (res === 'bind') {
+      const d = B.rewards.bound;
+      d.uid = 'd' + Date.now().toString(36) + rnd(1e6).toString(36);
+      d.seed = newSeed();
+      boundForms.add(d.key); seen.add(d.key);
+      S.stats.binds++;
+      if (d.prism) S.prisms.push(d.key);
+      if (S.party.length < 6) S.party.push(d); else { S.box.push(d); toast(`${esc(dName(d))} was sent to Storage.`); }
+      designTrait(d); boundNow = d;
+      questEvent('bind', { key: d.key });
+    }
+    for (const k of B.discovered) if (!discovered.has(k)) markDiscovered(k, true);
+    $('battle').classList.add('hidden'); document.body.classList.remove('inbattle');
+    mode = 'busy';
+    if (boundNow) { const d = boundNow; boundNow = null; await celebrateTrait(d, null, true); }
+    if (res === 'lose') {
+      for (const d of S.party) d.hp = ENG.calcStats(d).hp;
+      toLastHeal();
+      if (o.rift) { S.rift.best = Math.max(S.rift.best, o.floor - 1); riftRun = null; }
+      await say('System', [o.rift ? `The Rift ejects you after floor ${o.floor - 1}.` : 'All of your daemons were deallocated...', 'Rebooting at the last terminal. Your daemons have been restored.']);
+    }
+    await processXp();
+    if (res === 'win' && o.trainer && !o.rift && !o.rematch) {
+      await say(o.trainer.name, [o.trainer.outro]);
+      const first = !S.flags.includes('won:' + o.trainer.id);
+      if (first) { S.flags.push('won:' + o.trainer.id); if (o.trainer.gives) await giveReward(o.trainer.gives, o.trainer.name); }
+      if (o.trainer.badge && !S.keys.includes(o.trainer.badge)) {
+        S.keys.push(o.trainer.badge); S.badges = S.keys.length;
+        const of = C.KEYS ? ` (${Math.min(S.badges, C.KEYS)}/${C.KEYS})` : '';
+        await say('System', [`You received the ${o.trainer.badge}!${of}` + (o.trainer.final || !C.GATE_KEYS.includes(S.badges) ? '' : ' A gate somewhere just opened.')]);
+      }
+      setFlag(o.trainer.sets);
+      refreshThings();
+      if (o.trainer.final) { S.won = true; refreshThings(); B = null; bctx = null; save(); showEnding(); return; }
+    }
+    if (res === 'win' && o.rematch) await say(o.trainer.name, ['Now that was a real test. Come back any time.']);
+    if (res === 'win' && o.rift && (await riftCleared(o.floor))) { B = null; startRiftFloor(o.floor + 1); return; }
+    B = null; bctx = null;
+    save();
+    $('hud').classList.remove('hidden'); updateHud();
+    mode = 'world'; setPad(true);
+  }
+
+  async function processXp() {
+    const list = pendingXp; pendingXp = [];
+    const byUid = new Map();
+    for (const e of list) { const x = byUid.get(e.uid) || { attune: 0, recompile: false }; x.attune += e.attune; x.recompile = x.recompile || e.recompile; byUid.set(e.uid, x); }
+    for (const [uid, x] of byUid) {
+      const d = S.party.find(p => p.uid === uid); if (!d) continue;
+      for (let i = 0; i < x.attune; i++) await attuneModal(d);
+      if (x.recompile) await recompileModal(d);
+    }
+  }
+
+  // ------------------------------------------------------------------ the Rift
+  async function riftTerminal() {
+    mode = 'busy'; setPad(false);
+    if (!S.won) { await say('Rift', [`A tear in the lattice, humming with every merge at once. It stays sealed until ${(C.OPERATORS.find(o => o.final) || { name: 'the final boss' }).name} falls.`]); mode = 'world'; setPad(true); return; }
+    const c = await choose('The Rift', `Endless floors of daemons drawn from the entire lattice, any of the ${DB.count} genomes. Floors get harder, every fifth floor holds a guardian, and rewards grow as you descend. You recover 30% HP between floors and can leave after any floor. Your best: floor ${S.rift.best}.`, ['Enter the Rift', 'Not now']);
+    if (c !== 0) { mode = 'world'; setPad(true); return; }
+    startRiftFloor(1);
+  }
+  function riftTeam(n) {
+    const boss = n % 5 === 0;
+    const tierMax = Math.min(3, 1 + Math.floor(n / 4)), tierMin = boss ? tierMax : Math.min(3, Math.floor(n / 7));
+    const size = boss ? 3 : n >= 8 ? 2 : 1;
+    const lvl = Math.round(Math.max(24, partyAvg() - 3) + n * 1.1);
+    const team = [];
+    for (let i = 0; i < size; i++) {
+      const pool = BY_TIER[tierMin + rnd(tierMax - tierMin + 1)];
+      team.push(ENG.createDaemon(pool[rnd(pool.length)], Math.min(ENG.LEVEL_CAP, lvl + (boss && i === size - 1 ? 3 : 0)), { extraAttune: 2 }));
+    }
+    return team;
+  }
+  function startRiftFloor(n) {
+    riftRun = { floor: n };
+    startBattle({ enemy: riftTeam(n), wild: false, trainer: { name: `Rift · Floor ${n}`, id: 'rift' }, rift: true, floor: n, zone: C.ZONES.core ? 'core' : zoneAt(player.x, player.y) });
+  }
+  async function riftCleared(n) {
+    S.rift.best = Math.max(S.rift.best, n);
+    const rw = { motes: {} };
+    for (let i = 0; i < 2 + Math.floor(n / 2); i++) { const k = rnd(3) ? E.SUB_ORDER[rnd(E.SUB_ORDER.length)] : E.MAINS[rnd(E.MAINS.length)]; rw.motes[k] = (rw.motes[k] || 0) + 1; }
+    let script = '';
+    if (n % 5 === 0) {
+      rw.lattices = 2;
+      const s = E.SUB_ORDER[rnd(E.SUB_ORDER.length)], id = 'script:rift-' + s;
+      if (S.bag[id]) S.bag[id].count++; else S.bag[id] = { id, kind: 'script', name: `${E.SUB[s].name} Attune Script`, subs: [s], count: 1 };
+      script = `, and a ${E.SUB[s].name} Attune Script`;
+    }
+    grant(rw);
+    for (const d of S.party) if (d.hp > 0) { const mx = ENG.calcStats(d).hp; d.hp = Math.min(mx, d.hp + Math.ceil(mx * 0.3)); }
+    save();
+    const c = await choose(`Floor ${n} cleared`, `Rewards: ${rewardText(rw)}${script}. Your daemons recover 30% HP. ${(n + 1) % 5 === 0 ? `A guardian holds floor ${n + 1}.` : `Floor ${n + 1} is next.`}`, [`Descend to floor ${n + 1}`, 'Leave the Rift']);
+    if (c !== 0) riftRun = null;
+    return c === 0;
+  }
+
+  // ------------------------------------------------------------------ modals
+  function modal(html) { $('modal').classList.remove('hidden'); $('modalCard').innerHTML = html; hydrateCanvases($('modalCard')); return $('modalCard'); }
+  function closeModal() { $('modal').classList.add('hidden'); }
+  // In-page replacement for confirm(): resolves the index of the button pressed.
+  function choose(title, text, buttons) {
+    return new Promise(res => {
+      const card = modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><div class="btnrow">${buttons.map((b, i) => `<button class="btn ${i ? '' : 'pri'}" data-c="${i}">${esc(b)}</button>`).join('')}</div>`);
+      card.querySelectorAll('[data-c]').forEach(b => { b.onclick = () => { closeModal(); res(+b.dataset.c); }; });
+    });
+  }
+  // In-page replacement for prompt(): resolves the text, or null on cancel.
+  function askText(title, text, value, ok, max) {
+    return new Promise(res => {
+      const card = modal(`<h2>${esc(title)}</h2><p>${esc(text)}</p><input class="search" id="askInput" maxlength="${max || 200}" value="${esc(value)}"><div class="btnrow"><button class="btn pri" data-ok>${esc(ok)}</button><button class="btn" data-cancel>Cancel</button></div>`);
+      const inp = card.querySelector('#askInput'); inp.focus(); inp.select();
+      const done = v => { closeModal(); res(v); };
+      card.querySelector('[data-ok]').onclick = () => done(inp.value);
+      card.querySelector('[data-cancel]').onclick = () => done(null);
+      inp.onkeydown = e => { if (e.key === 'Enter') done(inp.value); };
+    });
+  }
+
+  function attuneModal(d) {
+    return new Promise(res => {
+      const pool = ENG.eligibleSubs(d.key).filter(s => !d.attuned.includes(s));
+      if (!pool.length) return res();
+      const opts = [];
+      while (opts.length < Math.min(3, pool.length)) { const s = pool[rnd(pool.length)]; if (!opts.includes(s)) opts.push(s); }
+      const card = modal(`<h2>${esc(dName(d))} can attune a new essence</h2><p>Attuned sub-essences can be used in composed merges and in recompiles. Pick one.</p>
+        <div class="opts">${opts.map(s => `<button class="opt" data-s="${s}"><span class="grow">${essChip(s, E.SUB[s].host ? E.MAIN[E.SUB[s].host].name + '-bound' : 'universal')}<small>${esc(E.SUB[s].desc)}</small></span></button>`).join('')}</div>`);
+      card.querySelectorAll('[data-s]').forEach(b => { b.onclick = () => { d.attuned.push(b.dataset.s); closeModal(); toast(`${esc(dName(d))} attuned ${E.SUB[b.dataset.s].name}.`); res(); }; });
+    });
+  }
+
+  function recompileModal(d) {
+    return new Promise(res => {
+      const opts = ENG.recompileOptions(d);
+      if (!opts.length) return res();
+      const cur = statTotal(d.key);
+      const card = modal(`<h2>${esc(dName(d))} is ready to recompile</h2><p>Binding one attuned sub-essence into its genome creates a new form. This can't be undone. You can also wait and recompile later from the Party menu.</p>
+        <div class="opts">${opts.map(k => { const r = ENG.rec(k), p = E.parseKey(k), added = p.subs.find(t => !E.parseKey(d.key).subs.some(u => u.s === t.s && u.h === t.h)); const dt = statTotal(k) - cur;
+          return `<button class="opt" data-k="${k}"><canvas data-sprite="${k}" ${d.prism ? 'data-prism="1"' : ''} width="64" height="64"></canvas><span class="grow"><b>${seen.has(k) ? esc(r.dName) : '??? form'}</b> <span class="delta up">+${dt} stats</span><small>+ ${E.SUB[added.s].name} → ${E.MAIN[E.hostMain(p, added.h)].name} · passive ${ENG.PASSIVES[r.dPassive][0]}</small></span></button>`; }).join('')}</div>
+        <button class="btn" data-no>Not now</button>`);
+      card.querySelectorAll('[data-k]').forEach(b => { b.onclick = () => {
+        const before = dName(d);
+        ENG.recompile(d, b.dataset.k); seen.add(d.key); boundForms.add(d.key);
+        closeModal();
+        toast(`${esc(before)} recompiled into <b>${esc(ENG.rec(d.key).dName)}</b>!`, 'rare');
+        evolveTrait(d);
+        res();
+      }; });
+      card.querySelector('[data-no]').onclick = () => { closeModal(); res(); };
+    });
+  }
+
+  function hydrateCanvases(root) {
+    root.querySelectorAll('canvas[data-sprite]').forEach(c => SP.paint(c, c.dataset.sprite, { silhouette: c.dataset.sil === '1', prism: c.dataset.prism === '1' }));
+  }
+
+  // ------------------------------------------------------------------ composer
+  // What the player can reason about before a merge is discovered: the pair
+  // reaction, what each bound sub tends to do on its host, and whether the
+  // chosen subs resonate (named once found, hinted before).
+  function composeHints(a, b, toks) {
+    const rx = E.REACTION[E.pairId(a, b)];
+    const out = [`<span class="hint">${esc(rx.names[a])}${rx.volatile ? ' · <b class="bad">volatile</b>' : ''}</span>`];
+    const present = new Set();
+    for (const t of toks) {
+      const s = t.slice(0, 2), host = t[2] === '1' ? a : b, sub = E.SUB[s];
+      present.add(s);
+      out.push(sub.host ? `<span class="hint" style="color:${subColor(s)}">${sub.name}: ${E.EFFECTS[sub.fx]}</span>`
+        : `<span class="hint" style="color:${subColor(s)}">${sub.name} on ${E.MAIN[host].name}: ${E.FACET[s][host].name} (${E.EFFECTS[E.FACET[s][host].fx]})</span>`);
+    }
+    const found = resonancesFound();
+    for (const r of E.RESONANCE) if (r.subs.every(s => present.has(s))) out.push(found.has(r.name) ? `<span class="hint res">✧ ${r.name}</span>` : '<span class="hint res">✧ Two of these essences resonate…</span>');
+    for (const r of E.TRINITY) if (r.subs.every(s => present.has(s))) out.push(found.has(r.name) ? `<span class="hint tri">✦ ${r.name}</span>` : '<span class="hint tri">✦ Perfect alignment…</span>');
+    return out.join('');
+  }
+
+  function composer(root, o) {
+    const mains = Array.from(new Set(o.mains));
+    let a = mains[0], b = mains[1] || mains[0];
+    const tok = new Set(); // "Em1"
+    if (o.initial) { const p = E.parseKey(o.initial); a = p.a; b = p.b; for (const t of p.subs) tok.add(t.s + t.h); }
+    const key = () => E.makeKey(a, b, [...tok].map(t => ({ s: t.slice(0, 2), h: +t[2] })));
+    const hostsFor = s => { const h = []; if (E.eligible(s, a)) h.push(1); if (a !== b && E.eligible(s, b)) h.push(2); return h; };
+    const cycle = s => {
+      const hs = hostsFor(s);
+      const cur = hs.filter(h => tok.has(s + h));
+      const states = [[]].concat(hs.map(h => [h]));
+      if (hs.length === 2) states.push([1, 2]);
+      let idx = states.findIndex(st => st.length === cur.length && st.every(h => cur.includes(h)));
+      const others = [...tok].filter(t => t.slice(0, 2) !== s).length;
+      for (let n = 0; n < states.length; n++) { idx = (idx + 1) % states.length; if (others + states[idx].length <= o.width) break; }
+      for (const h of [1, 2]) tok.delete(s + h);
+      for (const h of states[idx]) tok.add(s + h);
+    };
+    const prune = () => { for (const t of [...tok]) { const s = t.slice(0, 2), h = +t[2]; if (!hostsFor(s).includes(h)) tok.delete(t); } };
+    function render() {
+      prune();
+      const k = key(), r = ENG.rec(k), known = discovered.has(k);
+      const mainBtns = which => mains.map(m => `<button class="mainbtn ${((which === 1 ? a : b) === m) ? 'on' : ''}" style="--c:${MAINC(m)}" data-m${which}="${m}">${E.MAIN[m].name}</button>`).join('');
+      const subsHTML = E.SUB_ORDER.filter(s => o.subs.includes(s)).map(s => {
+        const hs = hostsFor(s), on = hs.filter(h => tok.has(s + h));
+        const hostLbl = on.map(h => E.MAIN[h === 1 ? a : b].name[0]).join('+');
+        const cnt = o.counts ? `<span class="cnt">×${o.counts[s] || 0}</span>` : '';
+        return `<button class="subchip ${on.length ? 'on' : ''}" style="--c:${subColor(s)};--hc:${on.length ? MAINC(on[0] === 1 ? a : b) : '#333'}" data-s="${s}" ${hs.length ? '' : 'disabled'}>
+          <span style="color:${subColor(s)}">◆</span> ${E.SUB[s].name}${on.length ? `<span class="host">${hostLbl}</span>` : ''}<small>${E.SUB[s].host ? E.MAIN[E.SUB[s].host].name + ' only' : 'any host'}</small>${cnt}</button>`;
+      }).join('');
+      const pk = a + b;
+      const fxHTML = known ? r.fx.map(f => `<span class="st ${E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf'}">${esc(ENG.describeFx(f))}</span>`).join('') : '';
+      const prev = known ? `<div class="preview">
+          <span class="genome">${kindBadge(k)}<span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}</span>
+          <div class="pn">${esc(r.name)}</div>
+          <div class="pm">${r.damaging ? `<span>Power <b>${r.power}${r.hits > 1 ? '×' + r.hits : ''}</b></span>` : ''}<span>Acc <b>${r.acc > 100 ? 'sure' : r.acc}</b></span><span>Flux <b>${r.flux}</b></span>${r.prio ? `<span>Priority <b>${r.prio > 0 ? '+' : ''}${r.prio}</b></span>` : ''}<span>Instability <b style="color:${r.instab >= 35 ? 'var(--bad)' : r.instab >= 18 ? 'var(--warn)' : 'var(--good)'}">${r.instab}%</b></span></div>
+          <div class="fxl">${fxHTML}</div>
+          <div class="txt">${esc(E.REACTION[E.pairId(a, b)].line + ' ' + r.text)}</div></div>`
+        : `<div class="preview unknown"><div class="pn">? ? ? ? ?</div><div class="pm"><span>Flux <b>${r.flux}</b></span><span>${o.forge ? 'Forge' : 'Cast'} it to reveal what it becomes.</span></div><div class="fxl">${composeHints(a, b, [...tok])}</div></div>`;
+      root.innerHTML = `<div class="composer">
+        <div class="row"><label>Main</label>${mainBtns(1)}</div>
+        ${mains.length > 1 ? `<div class="row"><label>Second</label>${mainBtns(2)}</div>` : ''}
+        <div class="row"><label>Subs ${tok.size}/${o.width}</label><span class="fine">Tap to bind, tap again to switch host.</span></div>
+        <div class="subgrid">${subsHTML || '<span class="fine">No sub-essences attuned yet. They come with levels, scripts and recompiles.</span>'}</div>
+        <div class="row">${genomeHTML(k)}<span class="fine">${countPair(pk)}/${pairTotal(pk)} found</span></div>
+        ${prev}
+        ${o.extra ? o.extra(k) : ''}
+        <div class="btnrow">${o.actions.map((ac, i) => `<button class="btn ${ac.pri ? 'pri' : ''}" data-act="${i}" ${ac.ok && !ac.ok(k) ? 'disabled' : ''}>${ac.label}</button>`).join('')}</div>
+      </div>`;
+      root.querySelectorAll('[data-m1]').forEach(x => { x.onclick = () => { a = x.dataset.m1; render(); }; });
+      root.querySelectorAll('[data-m2]').forEach(x => { x.onclick = () => { b = x.dataset.m2; render(); }; });
+      root.querySelectorAll('[data-s]').forEach(x => { x.onclick = () => { cycle(x.dataset.s); render(); }; });
+      root.querySelectorAll('[data-act]').forEach(x => { x.onclick = () => o.actions[+x.dataset.act].fn(key(), render); });
+    }
+    render();
+  }
+
+  // ------------------------------------------------------------------ menus
+  const TABS = [['party', 'Party'], ['bag', 'Bag'], ['requests', 'Requests'], ['codex', 'Codex'], ['forge', 'Forge'], ['splice', 'Splice'], ['system', 'System']];
+  function openSheet(tab) {
+    if (mode !== 'world' && mode !== 'sheet') return;
+    mode = 'sheet'; setPad(false);
+    sheetTab = tab; detailUid = null;
+    $('sheet').classList.remove('hidden'); $('hud').classList.add('hidden');
+    renderSheet();
+  }
+  function closeSheet() { $('sheet').classList.add('hidden'); $('hud').classList.remove('hidden'); mode = 'world'; setPad(true); updateHud(); save(); }
+  $('sheetClose').onclick = closeSheet;
+  function atForge() { const [dx, dy] = DIRS[player.dir]; return tileAt(player.x + dx, player.y + dy) === 'F'; }
+
+  function renderSheet() {
+    $('sheetTabs').innerHTML = TABS.filter(([id]) => (id !== 'forge' && id !== 'splice') || atForge()).map(([id, nm]) => `<button class="${id === sheetTab ? 'on' : ''}" data-tab="${id}">${nm}${id === 'requests' ? ` <small>${S.quests.length}</small>` : id === 'splice' && S.kernels.length ? ` <small>${S.kernels.length}</small>` : ''}</button>`).join('');
+    $('sheetTabs').querySelectorAll('[data-tab]').forEach(b => { b.onclick = () => { sheetTab = b.dataset.tab; detailUid = null; renderSheet(); }; });
+    const body = $('sheetBody');
+    body.scrollTop = 0;
+    ({ party: sheetParty, bag: sheetBag, requests: sheetRequests, codex: sheetCodex, forge: sheetForge, splice: sheetSplice, system: sheetSystem })[sheetTab](body);
+    hydrateCanvases(body);
+  }
+
+  function partyCard(d, sel, idx) {
+    const st = ENG.calcStats(d), pct = clamp(d.hp / st.hp, 0, 1);
+    const i = idx != null ? idx : S.party.indexOf(d);
+    const canRc = ENG.recompileOptions(d).length > 0;
+    return `<button class="pcard ${d.hp <= 0 ? 'fainted' : ''} ${sel ? 'sel' : ''}" data-i="${i}" data-uid="${d.uid}">
+      <canvas data-sprite="${d.key}" ${d.prism ? 'data-prism="1"' : ''} width="64" height="64"></canvas>
+      <span class="grow"><span class="n">${esc(dName(d))}${d.prism ? ' <em class="prism">✦</em>' : ''}<span>Lv ${d.level}</span></span>${genomeDots(d.key)}${d.trait ? ` <span class="rar r${d.trait.tier}">${esc(d.trait.name)}</span>` : ''}
+      <span class="bar"><i style="width:${pct * 100}%;background:${pct > 0.5 ? 'var(--good)' : pct > 0.2 ? 'var(--warn)' : 'var(--bad)'}"></i></span>
+      <span class="nums"><span>HP ${d.hp}/${st.hp}</span><span>${canRc ? '<b class="rc">Recompile ready</b>' : TIER[E.parseKey(d.key).subs.length]}</span></span></span></button>`;
+  }
+
+  function sheetParty(body) {
+    if (detailUid) return daemonDetail(body, detailUid);
+    const utils = Object.keys(TRAIT_CAP).map(c => [c, partyTrait(c)]).filter(([, v]) => v).map(([c, v]) => DZ.describeTrait({ code: c, mag: v }));
+    body.innerHTML = `<h3>Party (${S.party.length}/6)</h3><div class="plist">${S.party.map(d => partyCard(d)).join('')}</div>
+      <p class="fine">Daemons that sit out a battle still earn half XP, as long as they're standing.</p>
+      ${utils.length ? `<p class="fine"><b>Party traits:</b> ${utils.map(esc).join(' · ')}${S.steps < S.repelUntil ? ` · repel active for ${S.repelUntil - S.steps} steps` : ''}</p>` : S.steps < S.repelUntil ? `<p class="fine">Repel active for ${S.repelUntil - S.steps} steps.</p>` : ''}
+      ${S.kernels.length ? `<h3>Kernels compiling</h3>${kernelsHTML()}<p class="fine">Kernels boot while you walk. The Splice tab at the Nexus Forge makes more.</p>` : ''}
+      <h3>Storage (${S.box.length})</h3>${S.box.length ? `<div class="plist">${S.box.map((d, i) => partyCard(d, false, 'b' + i)).join('')}</div>` : '<p class="sub">Daemons you bind with a full party are stored here.</p>'}`;
+    body.querySelectorAll('[data-uid]').forEach(b => { b.onclick = () => { detailUid = b.dataset.uid; renderSheet(); }; });
+  }
+  const findDaemon = uid => S.party.find(d => d.uid === uid) || S.box.find(d => d.uid === uid);
+
+  function daemonDetail(body, uid) {
+    const d = findDaemon(uid); if (!d) { detailUid = null; return sheetParty(body); }
+    const inParty = S.party.includes(d);
+    const r = ENG.rec(d.key), st = ENG.calcStats(d), pv = ENG.PASSIVES[r.dPassive];
+    const stats = [['HP', st.hp, r.dStats[0]], ['Logic', st.atk, r.dStats[1]], ['Firewall', st.def, r.dStats[2]], ['Clock', st.spd, r.dStats[3]], ['Flux', st.flux, r.dStats[4]], ['Coherence', st.coh, r.dStats[5]]];
+    const rc = ENG.recompileOptions(d);
+    const next = ENG.xpFor(d.level + 1), cur = ENG.xpFor(d.level);
+    const w = ENG.width(d);
+    body.innerHTML = `<button class="btn small" data-back>← Party</button>
+      <div class="detail">
+        <div><canvas class="big" data-sprite="${d.key}" ${d.prism ? 'data-prism="1"' : ''} width="160" height="160"></canvas></div>
+        <div>
+          <h2>${esc(dName(d))}${d.prism ? ' <em class="prism">✦ prismatic</em>' : ''} <span class="fine">Lv ${d.level} · ${TIER[r.tier]}</span></h2>
+          ${genomeHTML(d.key)}
+          <p class="lore">${esc(lore(d.key))}</p>
+          <div class="xpbar"><i style="width:${clamp((d.xp - cur) / (next - cur), 0, 1) * 100}%"></i></div>
+          <div class="fine">XP ${d.xp - cur}/${next - cur} · Passive <b>${pv[0]}</b>: ${esc(pv[1])}</div>
+        </div>
+      </div>
+      ${rc.length ? '<div class="btnrow gap"><button class="btn pri" data-rc>Recompile into a new form…</button></div>' : ''}
+      <h3>Memory</h3>
+      <div class="mem">${d.memory.map((k, i) => `<button class="mbtn" data-slot="${i}" ${k ? `data-tip="m:${k}"` : ''} style="--lc:${k ? (ENG.isAttack(k) ? 'var(--atk)' : 'var(--act)') : 'var(--line)'}"><span class="t">${k ? esc(mergeLabel(k)) : '— empty slot —'}</span>${k ? `<span class="m">${genomeDots(k)}${discovered.has(k) ? `<span class="cls">${ENG.rec(k).cls}</span>` : ''}<span>Flux ${ENG.rec(k).flux}</span></span>` : '<span class="m">Tap to compose</span>'}</button>`).join('')}</div>
+      <div id="memEdit"></div>
+      <h3>Attuned essences · merges up to ${w} sub${w > 1 ? 's' : ''}</h3>
+      <span class="genome">${ENG.mainsOf(d.key).map(m => essChip(m)).join('')}${d.attuned.map(s => essChip(s)).join('')}</span>
+      <p class="fine">Next attunements at levels ${ENG.ATTUNE_LEVELS.filter(l => l > d.level).slice(0, 3).join(', ') || '—'}. Sub width grows at 10 and 22. Recompiles unlock at ${ENG.RECOMPILE_LEVELS.join(', ')}.</p>
+      ${traitHTML(d)}${lineHTML(d)}
+      <h3>Stats</h3>
+      <div class="kv">${stats.map(([n, v, b]) => `<span class="lab">${n}</span><span class="sbar"><i style="width:${Math.min(100, b / 1.6)}%"></i></span><b>${v}</b>`).join('')}</div>
+      <h3>Manage</h3>
+      <div class="btnrow">
+        ${inParty && S.party.indexOf(d) > 0 ? '<button class="btn" data-lead>Make lead</button>' : ''}
+        ${inParty && S.party.length > 1 ? '<button class="btn" data-store>Move to storage</button>' : ''}
+        ${!inParty && S.party.length < 6 ? '<button class="btn" data-take>Move to party</button>' : ''}
+        <button class="btn" data-auto>Auto-fill memory</button>
+        <button class="btn" data-nick>Rename</button>
+      </div>`;
+    body.querySelector('[data-back]').onclick = () => { detailUid = null; renderSheet(); };
+    body.querySelectorAll('[data-slot]').forEach(b => { b.onclick = () => {
+      const i = +b.dataset.slot, box = body.querySelector('#memEdit');
+      box.innerHTML = `<h3>Compose memory slot ${i + 1}</h3><div id="cmpm"></div>`;
+      composer(box.querySelector('#cmpm'), {
+        mains: ENG.mainsOf(d.key), subs: d.attuned, width: w, initial: d.memory[i] || undefined,
+        actions: [
+          { label: 'Save to slot', pri: true, fn: k => { d.memory[i] = k; save(); renderSheet(); } },
+          { label: 'Clear slot', fn: () => { d.memory[i] = null; renderSheet(); } },
+        ],
+      });
+      box.scrollIntoView({ behavior: 'smooth' });
+    }; });
+    body.querySelectorAll('[data-active]').forEach(b => { b.onclick = () => useTraitActive(d, d.trait.fx.find(f => f.code === b.dataset.active)); });
+    const q = s => body.querySelector(s);
+    if (q('[data-lead]')) q('[data-lead]').onclick = () => { S.party.splice(S.party.indexOf(d), 1); S.party.unshift(d); renderSheet(); };
+    if (q('[data-rc]')) q('[data-rc]').onclick = async () => { await recompileModal(d); renderSheet(); };
+    if (q('[data-store]')) q('[data-store]').onclick = () => { S.party.splice(S.party.indexOf(d), 1); S.box.push(d); renderSheet(); };
+    if (q('[data-take]')) q('[data-take]').onclick = () => { S.box.splice(S.box.indexOf(d), 1); S.party.push(d); renderSheet(); };
+    q('[data-auto]').onclick = () => {
+      // strongest merges the player already knows first, then the engine's picks
+      const known = ENG.composableFor(d).filter(k => discovered.has(k) && ENG.rec(k).damaging)
+        .sort((x, y) => (ENG.rec(y).power * ENG.rec(y).hits) - (ENG.rec(x).power * ENG.rec(x).hits)).slice(0, 2);
+      d.memory = [...new Set(known.concat(ENG.autoMemory(d).filter(Boolean)))].slice(0, 4).concat([null, null, null, null]).slice(0, 4);
+      toast('Memory filled.'); renderSheet();
+    };
+    q('[data-nick]').onclick = async () => { const n = await askText('Rename daemon', 'Leave it empty to use the form name.', d.nick || '', 'Rename', 16); if (n !== null) { d.nick = n.trim().slice(0, 16) || null; renderSheet(); } };
+  }
+
+  // ---- traits and lineage in the daemon detail
+  const activeLeft = (d, code) => Math.max(0, ((d.cd || {})[code] || 0) - S.steps);
+  function traitHTML(d) {
+    const t = d.trait;
+    if (!t) return '';
+    const inParty = S.party.includes(d);
+    const fxRow = f => `<div class="tfx-row"><span class="kb ${f.cat === 'passive' ? 'pas' : f.cat === 'active' ? 'act' : 'utl'}">${f.cat}</span><span>${esc(DZ.describeTrait(f))}</span>${f.cat === 'active' ? (() => { const left = activeLeft(d, f.code); return `<button class="btn small" data-active="${f.code}" ${left || !inParty ? 'disabled' : ''}>${left ? `${left} steps` : 'Use'}</button>`; })() : ''}</div>`;
+    return `<h3>Trait</h3><div class="preview trait"><span class="genome">${traitChip(t)}<span class="fine">rolled ${t.pct}% · seed ${esc(d.seed)}</span></span>
+      <div class="pn">${esc(t.name)}</div><p class="lore">${esc(t.desc)}</p>${t.fx.map(fxRow).join('')}
+      ${t.fx.some(f => f.cat !== 'passive') && !inParty ? '<div class="fine">Utilities and actives only work while it is in the party.</div>' : ''}
+      ${(d.ancestry || []).length ? `<div class="fine">Ancestry: ${d.ancestry.map(a => esc(a.name)).join(' ← ')}</div>` : ''}</div>`;
+  }
+  function lineHTML(d) {
+    if (!d.line) return '';
+    const l = d.line;
+    return `<h3>Lineage</h3><div class="kv two"><span class="lab">Line</span><b>${l.name ? `${esc(l.name)} <span class="rar r${l.tier}">${TIER_WORD[l.tier]}</span>` : 'unregistered'}</b>
+      <span class="lab">Generation</span><b>${d.gen || 1}</b><span class="lab">Parents</span><b>${esc((l.parents || []).join(' × '))}</b>
+      <span class="lab">Pedigree</span><b>${d.pedigree ? pedigreeText(d.pedigree) : 'none'}</b></div>${l.desc ? `<p class="lore">${esc(l.desc)}</p>` : ''}`;
+  }
+  function useTraitActive(d, f) {
+    if (!f || activeLeft(d, f.code) || !S.party.includes(d)) return;
+    const setCd = () => { (d.cd || (d.cd = {}))[f.code] = S.steps + (f.code === 'warp' ? f.mag : DZ.ACTIVE_CD[f.code]); };
+    if (f.code === 'warp') {
+      setCd(); closeSheet();
+      toLastHeal();
+      updateHud(); save(); toast(`${esc(dName(d))} warps the party back to the last terminal.`);
+      return;
+    }
+    let msg;
+    if (f.code === 'pulse') {
+      for (const x of S.party) if (x.hp > 0) { const mx = ENG.calcStats(x).hp; x.hp = Math.min(mx, x.hp + Math.ceil(mx * f.mag / 100)); }
+      msg = `Pulse: the party recovers ${f.mag}% HP.`;
+    } else if (f.code === 'repel') { S.repelUntil = S.steps + f.mag; msg = `Repel: no wild encounters for ${f.mag} steps.`; }
+    else if (f.code === 'hasten') {
+      if (!S.kernels.length) return toast('No kernels are compiling.');
+      for (const kn of S.kernels) kn.at -= f.mag;
+      msg = `Hasten: kernels advance ${f.mag} steps.`;
+    } else if (f.code === 'transmute') {
+      const lead = E.parseKey(d.key).a;
+      const src = Object.entries(S.motes).filter(([k, n]) => k !== lead && n >= f.mag).sort((x, y) => y[1] - x[1])[0];
+      if (!src) return toast(`Transmute needs ${f.mag} motes of one essence.`);
+      S.motes[src[0]] -= f.mag; S.motes[lead] = (S.motes[lead] || 0) + 1;
+      msg = `Transmute: ${f.mag} ${(E.MAIN[src[0]] || E.SUB[src[0]]).name} motes became 1 ${E.MAIN[lead].name} mote.`;
+    } else return;
+    setCd(); beep(659, 0.1, 'sine'); toast(msg); save(); renderSheet();
+  }
+
+  function itemDesc(it) {
+    switch (it.kind) {
+      case 'lattice': return `Binds wild daemons. Strength ×${it.power}${it.main ? `, ×1.5 against ${E.MAIN[it.main].name}-led daemons` : ''}. The Bind button picks your best one.`;
+      case 'patch': return `Restores ${it.mag}% HP${it.cleanse ? ' and clears status' : ''}.`;
+      case 'ward': return `In battle: shield for ${it.mag}% of max HP.`;
+      case 'catalyst': return `In battle: +3 ${E.MAIN[it.main].name} residue and a ${E.MAIN[it.main].name} field.`;
+      case 'script': return `Attunes a daemon to ${it.subs.map(s => E.SUB[s].name).join(' / ')} (the first one it can take).`;
+      case 'cell': return 'In battle: fully restores Flux.';
+      default: return '';
+    }
+  }
+
+  function sheetBag(body) {
+    const items = Object.values(S.bag).filter(it => it.count > 0);
+    const motes = Object.entries(S.motes).filter(([, n]) => n > 0);
+    body.innerHTML = `<h3>Items</h3>${items.length ? `<div class="clist">${items.map(it => `<div class="crow" data-tip="i:${esc(it.id)}" style="--lc:var(--acc)"><span class="grow"><span class="t">${esc(it.name)} ×${it.count}${it.tier != null ? ` <span class="rar r${it.tier}">${TIER_WORD[it.tier]}</span>` : ''}</span><span class="fine">${KIND_NAME[it.kind] ? KIND_NAME[it.kind] + ' · ' : ''}${itemDesc(it)}</span></span>${['patch', 'script'].includes(it.kind) ? `<button class="btn small" data-use="${esc(it.id)}">Use</button>` : ''}</div>`).join('')}</div>` : '<p class="sub">Empty.</p>'}
+      <h3>Motes</h3><p class="fine">Defeated daemons leave motes of the essences they were made from. The Nexus Forge merges them into items.</p>
+      <div class="motes">${motes.length ? motes.map(([k, n]) => essChip(k, '×' + n)).join('') : '<span class="fine">None yet.</span>'}</div>
+      <div id="useBox"></div>`;
+    body.querySelectorAll('[data-use]').forEach(b => { b.onclick = () => {
+      const it = S.bag[b.dataset.use], box = body.querySelector('#useBox');
+      box.innerHTML = `<h3>Use ${esc(it.name)} on…</h3><div class="plist">${S.party.map(d => partyCard(d)).join('')}</div>`;
+      hydrateCanvases(box);
+      box.querySelectorAll('[data-uid]').forEach(c => { c.onclick = () => {
+        const d = findDaemon(c.dataset.uid);
+        if (it.kind === 'patch') {
+          const st = ENG.calcStats(d); if (d.hp >= st.hp) return toast('Already at full HP.');
+          d.hp = Math.min(st.hp, d.hp + Math.ceil(st.hp * it.mag / 100)); toast(`${esc(dName(d))} restored.`);
+        } else if (it.kind === 'script') {
+          const ok = ENG.eligibleSubs(d.key), s = it.subs.find(x => ok.includes(x) && !d.attuned.includes(x));
+          if (!s) return toast(`${esc(dName(d))} can't learn anything from this script.`);
+          d.attuned.push(s); toast(`${esc(dName(d))} attuned ${E.SUB[s].name}!`, 'rare');
+        }
+        it.count--; if (it.count <= 0 && it.id !== 'lattice:basic') delete S.bag[it.id];
+        renderSheet();
+      }; });
+      box.scrollIntoView({ behavior: 'smooth' });
+    }; });
+  }
+
+  function sheetRequests(body) {
+    const next = (S.milestone + 1) * 50;
+    const wardens = C.OPERATORS.filter(o => o.warden);
+    const goal = wardens.find(o => !S.beaten.includes(o.id));
+    const goalZone = goal ? (C.ZONES[goal.zone] ? C.ZONES[goal.zone].name : C.MAPS[goal.map].name) : '';
+    body.innerHTML = `<h3>Archive requests</h3><p class="fine">The Archivists always have three requests open. Finishing one pays out right away and posts a new one.</p>
+      <div class="qlist">${S.quests.map(q => `<div class="quest"><div class="qt">${esc(q.text)}</div><div class="xpbar"><i style="width:${q.progress / q.target * 100}%"></i></div><div class="fine">${q.progress}/${q.target} · Reward: ${esc(rewardText(q.reward))}</div></div>`).join('')}</div>
+      <h3>Codex milestone</h3><div class="quest"><div class="qt">Discover ${next} merges</div><div class="xpbar"><i style="width:${(discovered.size % 50) / 50 * 100}%"></i></div><div class="fine">${discovered.size}/${next} · Reward: 2 Lattices and 3 sub-essence motes</div></div>
+      <h3>Journey</h3><div class="kv two">
+        <span class="lab">Next goal</span><b>${S.won ? 'Rematch Wardens, dive the Rift, fill the Codex' : goal ? `Beat ${esc(goal.name)} in ${esc(goalZone)}` : 'Explore, bind daemons and fill the Codex'}</b>
+        ${C.KEYS ? `<span class="lab">Keys</span><b>${esc(S.keys.join(', ')) || 'none yet'}</b>` : ''}
+        <span class="lab">Operators beaten</span><b>${S.beaten.length}/${C.OPERATORS.length}</b>
+        <span class="lab">Rift best floor</span><b>${S.won ? S.rift.best : 'sealed'}</b>
+        <span class="lab">Prismatics bound</span><b>${S.prisms.length}</b>
+        <span class="lab">Reactions triggered</span><b>${S.stats.reacts}</b>
+      </div>`;
+  }
+
+  function mergeDetail(k) {
+    const r = ENG.rec(k), p = E.parseKey(k);
+    return `<div class="preview">
+      <span class="genome"><span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2" data-tip="r:${esc(t)}">${esc(t)}</span>`).join('')}${r.anomaly ? `<span class="rar r4">Anomaly: ${esc(r.anomaly)}</span>` : ''}</span>
+      <div class="pn">${esc(r.name)}</div>${genomeHTML(k)}
+      <div class="pm">${r.damaging ? `<span>Power <b>${r.power}${r.hits > 1 ? '×' + r.hits : ''}</b></span>` : ''}<span>Acc <b>${r.acc > 100 ? 'sure' : r.acc}</b></span><span>Flux <b>${r.flux}</b></span><span>Priority <b>${r.prio}</b></span><span>Instability <b>${r.instab}%</b></span></div>
+      <div class="fxl">${r.fx.map(f => `<span class="st ${E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf'}">${esc(ENG.describeFx(f))}</span>`).join('')}</div>
+      <div class="txt">${esc(E.REACTION[E.pairId(p.a, p.b)].line + ' ' + r.text)}</div>
+      ${r.anomaly ? `<div class="txt">∆ ${esc(E.ANOMALY[r.anomaly])}</div>` : ''}
+      <div class="fine">Forges into: ${esc(forgeItem(k).name)}. As a daemon genome: ${seen.has(k) ? esc(r.dName) : 'unseen form'}.</div></div>`;
+  }
+
+  function sheetCodex(body) {
+    const views = [['merges', `Merges ${discovered.size}`], ['forms', `Forms ${seen.size}`], ['lexicon', 'Lexicon']];
+    body.innerHTML = `<div class="subtabs">${views.map(([id, nm]) => `<button class="${codexView === id ? 'on' : ''}" data-v="${id}">${nm}</button>`).join('')}</div><div id="cv"></div>`;
+    body.querySelectorAll('[data-v]').forEach(b => { b.onclick = () => { codexView = b.dataset.v; renderSheet(); }; });
+    ({ merges: codexMerges, forms: codexForms, lexicon: codexLexicon })[codexView](body.querySelector('#cv'));
+  }
+
+  function codexMerges(body) {
+    const total = DB.count, n = discovered.size;
+    const pairs = []; for (const a of E.MAINS) for (const b of E.MAINS) pairs.push(a + b);
+    let list = [...discovered];
+    if (codexFilter !== 'all') list = list.filter(k => k.slice(0, 2) === codexFilter);
+    if (codexSearch) { const q = codexSearch.toLowerCase(); list = list.filter(k => ENG.rec(k).name.toLowerCase().includes(q) || ENG.rec(k).tags.some(t => t.toLowerCase().includes(q))); }
+    list.sort((x, y) => ENG.rec(y).rarity - ENG.rec(x).rarity || (ENG.rec(x).name < ENG.rec(y).name ? -1 : 1));
+    const byRar = [0, 0, 0, 0, 0]; for (const k of discovered) byRar[ENG.rec(k).rarity]++;
+    body.innerHTML = `<div><b>${n}</b> / ${total} merges discovered (${(n / total * 100).toFixed(1)}%)</div>
+      <div class="progress"><i style="width:${n / total * 100}%"></i></div>
+      <span class="genome">${RARITY.map((nm, i) => `<span class="rar r${i}">${nm} ${byRar[i]}</span>`).join('')}</span>
+      <div class="filters"><button data-f="all" class="${codexFilter === 'all' ? 'on' : ''}">All</button>${pairs.map(pk => `<button data-f="${pk}" class="${codexFilter === pk ? 'on' : ''}"><span style="color:${MAINC(pk[0])}">${E.MAIN[pk[0]].name[0]}</span>›<span style="color:${MAINC(pk[1])}">${E.MAIN[pk[1]].name[0]}</span> ${countPair(pk)}/${pairTotal(pk)}</button>`).join('')}</div>
+      <input class="search" id="codexSearch" placeholder="Search names or resonances…" value="${esc(codexSearch)}">
+      <div id="cdet"></div>
+      <div class="clist">${list.slice(0, 300).map(k => { const r = ENG.rec(k); return `<button class="crow" data-k="${k}" data-tip="m:${k}" style="--lc:${MAINC(k[0])}"><span class="t">${esc(r.name)}</span>${kindBadge(k)}<span class="rar r${r.rarity}">${RARITY[r.rarity]}</span></button>`; }).join('') || '<p class="sub">Nothing here yet. Compose merges in battle, watch what your opponents cast, or experiment at the Forge.</p>'}</div>
+      ${list.length > 300 ? `<p class="fine">Showing 300 of ${list.length}. Filter to narrow it down.</p>` : ''}`;
+    body.querySelectorAll('[data-f]').forEach(b => { b.onclick = () => { codexFilter = b.dataset.f; renderSheet(); }; });
+    const inp = body.querySelector('#codexSearch');
+    inp.oninput = () => { codexSearch = inp.value; const pos = inp.selectionStart; renderSheet(); const i2 = $('codexSearch'); i2.focus(); i2.setSelectionRange(pos, pos); };
+    body.querySelectorAll('[data-k]').forEach(b => { b.onclick = () => { const box = body.querySelector('#cdet'); box.innerHTML = mergeDetail(b.dataset.k); box.scrollIntoView({ behavior: 'smooth' }); }; });
+  }
+
+  function codexForms(body) {
+    const list = [...seen].sort((x, y) => E.parseKey(x).subs.length - E.parseKey(y).subs.length || (x < y ? -1 : 1));
+    body.innerHTML = `<div>Seen <b>${seen.size}</b> · Bound <b>${boundForms.size}</b> · Prismatic <b>${S.prisms.length}</b> of ${DB.count} possible genomes</div>
+      <div class="progress"><i style="width:${seen.size / DB.count * 100}%"></i></div>
+      <p class="fine">Every merge identity is also a daemon genome. Recompiling adds a sub-essence and turns a daemon into a new form. About one wild daemon in 64 is prismatic.</p>
+      <div id="fdet"></div>
+      <div class="grid-sprites">${list.map(k => `<button class="gs ${boundForms.has(k) ? 'bound' : ''}" data-k="${k}"><canvas data-sprite="${k}" ${S.prisms.includes(k) ? 'data-prism="1"' : ''} width="64" height="64"></canvas><span>${esc(ENG.rec(k).dName)}</span></button>`).join('')}</div>`;
+    body.querySelectorAll('[data-k]').forEach(b => { b.onclick = () => {
+      const k = b.dataset.k, r = ENG.rec(k), pv = ENG.PASSIVES[r.dPassive], box = body.querySelector('#fdet');
+      box.innerHTML = `<div class="preview detail"><div><canvas class="big" data-sprite="${k}" width="160" height="160"></canvas></div><div><div class="pn">${esc(r.dName)}</div>${genomeHTML(k)}<p class="lore">${esc(lore(k))}</p>
+        <div class="fine">Base stats: HP ${r.dStats[0]} · Logic ${r.dStats[1]} · Firewall ${r.dStats[2]} · Clock ${r.dStats[3]} · Flux ${r.dStats[4]} · Coherence ${r.dStats[5]} (total ${statTotal(k)})</div>
+        <div class="fine">Passive <b>${pv[0]}</b>: ${esc(pv[1])}</div></div></div>`;
+      hydrateCanvases(box); box.scrollIntoView({ behavior: 'smooth' });
+    }; });
+  }
+
+  function codexLexicon(body) {
+    const found = resonancesFound();
+    const anomalies = new Set([...discovered].map(k => ENG.rec(k).anomaly).filter(Boolean));
+    const chart = `<div class="scrollx"><table class="chart"><tr><th>atk ↓ def →</th>${E.MAINS.map(m => `<th style="color:${MAINC(m)}">${E.MAIN[m].name}</th>`).join('')}</tr>${E.MAINS.map(a => `<tr><th style="color:${MAINC(a)}">${E.MAIN[a].name}</th>${E.MAINS.map(b => { const v = E.chart(a, b); return `<td class="${v > 1 ? 'sup' : v < 1 ? 'res' : ''}">×${v}</td>`; }).join('')}</tr>`).join('')}</table></div>`;
+    const reactions = Object.values(E.REACTION).map(rx => `<div class="lexc"><div class="hd"><b>${Object.entries(rx.names).map(([m, nm]) => `<span style="color:${MAINC(m)}">${nm}</span>`).join(' / ')}</b>${rx.volatile ? '<span class="st bad">volatile</span>' : ''}</div><p>${esc(rx.line)}</p></div>`).join('');
+    const subCard = s => { const sub = E.SUB[s]; return `<div class="lexc"><div class="hd">${essChip(s)}<span class="fine">${sub.host ? E.MAIN[sub.host].name + ' only' : 'any host'}</span></div><p>${esc(sub.desc)}</p>${!sub.host ? `<div class="facets">${E.MAINS.map(m => `<span style="color:${MAINC(m)}">on ${E.MAIN[m].name}</span><span>${E.FACET[s][m].name}: ${E.EFFECTS[E.FACET[s][m].fx]}</span>`).join('')}</div>` : ''}<p class="fine">As lead sub: ${ENG.PASSIVES[s][0]}</p></div>`; };
+    const KIND = { blast: 'Steam scalds the target for 10% of its HP.', boost: 'The merge hits 30% harder.', guard: 'Caster Firewall +1.', quench: 'Caster sheds burn and heals 10%.', blind: 'Target accuracy −1.', chill: 'Target Clock −1.', soak: 'Target is soaked.', burn: 'May burn the target.', shield: 'Caster gains a small shield.', veil: 'Caster evasion +1.' };
+    body.innerHTML = `<h3>How combat works</h3><div class="lex">
+        <div class="lexc kc atk"><div class="hd"><span class="kb atk">Attack</span></div><p>Strike, Barrage and Siphon merges. Queue one and it repeats every global cooldown (GCD). The GCD is shorter with more Clock and longer for heavy merges.</p></div>
+        <div class="lexc kc act"><div class="hd"><span class="kb act">Active</span></div><p>Hex, Ward, Mend and Field merges. They fire instantly, off the GCD, then go on their own cooldown (5s + 0.7s per Flux).</p></div>
+        <div class="lexc kc pas"><div class="hd"><span class="kb pas">Passive</span></div><p>Always on. One per daemon, from its genome's lead sub-essence or main essence. Battles run slower at low levels and reach full speed around level 30.</p></div>
+        <div class="lexc kc atk"><div class="hd"><span class="kb atk">Signatures</span></div><p>${Object.entries(ENG.SIGNATURE).map(([c, t]) => `<b>${c}</b>: ${esc(t)}`).join('<br>')}<br>${esc(ENG.COMBO)}</p></div>
+        <div class="lexc kc utl"><div class="hd"><span class="kb utl">Utility</span></div><p>Rest (14s cooldown, big Flux refill), Swap (uses the GCD), Items (6s shared cooldown), Bind and Run. Statuses tick every 2 seconds. Opening a menu pauses the fight.</p></div></div>
+      <h3>How merges work</h3><p class="fine">A merge has a lead Main, a second Main (the same one makes a pure merge), and up to three sub-essences, each bound to one of the two. The lead carries more weight in the merge and in combat typing (65/35).</p>
+      <h3>Type chart</h3>${chart}
+      <h3>Main reactions</h3><div class="lex">${reactions}</div>
+      <h3>Residue reactions</h3><p class="fine">Every merge leaves residue of its essences in the arena. A merge whose lead lands in 2+ residue of another essence triggers a reaction and consumes it.</p>
+      <div class="lex">${Object.entries(ENG.REACT).map(([a, o]) => Object.entries(o).map(([b, [nm, kind]]) => `<div class="lexc"><div class="hd"><b>${nm}</b></div><span class="genome">${essChip(a, 'cast')}<span class="arrow">into</span>${essChip(b, 'residue')}</span><p>${KIND[kind]}</p></div>`).join('')).join('')}</div>
+      <h3>Sub-essences</h3><div class="lex">${E.SUB_ORDER.map(subCard).join('')}</div>
+      <h3>Resonances (${E.RESONANCE.filter(r => found.has(r.name)).length}/${E.RESONANCE.length})</h3><p class="fine">Two specific sub-essences in the same merge, on any host. The composer hints when you've put a pair together.</p>
+      <div class="lex">${E.RESONANCE.map(r => (found.has(r.name) ? `<div class="lexc"><div class="hd"><b style="color:var(--warn)">${r.name}</b></div><span class="genome">${r.subs.map(s => essChip(s)).join('')}</span></div>` : '<div class="lexc dim"><div class="hd"><b>??? resonance</b></div></div>')).join('')}</div>
+      <h3>Trinities (${E.TRINITY.filter(r => found.has(r.name)).length}/${E.TRINITY.length})</h3>
+      <div class="lex">${E.TRINITY.map(r => (found.has(r.name) ? `<div class="lexc"><div class="hd"><b style="color:#ff5cf0">${r.name}</b></div><span class="genome">${r.subs.map(s => essChip(s)).join('')}</span></div>` : '<div class="lexc dim"><div class="hd"><b>??? trinity</b></div></div>')).join('')}</div>
+      <h3>Anomalies (${anomalies.size}/${Object.keys(E.ANOMALY).length} kinds)</h3><p class="fine">About one merge in sixty is a glitch in the lattice. Nobody knows which until it's cast.</p>
+      <div class="lex">${Object.entries(E.ANOMALY).map(([id, d]) => (anomalies.has(id) ? `<div class="lexc"><div class="hd"><span class="rar r4">∆${id}</span></div><p>${esc(d)}</p></div>` : '<div class="lexc dim"><div class="hd"><b>∆???</b></div></div>')).join('')}</div>`;
+  }
+
+  // ---- forge
+  function forgeCost(k) {
+    const p = E.parseKey(k), c = {};
+    const add = (x, n) => { c[x] = (c[x] || 0) + n; };
+    if (p.a === p.b) add(p.a, 3); else { add(p.a, 2); add(p.b, 1); }
+    for (const t of p.subs) add(t.s, 1);
+    return c;
+  }
+  function forgeItem(k) {
+    const r = ENG.rec(k), fx = code => r.fx.find(f => f.code === code);
+    let it;
+    switch (r.cls) {
+      case 'Mend': it = { id: 'patch:' + k, kind: 'patch', mag: (fx('heal') || { mag: 25 }).mag, cleanse: !!fx('cleanse') }; break;
+      case 'Ward': it = { id: 'ward:' + k, kind: 'ward', mag: (fx('shield') || { mag: 20 }).mag }; break;
+      case 'Hex': { const best = Math.max(0, ...r.fx.filter(f => !E.SELF_FX.has(f.code)).map(f => f.chance)); it = { id: 'lattice:' + k, kind: 'lattice', power: +(1 + 0.15 * r.rarity + best / 250).toFixed(2), main: r.a }; break; }
+      case 'Field': it = { id: 'catalyst:' + k, kind: 'catalyst', main: r.a }; break;
+      default: it = r.subs.length ? { id: 'script:' + k, kind: 'script', subs: [...new Set(r.subs.map(t => t.s))] } : { id: 'cell:' + k, kind: 'cell' };
+    }
+    // The item's name, lore and quality roll are pre-baked per merge; the roll adds strength.
+    const d = r.item;
+    it.name = d.name; it.lore = d.lore; it.tier = d.tier;
+    if (it.mag) it.mag += (it.kind === 'patch' ? 5 : 4) * d.tier;
+    if (it.power) it.power = +(it.power + 0.05 * d.tier).toFixed(2);
+    return it;
+  }
+  const KIND_NAME = {};
+  for (const [k, [name]] of Object.entries(DZ.ITEM_TYPES)) KIND_NAME[k] = name;
+  function sheetForge(body) {
+    const have = S.motes;
+    const subs = E.SUB_ORDER.filter(s => (have[s] || 0) > 0);
+    const mains = E.MAINS.filter(m => (have[m] || 0) > 0);
+    const smith = partyTrait('smith');
+    body.innerHTML = `<h3>Nexus Forge</h3><p class="fine">Merge motes into items. The merge's class decides the item: Mend → Patch, Ward → Module, Hex → Lattice, Field → Catalyst, other merges with subs → Attune Script, plain merges → Flux Cell. Forging also records the merge in your Codex. Each merge's item, with its name and a quality roll that strengthens it, is pre-baked in the merge database.${smith ? ` Smith trait: ${smith}% chance a forge is free.` : ''}</p>
+      <div class="motes">${Object.entries(have).filter(([, n]) => n > 0).map(([k, n]) => essChip(k, '×' + n)).join('') || '<span class="fine">You have no motes. Defeat daemons to collect them.</span>'}</div>
+      <div id="fcmp"></div>`;
+    if (!mains.length) return;
+    const afford = k => Object.entries(forgeCost(k)).every(([x, n]) => (have[x] || 0) >= n);
+    composer(body.querySelector('#fcmp'), {
+      mains, subs, width: 3, counts: have, forge: true,
+      extra: k => { const c = forgeCost(k), it = forgeItem(k);
+        return `<div class="preview"><div class="fine">Cost: ${Object.entries(c).map(([x, n]) => essChip(x, `${n}/${have[x] || 0}`)).join(' ')}</div><div>Produces: <b>${discovered.has(k) ? esc(it.name) : `a ${KIND_NAME[it.kind]}?`}</b>${discovered.has(k) && it.tier != null ? ` <span class="rar r${it.tier}">${TIER_WORD[it.tier]}</span>` : ''}${afford(k) ? '' : ' <span class="st bad">not enough motes</span>'}</div></div>`; },
+      actions: [{ label: 'Forge', pri: true, ok: afford, fn: k => {
+        const free = smith && Math.random() * 100 < smith;
+        if (!free) for (const [x, n] of Object.entries(forgeCost(k))) have[x] -= n;
+        markDiscovered(k);
+        const it = forgeItem(k);
+        if (S.bag[it.id]) S.bag[it.id].count++; else S.bag[it.id] = Object.assign({ count: 1 }, it);
+        S.stats.forged++; questEvent('forge');
+        beep(440, 0.1, 'triangle'); setTimeout(() => beep(660, 0.12, 'triangle'), 90);
+        toast(`Forged <b>${esc(it.name)}</b>.${free ? ' The smith trait saved your motes!' : ''}`);
+        if (canReveal()) {
+          revealed.add('item:' + k); revealed.add('tech:' + k);
+          const d = ENG.rec(k).item, tech = techDesign(k);
+          RV.play({ kicker: 'Nexus Forge · ' + KIND_NAME[it.kind], parts: genomeParts(k), design: { name: d.name, desc: d.lore, tier: d.tier, pct: d.pct, odds: d.odds,
+            chips: [{ t: KIND_NAME[it.kind], c: 'inf' }, { t: itemDesc(it), c: 'good' }].concat(tech.chips.slice(0, 4)),
+            bars: it.mag ? [{ label: it.kind === 'patch' ? 'Heal' : 'Shield', v: it.mag, max: 100, text: it.mag + '%' }] : it.power ? [{ label: 'Bind power', v: it.power, max: 2.5, text: '×' + it.power }] : [],
+            note: `Forged from ${tech.name}` } });
+        } else celebrateItem(k);
+        save(); renderSheet();
+      } }],
+    });
+  }
+
+  // ---- splicing: two daemons make a kernel that compiles while you walk, then boots as a new
+  // daemon. The lineage (which essences lead, what it inherits, its pedigree and name) is designed
+  // from the two parent genomes' database records, so the same two genomes always splice the same
+  // way. Each offspring also gets its own trait, evolved from its parents'.
+  const SPLICE_LEVEL = 10, SPLICE_REST = 300, KERNEL_STEPS = 60, KERNEL_MAX = 3;
+  const STAT_NAME = { hp: 'HP', atk: 'Logic', def: 'Firewall', spd: 'Clock', flux: 'Flux', coh: 'Coherence' };
+  const pedigreeText = p => Object.entries(p).map(([k, v]) => `+${v}% ${STAT_NAME[k]}`).join(', ');
+  let spliceSel = [];
+  function spliceCost(a, b) {
+    const c = {};
+    for (const d of [a, b]) { const m = E.parseKey(d.key).a; c[m] = (c[m] || 0) + 2; }
+    return c;
+  }
+  const restLeft = d => Math.max(0, (d.splicedAt != null ? d.splicedAt + SPLICE_REST : 0) - S.steps);
+  const canParent = d => d.level >= SPLICE_LEVEL && !restLeft(d);
+  const kernelNeed = () => Math.ceil(KERNEL_STEPS * (1 - partyTrait('nurture') / 100));
+  const kernelState = kn => (S.steps - kn.at < kernelNeed() ? 'compiling' : 'ready');
+  function tickKernels() { for (const kn of S.kernels.slice()) if (kernelState(kn) === 'ready') bootKernel(kn); }
+  function startSplice(a, b) {
+    for (const [x, n] of Object.entries(spliceCost(a, b))) S.motes[x] -= n;
+    const pair = DZ.breedKey(a.key, b.key);
+    const byKey = a.key <= b.key ? [a, b] : [b, a];
+    const kn = {
+      id: 'k' + Date.now().toString(36) + rnd(1e6).toString(36), pair, at: S.steps,
+      parents: byKey.map(d => dName(d)),
+      seed: DZ.seedOf([a.seed, b.seed, S.steps, rnd(1e9)].join('|')), // every offspring is its own individual
+      gen: 1 + Math.max(a.gen || 0, b.gen || 0),
+      parentTier: Math.round(((a.trait ? a.trait.tier : 0) + (b.trait ? b.trait.tier : 0)) / 2),
+      ancestry: [a, b].filter(d => d.trait).map(d => ({ name: d.trait.name, codes: d.trait.fx.map(f => f.code) })),
+      prism: Math.random() < ((a.prism || b.prism) ? 1 / 8 : 1 / 64) * (1 + partyTrait('fortune') / 100),
+    };
+    a.splicedAt = b.splicedAt = S.steps;
+    S.kernels.push(kn);
+    spliceSel = [];
+    beep(392, 0.1, 'sine'); setTimeout(() => beep(587, 0.14, 'sine'), 100);
+    toast(`⬢ Spliced <b>${esc(dName(a))}</b> × <b>${esc(dName(b))}</b>. The kernel compiles while you walk.`, 'rare', 4500);
+    save();
+  }
+  function bootKernel(kn) {
+    S.kernels.splice(S.kernels.indexOf(kn), 1);
+    const o = DZ.lineage(kn.pair, ENG.rec);
+    const d = ENG.createDaemon(o.key, 5, { attune: o.attune, extraAttune: 0 });
+    Object.assign(d, { seed: kn.seed, gen: kn.gen, parentTier: kn.parentTier, ancestry: kn.ancestry, prism: kn.prism, pedigree: o.pedigree });
+    d.line = { pair: kn.pair, parents: kn.parents, name: o.name, desc: o.desc, tier: o.tier, odds: o.odds };
+    d.hp = ENG.calcStats(d).hp;
+    seen.add(d.key); boundForms.add(d.key);
+    if (d.prism) S.prisms.push(d.key);
+    if (S.party.length < 6) S.party.push(d); else S.box.push(d);
+    S.stats.spliced++;
+    designTrait(d);
+    const where = S.party.includes(d) ? 'joined your party' : 'was sent to Storage';
+    const lines = [`${genomeText(d.key)} · inherits ${o.attune.map(s => E.SUB[s].name).join(', ') || 'no sub-essences'}`, d.pedigree ? `Pedigree ${pedigreeText(d.pedigree)}` : '', `Generation ${d.gen} · ${where}`];
+    const peers = ownedDaemons().filter(x => x !== d && x.pedigree), sum = p => Object.values(p || {}).reduce((s, v) => s + v, 0);
+    const p = percentile(sum(d.pedigree), peers.map(x => sum(x.pedigree))), outlier = peers.length >= 4 && p >= 0.9;
+    if (canReveal()) {
+      if (o.tier >= 2 || outlier) markCelebrated('line:' + kn.id);
+      const parents = kn.pair.split('~').map((k, i) => ({ color: MAINC(k[0]), label: kn.parents[i], role: 'parent' }));
+      RV.play({ kicker: `Splice · kernel booted${d.prism ? ' · prismatic' : ''}`, parts: parents.concat(o.attune.map(s => essPart(s, 'inherited'))), sprite: d.key, prism: d.prism,
+        design: { name: `${o.name}: ${dName(d)}`, desc: o.desc, tier: o.tier, pct: o.pct, odds: o.odds,
+          chips: [{ t: genomeText(d.key), c: 'inf' }].concat(o.attune.map(s => ({ t: 'Inherits ' + E.SUB[s].name, c: 'good' })), [{ t: 'Generation ' + d.gen, c: 'pas' }, { t: 'Trait: ' + d.trait.name, c: 'utl' }]),
+          bars: Object.entries(d.pedigree || {}).map(([k, v]) => ({ label: STAT_NAME[k], v, max: 15, text: '+' + v + '%' })), note: where[0].toUpperCase() + where.slice(1) + (outlier ? ' · the strongest pedigree you own' : '') } });
+    } else if (o.tier >= 2 || outlier) celebrate('line:' + kn.id, { kicker: outlier && o.tier < 2 ? 'Statistically unique lineage' : `${TIER_WORD[o.tier]} lineage${d.prism ? ' · prismatic' : ''}`, name: `${o.name}: ${dName(d)}`, tier: Math.max(o.tier, 2), odds: o.odds, lines });
+    else toast(`⬢ A kernel booted: <b>${esc(dName(d))}</b> of the <b>${esc(d.line.name)}</b>${d.prism ? ' ✦' : ''} ${where}.`, 'rare', 5000);
+    beep(523, 0.1, 'triangle'); setTimeout(() => beep(784, 0.16, 'triangle'), 110);
+    save();
+  }
+  function genomeText(k) { const p = E.parseKey(k); return p.a === p.b ? `Pure ${E.MAIN[p.a].name}` : `${E.MAIN[p.a].name} › ${E.MAIN[p.b].name}`; }
+  const spliceCard = (d, on) => `<button class="pcard ${on ? 'sel' : ''} ${canParent(d) || on ? '' : 'fainted'}" data-uid="${d.uid}"><canvas data-sprite="${d.key}" ${d.prism ? 'data-prism="1"' : ''} width="64" height="64"></canvas>
+    <span class="grow"><span class="n">${esc(dName(d))}<span>Lv ${d.level}${d.gen ? ` · Gen ${d.gen}` : ''}</span></span>${genomeDots(d.key)}
+    <span class="nums"><span>${d.trait ? `<span class="rar r${d.trait.tier}">${esc(d.trait.name)}</span>` : 'trait not designed yet'}</span><span>${on ? '<b class="rc">parent</b>' : d.level < SPLICE_LEVEL ? `needs Lv ${SPLICE_LEVEL}` : restLeft(d) ? `resting ${restLeft(d)}` : ''}</span></span></span></button>`;
+  function kernelsHTML() {
+    const need = kernelNeed();
+    return S.kernels.map(kn => {
+      const st = kernelState(kn), age = Math.min(need, S.steps - kn.at);
+      return `<div class="quest"><div class="qt">⬢ ${esc(kn.parents.join(' × '))}${kn.prism ? ' <em class="prism">✦</em>' : ''} <span class="fine">Gen ${kn.gen}</span></div><div class="xpbar"><i style="width:${age / need * 100}%"></i></div>
+        <div class="fine">${st === 'compiling' ? `Compiling · ${age}/${need} steps` : 'Ready: it boots on your next step'}</div></div>`;
+    }).join('');
+  }
+  function sheetSplice(body) {
+    const pool = ownedDaemons();
+    spliceSel = spliceSel.filter(uid => pool.some(d => d.uid === uid));
+    body.innerHTML = `<h3>Splice chamber</h3><p class="fine">Splice two daemons at level ${SPLICE_LEVEL} or higher into a kernel. It compiles while you walk (${kernelNeed()} steps) and boots as a new level 5 daemon. The lineage (which of the parents' essences lead, which sub-essences carry on, its stat pedigree and its name) comes from the two genomes' records in the merge database, so the same two genomes always splice the same way; its name is revealed when the kernel boots. Every offspring also gets its own trait, evolved from its parents' traits. Parents rest for ${SPLICE_REST} steps afterwards.</p>
+      <h3>Kernels (${S.kernels.length}/${KERNEL_MAX})</h3>${kernelsHTML() || '<p class="sub">Nothing is compiling.</p>'}
+      <h3>Choose two parents</h3><div class="plist">${pool.map(d => spliceCard(d, spliceSel.includes(d.uid))).join('')}</div>
+      <div id="spv"></div>`;
+    body.querySelectorAll('[data-uid]').forEach(b => { b.onclick = () => {
+      const u = b.dataset.uid, d = findDaemon(u);
+      if (spliceSel.includes(u)) spliceSel = spliceSel.filter(x => x !== u);
+      else if (!canParent(d)) return toast(d.level < SPLICE_LEVEL ? `${esc(dName(d))} needs level ${SPLICE_LEVEL} to splice.` : `${esc(dName(d))} is resting for ${restLeft(d)} more steps.`);
+      else { spliceSel.push(u); if (spliceSel.length > 2) spliceSel.shift(); }
+      renderSheet();
+    }; });
+    if (spliceSel.length === 2) splicePreview(body.querySelector('#spv'), findDaemon(spliceSel[0]), findDaemon(spliceSel[1]));
+  }
+  function splicePreview(box, a, b) {
+    const pair = DZ.breedKey(a.key, b.key), cost = spliceCost(a, b), off = DZ.lineage(pair, ENG.rec);
+    const afford = Object.entries(cost).every(([x, n]) => (S.motes[x] || 0) >= n), room = S.kernels.length < KERNEL_MAX;
+    const roll = `Rarity roll ${off.pct}% · <span class="rar r${off.tier}">${TIER_WORD[off.tier]}</span> · inherits up to ${DZ.INHERIT[off.tier]} sub-essence${DZ.INHERIT[off.tier] > 1 ? 's' : ''}, pedigree +${DZ.PEDIGREE[off.tier]}%`;
+    const out = `<div class="pn">${TIER_WORD[off.tier]} lineage</div>
+        <div class="row">Boots as <b>${seen.has(off.key) ? esc(ENG.rec(off.key).dName) : '??? form'}</b> ${genomeHTML(off.key)}</div>
+        <div class="fine">Inherits ${off.attune.map(s => essChip(s)).join(' ') || 'no sub-essences'} · pedigree ${pedigreeText(off.pedigree)}</div>`;
+    const anc = [a, b].filter(d => d.trait).map(d => `${esc(dName(d))}: ${esc(d.trait.name)} (${d.trait.fx.map(f => f.code).join(', ')})`);
+    box.innerHTML = `<div class="preview">${out}<div class="fine">${roll}</div>${anc.length ? `<div class="fine">Traits it evolves from: ${anc.join(' · ')}</div>` : ''}
+      <div class="fine">Cost: ${Object.entries(cost).map(([x, n]) => essChip(x, `${n}/${S.motes[x] || 0}`)).join(' ')}</div>
+      <div class="btnrow gap"><button class="btn pri" data-splice ${afford && room ? '' : 'disabled'}>Splice</button>${!afford ? '<span class="st bad">not enough motes</span>' : !room ? '<span class="st bad">the chamber is full</span>' : ''}</div></div>`;
+    hydrateCanvases(box);
+    box.querySelector('[data-splice]').onclick = () => { startSplice(a, b); renderSheet(); };
+  }
+
+  // The merge database: what the game reads every merge from, and how it was made.
+  function dbSection() {
+    const kb = Math.round(DB.bytes / 1024);
+    return `<p class="fine">Every one of the ${DB.count.toLocaleString()} merge identities is pre-baked by <b>tools/bake.js</b>, one merge at a time, into a record in <b>db/</b>: its technique, its daemon form, the item it forges into, the word it lends to lineages and the traits it leans toward. Splice lineages and each daemon's own trait are designed from those records and a seed, so nothing is generated live and the same merge is always the same.</p>
+      <div class="kv two"><span class="lab">Schema</span><b>${esc(DB.schema)} · bake v${DB.version}</b>
+      <span class="lab">Records</span><b>${DB.count.toLocaleString()} merges in ${DB.shards.length} shards (${kb.toLocaleString()} KB)</b>
+      <span class="lab">By rarity</span><b>${DB.rarity.map((n, i) => `${RARITY[i]} ${n}`).join(' · ')}</b>
+      <span class="lab">Yours</span><b>${discovered.size} discovered · ${seen.size} forms seen · ${ownedDaemons().filter(d => d.trait).length} traits · ${ownedDaemons().filter(d => d.line).length} spliced</b></div>
+      <p class="fine">Live AI designs (FriedrichBridge and its local model) were retired: the game sends nothing anywhere while you play.</p>`;
+  }
+
+  function sheetSystem(body) {
+    const mins = Math.round((Date.now() - S.started) / 60000);
+    body.innerHTML = `<h3>Settings</h3><div class="btnrow">
+        <button class="btn ${S.settings.speed === 'normal' ? 'pri' : ''}" data-speed="normal">Battle speed: normal</button>
+        <button class="btn ${S.settings.speed === 'fast' ? 'pri' : ''}" data-speed="fast">Battle speed: fast</button>
+        <button class="btn" data-mute>${muted ? 'Unmute' : 'Mute'} sound</button>
+        ${canBuzz ? `<button class="btn ${S.settings.haptics !== false ? 'pri' : ''}" data-haptics>Vibration: ${S.settings.haptics !== false ? 'on' : 'off'}</button>` : ''}</div>
+      <div class="btnrow gap"><button class="btn ${S.settings.tips === 'compact' ? 'pri' : ''}" data-tips="compact">Tooltips: compact</button><button class="btn ${S.settings.tips === 'complex' ? 'pri' : ''}" data-tips="complex">Tooltips: complex</button><button class="btn ${S.settings.tips === 'off' ? 'pri' : ''}" data-tips="off">Tooltips: off</button></div>
+      <p class="fine">Hover (or press and hold on touch) any merge, essence, status, item or daemon card for details. Press T or tap ⓘ in the top bar to switch compact and complex.</p>
+      <p class="fine">Tap the battle text or press Space to fast-forward a turn. Keys 1–4 cast your memory merges.</p>
+      <h3>Merge database</h3>${dbSection()}
+      <h3>Save</h3><div class="btnrow"><button class="btn pri" data-save>Save now</button><button class="btn" data-title>Save and quit to the title</button><button class="btn" data-wipe>Delete save…</button></div>
+      ${C !== OFFICIAL ? `<p class="fine">You're playing <b>${esc(C.TITLE)}</b>${playing.test ? ' (a test run from the world builder)' : ''}. Its save is kept apart from your other worlds.</p>` : ''}
+      <p class="fine">Playing for ${mins} min · ${S.steps} steps · ${S.stats.wild} wild daemons defeated · ${S.stats.binds} bound · ${S.stats.forged} items forged · ${S.stats.spliced} spliced.</p>
+      <h3>About</h3><p class="fine">Essence Protocol. All ${DB.count} merge outcomes and their designs were pre-baked by tools/bake.js from the rules in js/essences.js. Nothing is rolled when you compose a merge: a design's rarity comes from its seed, so the same merge is always the same. The randomness is in battle (accuracy, effect chances, instability), in encounters, and in each new daemon's seed.</p>`;
+    body.querySelectorAll('[data-speed]').forEach(b => { b.onclick = () => { S.settings.speed = b.dataset.speed; save(); renderSheet(); }; });
+    body.querySelectorAll('[data-tips]').forEach(b => { b.onclick = () => { S.settings.tips = b.dataset.tips; save(); renderSheet(); }; });
+    if (body.querySelector('[data-haptics]')) body.querySelector('[data-haptics]').onclick = () => { S.settings.haptics = S.settings.haptics === false; save(); renderSheet(); buzz(20); };
+    body.querySelector('[data-save]').onclick = () => { save(); toast('Saved.'); };
+    body.querySelector('[data-title]').onclick = () => toTitle();
+    body.querySelector('[data-mute]').onclick = () => { muted = !muted; try { localStorage.setItem('ep-muted', muted ? '1' : '0'); } catch (e) { /* ignore */ } renderSheet(); };
+    body.querySelector('[data-wipe]').onclick = async () => {
+      if ((await choose('Delete save?', 'Your progress in this world is erased and the game returns to the title screen. This can\'t be undone.', ['Delete save', 'Cancel'])) === 0) { try { localStorage.removeItem(saveSlot); } catch (e) { /* ignore */ } S = null; toTitle(); }
+    };
+  }
+
+  // ------------------------------------------------------------------ ending
+  function showEnding() {
+    $('hud').classList.add('hidden'); setPad(false);
+    const boss = C.OPERATORS.find(o => o.final), keys = C.KEYS ? ` and ${C.KEYS === 1 ? 'the key is' : `all ${C.numberWords(C.KEYS)} keys are`} turned` : '';
+    const story = C.TEXT.ending ? C.TEXT.ending.map(l => `<p>${esc(l)}</p>`).join('') : `<p>${esc(boss ? boss.name : 'The final boss')} is beaten${keys}. But the lattice still holds ${DB.count - discovered.size} merges nobody has cast, and now it's open to you.</p>`;
+    const rift = Object.values(C.MAPS).some(m => m.tiles.some(r => r.includes('R')));
+    const card = modal(`<h2>${esc(C.TEXT.ending ? C.TITLE : 'The lattice is yours')}</h2>${story}
+      <div class="kv two"><span class="lab">Merges discovered</span><b>${discovered.size} / ${DB.count}</b><span class="lab">Forms seen</span><b>${seen.size}</b><span class="lab">Forms bound</span><b>${boundForms.size}</b><span class="lab">Resonances</span><b>${resonancesFound().size}</b></div>
+      <p>Unlocked: ${rift ? '<b>the Rift</b>, the swirling terminal, an endless descent through every genome. ' : ''}<b>Warden rematches</b>${rift ? ' are open too' : ' are open'}, with recompiled teams.</p>
+      <div class="btnrow"><button class="btn pri" data-go>Keep exploring</button></div>`);
+    card.querySelector('[data-go]').onclick = () => { closeModal(); $('hud').classList.remove('hidden'); mode = 'world'; setPad(true); updateHud(); };
+  }
+
+  // ------------------------------------------------------------------ title & starter
+  function titleArt() {
+    const c = $('titleArt'), g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    const keys = ['FA-Em1Pl1As1', 'WW-Ti1Fr1Mi1', 'EE-St1Me1Ro1', 'AA-Sp1Ga1Ec1'];
+    let t = 0;
+    const draw = () => {
+      if (mode !== 'title') return;
+      t += 0.05;
+      g.clearRect(0, 0, c.width, c.height);
+      keys.forEach((k, i) => {
+        g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.ellipse(48 + i * 78, 108, 26, 5, 0, 0, 7); g.fill();
+        g.drawImage(SP.get(k, i === 3 && Math.sin(t * 0.3) > 0.9), 8 + i * 78, 16 + Math.sin(t + i * 1.4) * 5, 80, 80);
+      });
+      requestAnimationFrame(draw);
+    };
+    draw();
+  }
+  function showStarter() {
+    mode = 'starter';
+    $('title').classList.add('hidden'); $('starter').classList.remove('hidden');
+    $('starterList').innerHTML = C.STARTERS.map((s, i) => { const r = ENG.rec(s.key); return `<button class="starter" data-i="${i}"><canvas data-sprite="${s.key}" width="96" height="96"></canvas><span class="grow"><b class="h">${esc(r.dName)}</b>${genomeHTML(s.key)}<small>${esc(s.blurb)}</small>${s.attune[0] && E.SUB[s.attune[0]] ? `<small>Starts attuned to ${E.SUB[s.attune[0]].name}. Passive: ${ENG.PASSIVES[r.dPassive][0]}.</small>` : ''}</span></button>`; }).join('');
+    hydrateCanvases($('starterList'));
+    $('starterList').querySelectorAll('[data-i]').forEach(b => { b.onclick = async () => {
+      const st = C.STARTERS[+b.dataset.i];
+      adopt(newState(st));
+      for (const k of S.party[0].memory) if (k) discovered.add(k);
+      designTrait(S.party[0]);
+      $('starter').classList.add('hidden');
+      enterWorld();
+      mode = 'busy'; setPad(false);
+      if (C.TEXT.tutorial.length) await say(C.TEXT.guide, C.TEXT.tutorial.map(l => l.replace(/\{daemon\}/g, ENG.rec(st.key).dName)));
+      await celebrateTrait(S.party[0], null, true);
+      mode = 'world'; setPad(true); save();
+    }; });
+  }
+  function enterWorld() {
+    $('title').classList.add('hidden'); $('starter').classList.add('hidden');
+    $('hud').classList.remove('hidden');
+    mode = 'world'; setPad(true); updateHud();
+  }
+
+  // ------------------------------------------------------------------ tooltips
+  // Any element with data-tip="kind:id" gets a hover (or long-press) card.
+  // kinds: m merge key · e essence code · s status · i bag item · d battle side · r resonance/trinity name
+  const tipEl = document.createElement('div'); tipEl.id = 'tooltip'; tipEl.className = 'hidden'; document.body.appendChild(tipEl);
+  function cycleTips() {
+    S.settings.tips = S.settings.tips === 'compact' ? 'complex' : 'compact';
+    toast(`Tooltips: <b>${S.settings.tips}</b>`); hideTip(); save();
+  }
+  $('tipBtn').onclick = () => { if (S) cycleTips(); };
+  const row = (k, v) => `<div class="tr"><span>${k}</span><b>${v}</b></div>`;
+  function tipMerge(k, full) {
+    const r = ENG.rec(k), known = discovered.has(k), p = E.parseKey(k), rx = E.REACTION[E.pairId(p.a, p.b)];
+    let h = `<div class="th">${known ? esc(r.name) : 'Undiscovered merge'}</div>${genomeHTML(k)}`;
+    if (!known) return h + `<div class="tfx">${composeHints(p.a, p.b, p.subs.map(t => t.s + t.h))}</div>` + row('Flux', r.flux) + (full ? `<p>${esc(rx.line)}</p><p class="fine">Cast or forge it to reveal its stats.</p>` : '');
+    h += `<div class="tfx">${kindBadge(k)}<span class="rar r${r.rarity}">${RARITY[r.rarity]}</span><span class="cls">${r.cls}</span>${r.tags.map(t => `<span class="rar r2">${esc(t)}</span>`).join('')}</div>`;
+    if (r.damaging) h += row('Power', r.power + (r.hits > 1 ? ` × ${r.hits} hits` : ''));
+    h += row('Accuracy', r.acc > 100 ? 'never misses' : r.acc + '%') + row('Flux cost', r.flux);
+    if (B && ui && r.damaging) { const eff = ENG.effectiveness(k, ui[1].key); h += row('Vs. current foe', `×${eff}`); }
+    h += `<div class="tfx">${r.fx.map(f => `<span class="st ${E.SELF_FX.has(f.code) ? 'good' : f.code === 'recoil' ? 'bad' : 'inf'}">${esc(ENG.describeFx(f))}</span>`).join('')}</div>`;
+    h += `<p class="sig ${ENG.isAttack(k) ? 'atk' : 'act'}"><b>${r.cls}</b> · ${esc(ENG.SIGNATURE[r.cls])}</p>`;
+    if (!full) return h;
+    h += row('Priority', r.prio > 0 ? '+' + r.prio + ' (acts first)' : r.prio < 0 ? r.prio + ' (acts last)' : '0') + row('Instability', r.instab + '% (may backfire or mutate)');
+    h += row('Typing', p.a === p.b ? `${E.MAIN[p.a].name} 100%` : `${E.MAIN[p.a].name} 65% · ${E.MAIN[p.b].name} 35%`);
+    h += row('Residue left', r.cls === 'Field' ? `+3 ${E.MAIN[p.a].name}, field for 5 turns` : `+1 ${E.MAIN[p.a].name}`);
+    h += row('Forges into', esc(forgeItem(k).name));
+    h += `<p>${esc(rx.line + ' ' + r.text)}</p>`;
+    if (r.anomaly) h += `<p class="bad">∆ ${esc(E.ANOMALY[r.anomaly])}</p>`;
+    h += row('Forged item', `${esc(r.item.name)} · <span class="rar r${r.item.tier}">${TIER_WORD[r.item.tier]}</span>`);
+    h += `<p class="fine">${esc(E.CLASSES[r.cls])} As a daemon genome: ${seen.has(k) ? esc(r.dName) : 'unseen form'}.</p>`;
+    return h;
+  }
+  function tipEssence(c, full) {
+    if (E.MAIN[c]) {
+      const m = E.MAIN[c], pv = ENG.PASSIVES[c];
+      const weak = E.MAINS.find(x => E.BEATS[x] === c);
+      let h = `<div class="th" style="color:${m.color}">${m.name}</div>` + row('Strong against', E.MAIN[E.BEATS[c]].name) + row('Weak to', E.MAIN[weak].name) + (E.OPPOSITE[c] ? row('Merging with', `${E.MAIN[E.OPPOSITE[c]].name} is volatile`) : '');
+      if (!full) return h;
+      h += row('Passive (no subs)', `${pv[0]}: ${esc(pv[1])}`);
+      h += `<div class="tr"><span>Reactions</span><b>${E.MAINS.map(o => { const rx = E.REACTION[E.pairId(c, o)]; return `${rx.names[c] || rx.names[o]}`; }).join(', ')}</b></div>`;
+      h += `<div class="tr"><span>Attack ×</span><b>${E.MAINS.map(o => `${E.MAIN[o].name[0]} ${E.chart(c, o)}`).join(' · ')}</b></div>`;
+      h += `<div class="tr"><span>Status immunity</span><b>${{ F: 'Burn', W: 'Freeze', E: 'Static', A: 'Root' }[c]} (as lead)</b></div>`;
+      return h;
+    }
+    const sub = E.SUB[c], pv = ENG.PASSIVES[c];
+    let h = `<div class="th" style="color:${subColor(c)}">${sub.name}</div><p>${esc(sub.desc)}</p>` + row('Binds to', sub.host ? `${E.MAIN[sub.host].name} only` : 'any main') + row('Effect', E.EFFECTS[sub.fx]);
+    if (!full) return h;
+    h += row('Passive as lead sub', `${pv[0]}: ${esc(pv[1])}`);
+    if (!sub.host) h += `<div class="tr"><span>Facets</span><b>${E.MAINS.map(m => `${E.MAIN[m].name}: ${E.FACET[c][m].name} (${E.EFFECTS[E.FACET[c][m].fx]})`).join('<br>')}</b></div>`;
+    h += row('Traits', Object.entries(sub.traits).map(([t, v]) => `${t} +${v}`).join(', '));
+    const found = resonancesFound();
+    const res = E.RESONANCE.concat(E.TRINITY).filter(r => r.subs.includes(c));
+    h += row('Resonances', res.map(r => (found.has(r.name) ? r.name : '???')).join(', '));
+    return h;
+  }
+  const STATUS_TXT = {};
+  for (const st of E.data.battle.statuses) STATUS_TXT[st.id] = st.text;
+  function tipSide(i, full) {
+    if (!B) return '';
+    const d = B.act(i), r = ENG.rec(d.key), pv = ENG.PASSIVES[r.dPassive], v = B.sides[i].v;
+    let h = `<div class="th">${esc(dName(d))} · Lv ${d.level}</div>${genomeHTML(d.key)}` + row('Passive', `${pv[0]}: ${esc(pv[1])}`) + row('HP', `${d.hp}/${v.stats.hp}`);
+    if (i === 0 || full) h += row('Flux', `${v.flux}/${v.stats.flux}`);
+    if (!full) return h;
+    if (i === 0) h += row('Stats', `Logic ${v.stats.atk} · Firewall ${v.stats.def} · Clock ${v.stats.spd} · Coherence ${v.stats.coh}`);
+    else h += row('Your pure merges', E.MAINS.map(m => `${E.MAIN[m].name[0]} ×${ENG.effectiveness(m + m, d.key)}`).join(' · '));
+    h += row('Status', v.status ? `${ENG.STATUS[v.status.id].name}, ${v.status.turns} turns` : 'none') + row('Shield', v.shield || 0) + row('Turns on field', v.turnsIn);
+    if (i === 1 && B.wild) { const lat = bestLattice(); if (lat) h += row('Bind chance', Math.round(chanceWith(lat) * 100) + '%'); }
+    return h;
+  }
+  function tipHTML(spec, full) {
+    const kind = spec[0], id = spec.slice(2);
+    if (kind === 'm' && DB.has(id)) return tipMerge(id, full);
+    if (kind === 'e' && (E.MAIN[id] || E.SUB[id])) return tipEssence(id, full);
+    if (kind === 's' && ENG.STATUS[id]) return `<div class="th">${ENG.STATUS[id].name}</div><p>${STATUS_TXT[id]}</p>` + (full ? row('Base duration', ENG.STATUS[id].turns + ' turns') : '');
+    if (kind === 'i' && S.bag[id]) { const it = S.bag[id]; return `<div class="th">${esc(it.name)}</div><p>${itemDesc(it)}</p>` + (it.lore ? `<p class="fine">${esc(it.lore)}</p>` : '') + row('Owned', it.count) + (it.tier != null ? row('Quality', `${TIER_WORD[it.tier]} (pre-baked roll)`) : '') + (full && DB.has(id.split(':')[1]) ? tipMerge(id.split(':')[1], false) : ''); }
+    if (kind === 't') { const d = ownedDaemons().find(x => x.trait && x.trait.key === id); if (d) { const t = d.trait; return `<div class="th">${esc(t.name)}</div>` + row('Rarity', `${TIER_WORD[t.tier]} · rolled ${t.pct}% (1 in ${t.odds})`) + t.fx.map(f => row(f.cat, esc(DZ.describeTrait(f)))).join('') + (full ? `<p class="fine">${esc(t.desc)}</p><p class="fine">Designed for this individual from its genome and seed (${esc(d.seed)}). The %RARITY% roll comes from the seed, its genome tier, generation, parents and prism.</p>` : ''); } }
+    if (kind === 'd') return tipSide(+id, full);
+    if (kind === 'p' && ENG.PASSIVES[id]) return `<div class="th"><span class="kb pas">Passive</span> ${ENG.PASSIVES[id][0]}</div><p>${esc(ENG.PASSIVES[id][1])}</p>` + (full ? '<p class="fine">Always on. It comes from the genome\'s lead sub-essence (or its main essence if it has none), so recompiling can change it.</p>' : '');
+    if (kind === 'r') { const r = E.RESONANCE.concat(E.TRINITY).find(x => x.name === id); if (r) return `<div class="th">${esc(r.name)}</div><span class="genome">${r.subs.map(x => essChip(x)).join('')}</span>` + (full ? row('Adds', Object.entries(r.traits).map(([t, v]) => `${t} +${v}`).join(', ') + (r.fx.length ? ' · ' + r.fx.map(f => `${E.EFFECTS[f[0]]} ${f[1]}%`).join(', ') : '')) : ''); }
+    return '';
+  }
+  // Tooltips follow a real hover: a mouse, or a pen hovering over the screen. A tap on a phone also
+  // fires emulated mouse events, so only pointer events are used here and a tap never opens one.
+  // On touch, hold still on an element to peek at its tooltip; lifting the finger hides it.
+  let tipTarget = null;
+  function showTip(el, x, y, touch) {
+    if (!S || S.settings.tips === 'off') return false;
+    const html = tipHTML(el.dataset.tip, S.settings.tips === 'complex');
+    if (!html) return false;
+    tipTarget = el;
+    tipEl.innerHTML = html + `<div class="tmode">${S.settings.tips === 'complex' ? 'Complex' : 'Compact'} · T or ⓘ to switch</div>`;
+    tipEl.className = S.settings.tips;
+    placeTip(x, y, touch);
+    return true;
+  }
+  function placeTip(x, y, touch) {
+    const w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+    if (touch) { // centered above the finger so it isn't covered, or below it when there's no room
+      tipEl.style.left = clamp(x - w / 2, 8, innerWidth - w - 8) + 'px';
+      tipEl.style.top = (y - h - 36 >= 8 ? y - h - 36 : Math.min(innerHeight - h - 8, y + 36)) + 'px';
+    } else {
+      tipEl.style.left = clamp(x + 14, 8, innerWidth - w - 8) + 'px';
+      tipEl.style.top = (y + 16 + h > innerHeight - 8 ? Math.max(8, y - h - 12) : y + 16) + 'px';
+    }
+  }
+  function hideTip() { tipTarget = null; tipEl.className = 'hidden'; }
+  const hovering = e => e.pointerType === 'mouse' || (e.pointerType === 'pen' && !e.buttons);
+  document.addEventListener('pointerover', e => {
+    if (!hovering(e)) return;
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) { if (tipTarget) hideTip(); return; }
+    if (el !== tipTarget) showTip(el, e.clientX, e.clientY);
+  });
+  document.addEventListener('pointerout', e => { if (hovering(e) && tipTarget && !e.relatedTarget) hideTip(); }); // left the window
+  let press = null, swallow = null;
+  document.addEventListener('pointermove', e => {
+    if (hovering(e)) { if (tipTarget) placeTip(e.clientX, e.clientY); return; }
+    if (press && e.pointerId === press.id && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) endPress(e); // a drag, not a hold
+  });
+  document.addEventListener('pointerdown', e => {
+    hideTip();
+    if (e.pointerType === 'mouse') return;
+    if (press) clearTimeout(press.timer);
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    press = el ? { id: e.pointerId, x: e.clientX, y: e.clientY, el } : null;
+    if (press) { const p = press; p.timer = setTimeout(() => { p.shown = showTip(p.el, p.x, p.y, true); }, 450); }
+  });
+  function endPress(e) {
+    if (!press || e.pointerId !== press.id) return;
+    clearTimeout(press.timer);
+    if (press.shown) { hideTip(); swallow = { el: press.el, until: performance.now() + 600 }; } // lifting after a peek is not a tap
+    press = null;
+  }
+  document.addEventListener('pointerup', endPress);
+  document.addEventListener('pointercancel', endPress);
+  document.addEventListener('click', e => {
+    if (!swallow || performance.now() > swallow.until || !swallow.el.contains(e.target)) return;
+    swallow = null; e.stopPropagation(); e.preventDefault();
+  }, true);
+  document.addEventListener('scroll', hideTip, true);
+
+  // ------------------------------------------------------------------ boot
+  resize();
+  try { muted = localStorage.getItem('ep-muted') === '1'; } catch (e) { /* ignore */ }
+  titleArt();
+  // ---- which world is played: the game's own (data/world.json) or a player-made one (worlds.js)
+  const OFFICIAL = window.CONTENT;
+  let playing = { id: 'main', test: false };
+  function useWorld(c, slot, meta) {
+    C = c || OFFICIAL;
+    saveSlot = slot || SAVE_KEY;
+    playing = meta || { id: 'main', test: false };
+    R.setThemes(Object.values(C.THEMES));
+    ENG.setEdits(C.MERGE_EDITS);
+    M = null; things = [];
+  }
+  // Continues the world's save, or starts it with the starter pick (fresh: always start over).
+  function playWorld(fresh) {
+    const saved = fresh ? null : loadSave();
+    if (saved) { adopt(saved); enterWorld(); mapBanner(); return; }
+    showStarter();
+  }
+  // A quick test run from the world builder: the first starter, no tutorial, placed where asked.
+  function testWorld(at) {
+    const saved = loadSave();
+    if (saved) adopt(saved);
+    else {
+      const st = C.STARTERS[0];
+      adopt(newState(st));
+      for (const k of S.party[0].memory) if (k) discovered.add(k);
+      designTrait(S.party[0]);
+    }
+    if (at) enterMap(at.map, at.x, at.y, at.dir);
+    enterWorld();
+    save();
+  }
+  function toTitle() {
+    if (S) save();
+    S = null; B = null; M = null; things = [];
+    mode = 'title'; setPad(false);
+    for (const id of ['hud', 'sheet', 'starter', 'battle']) $(id).classList.add('hidden');
+    closeModal();
+    useWorld(null);
+    const has = !!loadSave();
+    $('contBtn').classList.toggle('hidden', !has);
+    $('title').classList.remove('hidden');
+    titleArt();
+  }
+  const existing = loadSave();
+  if (existing) $('contBtn').classList.remove('hidden');
+  $('newBtn').onclick = async () => { useWorld(null); if (loadSave() && (await choose('Start a new game?', 'Your current save is overwritten the next time the game saves.', ['Start over', 'Cancel'])) !== 0) return; showStarter(); };
+  $('contBtn').onclick = () => { useWorld(null); const saved = loadSave(); if (!saved) return; adopt(saved); enterWorld(); if (S.won) toast('Welcome back. The Rift is waiting in the Core.'); };
+  $('createBtn').onclick = () => { if (window.WORLDS) window.WORLDS.open(); };
+  $('buildBtn').onclick = () => { if (mode === 'world' && window.BUILD) window.BUILD.fromPlay(playing, { map: M.id, x: player.x, y: player.y, dir: player.dir }); };
+  // The title is up while the merge database streams in; the buttons wait for it.
+  function openDatabase() {
+    $('newBtn').disabled = $('contBtn').disabled = $('createBtn').disabled = true;
+    if ($('subCount')) $('subCount').textContent = C.numberWords(E.SUB_ORDER.length);
+    DB.open({ onProgress: (n, of) => { $('bakeInfo').textContent = `Loading the merge database… ${n}/${of}`; $('dbBar').style.width = (of ? n / of * 100 : 0) + '%'; } }).then(() => {
+      $('newBtn').disabled = $('contBtn').disabled = $('createBtn').disabled = false;
+      $('dbBar').parentNode.classList.add('done');
+      $('bakeInfo').textContent = `${DB.count.toLocaleString()} merges pre-baked · ${E.MAINS.length} main essences · ${E.SUB_ORDER.length} sub-essences · ${E.RESONANCE.length} resonances · ${E.TRINITY.length} trinities`;
+    }, err => {
+      console.error(err);
+      $('bakeInfo').innerHTML = 'The merge database could not be loaded. <button class="btn small" id="dbRetry">Retry</button>';
+      $('dbRetry').onclick = openDatabase;
+    });
+  }
+  openDatabase();
+  requestAnimationFrame(frame);
+
+  // The content editor lives next to the game when it is served locally, and in the desktop and
+  // Android apps; not on a hosted page. The title links it, and the builder can hand worlds to it.
+  let editorAround = false;
+  const APP_HOSTS = ['localhost', '127.0.0.1', '[::1]', 'appassets.androidplatform.net'];
+  if (APP_HOSTS.includes(location.hostname) && !self.EP_DRAFT) fetch('editor/index.html', { method: 'HEAD', cache: 'no-store' }).then(r => { editorAround = r.ok; if (r.ok) $('editorLink').classList.remove('hidden'); }).catch(() => {});
+  if (self.EP_DRAFT) {
+    $('draftNote').classList.remove('hidden');
+    $('draftNote').innerHTML = `Playing the <b>content editor's draft</b>${self.EP_DRAFT.rows ? ', with its re-baked merges' : ''}. It saves apart from your game. <a href="editor/">Back to the editor</a>`;
+  }
+  // the editor's "Open in the world builder": its draft world arrives here
+  function takeHandoff() {
+    if (!/^#build=editor/.test(location.hash) || !window.WORLDS || !window.BUILD) return;
+    let h = null;
+    try { h = JSON.parse(localStorage.getItem('ep-builder-handoff')); localStorage.removeItem('ep-builder-handoff'); } catch (e) { /* none */ }
+    history.replaceState(null, '', location.pathname + location.search);
+    if (!h || !h.world) return;
+    const w = window.WORLDS.normalize(h.world);
+    window.WORLDS.save('editor', w);
+    window.BUILD.open('editor');
+    toast('The editor\'s world is open in the builder. <b>Save & share → Send back to the editor</b> returns it as a draft.', 'tip', 7000);
+  }
+  DB.open().then(() => setTimeout(takeHandoff, 0), () => {});
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+  window.EP = { get state() { return S; }, get battle() { return B; }, get mode() { return mode; }, get discovered() { return discovered; }, get map() { return M; }, get world() { return C; }, forgeItem, toast,
+    teleport(x, y, dir, map) { enterMap(map || M.id, x, y, dir); } };
+  // Android's back button (platforms/android): close what is open; false lets the app step aside.
+  window.epBack = function () {
+    const bm = document.querySelector('.b-modal'); if (bm) { bm.remove(); return true; }
+    if (!$('modal').classList.contains('hidden')) {
+      const card = $('modalCard'), cancel = card.querySelector('[data-cancel]'), choices = card.querySelectorAll('[data-c]');
+      if (cancel) cancel.click(); else if (choices.length > 1) choices[choices.length - 1].click();
+      return true;
+    }
+    if (!$('tooltip').classList.contains('hidden')) { hideTip(); return true; }
+    if (mode === 'build' && window.BUILD) return window.BUILD.back();
+    if (mode === 'worlds' && window.WORLDS) { window.WORLDS.close(); return true; }
+    if (mode === 'sheet') { closeSheet(); return true; }
+    if (mode === 'starter') { toTitle(); return true; }
+    if (mode === 'world') { openSheet('party'); return true; }
+    if (mode === 'battle' || mode === 'busy') return true;
+    return false;
+  };
+  // What the world builder and the worlds screen use to drive the game.
+  window.EP_GAME = {
+    get C() { return C; }, get M() { return M; }, get S() { return S; }, get mode() { return mode; }, set mode(m) { mode = m; },
+    get zoom() { return zoom; }, get playing() { return playing; }, get dbReady() { return DB.ready; },
+    TS, cv, ctx, R, player, OFFICIAL, SAVE_KEY, E, ENG, SP, DB, get editorAround() { return editorAround; },
+    useWorld, playWorld, testWorld, toTitle, enterMap, updateHud, setPad, save, loadSave, mapBanner,
+    toast, choose, askText, modal, closeModal, esc, hydrateCanvases, genomeHTML, beep, sleep,
+    hideScreens() { for (const id of ['title', 'starter', 'hud', 'sheet']) $(id).classList.add('hidden'); setPad(false); },
+  };
+})();

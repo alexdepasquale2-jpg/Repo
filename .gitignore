@@ -1,4 +1,3 @@
 __pycache__/
 *.pyc
 runs/
-lattice-ide/deploy/worker.env
