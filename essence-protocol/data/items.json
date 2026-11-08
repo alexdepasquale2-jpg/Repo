@@ -1,0 +1,41 @@
+{
+  "kinds": [
+    {
+      "kind": "patch",
+      "name": "Patch",
+      "desc": "a consumable that restores a daemon's HP",
+      "lore": "Pressed from {from}."
+    },
+    {
+      "kind": "ward",
+      "name": "Module",
+      "desc": "a battle item that raises a shield",
+      "lore": "A shield module forged from {from}."
+    },
+    {
+      "kind": "lattice",
+      "name": "Lattice",
+      "desc": "a lattice for binding wild daemons",
+      "lore": "Woven from {from}."
+    },
+    {
+      "kind": "catalyst",
+      "name": "Catalyst",
+      "desc": "a battle item that floods the arena with an essence field",
+      "lore": "A sealed charge of {lead} residue."
+    },
+    {
+      "kind": "script",
+      "name": "Script",
+      "desc": "a script that attunes a daemon to a new sub-essence",
+      "lore": "Teaches {subs}."
+    },
+    {
+      "kind": "cell",
+      "name": "Flux Cell",
+      "desc": "a battle item that refills Flux",
+      "lore": "Charged from {from}."
+    }
+  ],
+  "qualityPrefixes": ["", "Fine", "Tempered", "Exalted", "Mythic"]
+}

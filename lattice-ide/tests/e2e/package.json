@@ -1,0 +1,11 @@
+{
+  "name": "lattice-e2e",
+  "private": true,
+  "description": "Browser end-to-end tests for the Lattice PWA against a dry-run worker",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
+  }
+}

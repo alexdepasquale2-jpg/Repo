@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d10">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Lattice — mobile control surface for Cosmos 3 and HY-World 2.0 world-model jobs.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Lattice</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><img src="icon.svg" alt="" width="24" height="24"><span>Lattice</span></div>
+      <button class="health-dot" id="hdrHealth" type="button" aria-label="Worker status: unknown">
+        <span class="dot" aria-hidden="true"></span><span class="hdr-label">worker</span>
+      </button>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section id="panel-home" class="panel" role="tabpanel" aria-labelledby="tab-home"></section>
+      <section id="panel-cosmos" class="panel" role="tabpanel" aria-labelledby="tab-cosmos" hidden></section>
+      <section id="panel-hyworld" class="panel" role="tabpanel" aria-labelledby="tab-hyworld" hidden></section>
+      <section id="panel-bridge" class="panel" role="tabpanel" aria-labelledby="tab-bridge" hidden></section>
+      <section id="panel-more" class="panel" role="tabpanel" aria-labelledby="tab-more" hidden></section>
+    </main>
+
+    <nav class="tabbar" role="tablist" aria-label="Sections">
+      <button role="tab" id="tab-home" aria-controls="panel-home" aria-selected="true" data-tab="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></svg><span>Home</span></button>
+      <button role="tab" id="tab-cosmos" aria-controls="panel-cosmos" aria-selected="false" tabindex="-1" data-tab="cosmos"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><ellipse cx="12" cy="12" rx="9" ry="4"/></svg><span>Cosmos</span></button>
+      <button role="tab" id="tab-hyworld" aria-controls="panel-hyworld" aria-selected="false" tabindex="-1" data-tab="hyworld"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg><span>HY-World</span></button>
+      <button role="tab" id="tab-bridge" aria-controls="panel-bridge" aria-selected="false" tabindex="-1" data-tab="bridge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17h18M5 17V9m14 8V9M5 9c3 4 11 4 14 0"/></svg><span>Bridge</span></button>
+      <button role="tab" id="tab-more" aria-controls="panel-more" aria-selected="false" tabindex="-1" data-tab="more"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg><span>More</span></button>
+    </nav>
+  </div>
+
+  <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+  <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
+    <div class="sheet-head">
+      <h2 id="sheetTitle">Detail</h2>
+      <button type="button" class="btn ghost icon" id="sheetClose" aria-label="Close">✕</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

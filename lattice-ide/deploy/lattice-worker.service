@@ -1,0 +1,52 @@
+# Lattice worker systemd unit. Installed by install.sh to
+# /etc/systemd/system/lattice-worker.service. Settings live in /etc/lattice/worker.env
+# (root-owned, mode 0600; systemd reads it before dropping to the service user).
+#
+#   systemctl daemon-reload && systemctl enable --now lattice-worker
+#   curl -s http://127.0.0.1:8787/health
+#
+# No PrivateDevices / MemoryDenyWriteExecute: GPU engines need /dev/nvidia* and CUDA JIT.
+
+[Unit]
+Description=Lattice worker (world-model job runner)
+Documentation=file:///opt/lattice/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lattice
+Group=lattice
+EnvironmentFile=/etc/lattice/worker.env
+Environment=HOME=/var/lib/lattice PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WorkingDirectory=/opt/lattice
+ExecStart=/usr/bin/python3 /opt/lattice/worker.py
+Restart=on-failure
+RestartSec=5
+# Cancel/stop: the worker SIGTERMs engine process groups itself; give it time before SIGKILL.
+KillMode=mixed
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lattice
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
