@@ -337,3 +337,18 @@ table.stages tr:last-child td { border-bottom: 0; }
 .artifact.bundle .note { margin: 0; }
 #jobMetrics:not(:empty), #jobArts { margin-top: 14px; }
 #jobMetrics .kv { margin-bottom: 10px; }
+
+/* Wave 4: multi-user workspace (whoami, role gate, audit & costs) */
+input[type=date] { min-height: var(--tap); width: 100%; padding: 10px 12px; background: var(--bg-2); color: var(--text); border: 1px solid var(--line-2); border-radius: var(--radius-s); font: 15px var(--font); color-scheme: dark; }
+.whoami b { font-weight: 600; }
+.role-pill { font: 500 11px var(--mono); padding: 1px 6px; margin-left: 4px; border-radius: 999px; border: 1px solid currentColor; color: var(--text-2); }
+.role-pill.admin { color: var(--hy); }
+.role-pill.operator { color: var(--cosmos); }
+table.data { width: 100%; border-collapse: collapse; font: 12px var(--mono); }
+table.data th, table.data td { padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.data th { color: var(--text-3); font-weight: 500; background: var(--bg-2); }
+table.data td.num, table.data th.num { text-align: right; }
+table.data tbody th[scope=colgroup] { color: var(--text-2); background: var(--panel-2); text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
+table.data tfoot td { color: var(--text); font-weight: 500; border-top: 1px solid var(--line-2); border-bottom: 0; }
+table.data td.detail { white-space: normal; min-width: 220px; overflow-wrap: anywhere; }
+table.data tr.auth-fail td { color: var(--err); }

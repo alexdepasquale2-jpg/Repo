@@ -1,0 +1,72 @@
+# Lattice: worker + Caddy (HTTPS) on one host.
+#
+#   cd lattice-ide/deploy
+#   cp worker.env.example worker.env && chmod 600 worker.env
+#   # set LATTICE_TOKEN (openssl rand -hex 32) and LATTICE_REGION; HOST/PORT/RUNS are overridden
+#   LATTICE_DOMAIN=lattice.example.com docker compose up -d --build
+#   curl -s https://lattice.example.com/api/health
+#
+# PWA: https://$LATTICE_DOMAIN/   worker URL to enter in Settings: https://$LATTICE_DOMAIN/api
+# The worker port is NOT published; only Caddy's 80/443 are. No model weights are in either
+# image. The worker image is CPU-only and runs dry runs until you build a derived image with
+# licensed engines (see the GPU note in ../Dockerfile and the commented block below).
+
+name: lattice
+
+services:
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        WITH_FFMPEG: ${LATTICE_WITH_FFMPEG:-1}
+    image: lattice-worker:1.0.0
+    restart: unless-stopped
+    # Required on purpose: without it the worker would start with auth off behind a public proxy.
+    env_file:
+      - ./worker.env
+    environment:
+      # The image CMD pins host/port/runs via flags; these keep /health's runs_dir consistent.
+      LATTICE_RUNS: /data/runs
+    volumes:
+      - lattice-runs:/data
+    expose:
+      - "8787"
+    # GPU (derived image with engines + NVIDIA Container Toolkit on the host):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - worker
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      LATTICE_DOMAIN: ${LATTICE_DOMAIN:-localhost}
+      LATTICE_UPSTREAM: worker:8787
+      LATTICE_PWA_ROOT: /srv/lattice
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Only the PWA static files are served (not worker source or run data).
+      - ../index.html:/srv/lattice/index.html:ro
+      - ../styles.css:/srv/lattice/styles.css:ro
+      - ../app.js:/srv/lattice/app.js:ro
+      - ../sw.js:/srv/lattice/sw.js:ro
+      - ../manifest.json:/srv/lattice/manifest.json:ro
+      - ../icon.svg:/srv/lattice/icon.svg:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  lattice-runs:
+  caddy-data:
+  caddy-config:

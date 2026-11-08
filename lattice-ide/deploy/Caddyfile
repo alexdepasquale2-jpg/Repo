@@ -1,0 +1,43 @@
+# Lattice on one HTTPS host: the PWA at https://<host>/ and the worker at https://<host>/api/.
+# In the PWA (More -> Settings) set the worker URL to  https://<host>/api
+#
+# The worker has no path-prefix setting; `handle_path` strips /api before proxying, and the
+# PWA prefixes every call (including /runs/<id>/<file> artifact links) with the worker URL,
+# so https://<host>/api/health -> worker /health, /api/runs/... -> /runs/..., etc.
+#
+# Environment (defaults suit the systemd install; docker-compose.yml overrides them):
+#   LATTICE_DOMAIN    public hostname; Caddy obtains a certificate for it automatically
+#   LATTICE_UPSTREAM  worker address (127.0.0.1:8787, or worker:8787 in compose)
+#   LATTICE_PWA_ROOT  directory with index.html, app.js, sw.js, ... (install.sh: /opt/lattice/pwa)
+#
+# Keep port 8787 closed to the outside; only 80/443 are public. /health is unauthenticated
+# by design; every other worker route needs Authorization: Bearer <LATTICE_TOKEN>.
+
+{$LATTICE_DOMAIN:localhost} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	handle_path /api/* {
+		request_body {
+			max_size 64MB
+		}
+		# flush_interval -1: stream video Range responses and long polls without buffering.
+		reverse_proxy {$LATTICE_UPSTREAM:127.0.0.1:8787} {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		root * {$LATTICE_PWA_ROOT:/opt/lattice/pwa}
+		# The service worker and app shell must revalidate so updates reach phones.
+		@shell path / /index.html /sw.js /manifest.json
+		header @shell Cache-Control "no-cache"
+		file_server
+	}
+}

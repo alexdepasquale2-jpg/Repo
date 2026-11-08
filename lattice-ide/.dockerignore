@@ -1,0 +1,26 @@
+# Build context hygiene: the Dockerfile COPYs an explicit file list; this keeps the
+# context small and makes sure run outputs, secrets and model weights never reach it.
+.git
+**/__pycache__
+**/*.pyc
+runs/
+dataset/
+tests/
+examples/
+deploy/worker.env
+deploy/*.env
+*.env
+build/
+dist/
+*.egg-info/
+
+# Never let model weights or caches into an image.
+**/*.safetensors
+**/*.ckpt
+**/*.pt
+**/*.pth
+**/*.bin
+**/*.gguf
+**/*.onnx
+**/hf-cache/
+**/.cache/
